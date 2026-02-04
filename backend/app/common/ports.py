@@ -4,6 +4,16 @@ from abc import ABC, abstractmethod
 from typing import Iterable, Optional
 
 from app.modules.applications.models import Application
+
+
+class LLMProvider(ABC):
+    """Port for LLM calls; swap provider (Gemini, OpenAI, etc.) via adapters."""
+
+    @abstractmethod
+    def generate(self, prompt: str, **kwargs: object) -> str:
+        raise NotImplementedError
+
+
 from app.modules.jobs.models import Job
 from app.modules.pipeline.models import PipelineRun
 from app.modules.resumes.models import Resume
@@ -61,6 +71,17 @@ class PipelineRunRepo(ABC):
 
     @abstractmethod
     def get(self, run_id: int) -> Optional[PipelineRun]:
+        raise NotImplementedError
+
+    @abstractmethod
+    def update_results(
+        self,
+        run_id: int,
+        *,
+        status: str,
+        tailored_resume: Optional[str] = None,
+        cover_letter: Optional[str] = None,
+    ) -> Optional[PipelineRun]:
         raise NotImplementedError
 
 

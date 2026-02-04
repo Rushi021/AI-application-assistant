@@ -5,7 +5,8 @@ from sqlalchemy.orm import Session
 
 from app.common.adapters.local_storage import LocalResumeStorage
 from app.common.adapters.s3_storage import S3ResumeStorage
-from app.common.ports import ResumeStorage
+from app.common.ports import LLMProvider, ResumeStorage
+from app.modules.ai.providers.gemini_provider import GeminiProvider
 from app.core.config import get_settings
 from app.core.security import require_test_token, TestUser
 from app.db.session import SessionLocal
@@ -38,3 +39,8 @@ def get_resume_storage() -> ResumeStorage:
     if settings.storage_backend == "s3":
         return S3ResumeStorage()
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid storage backend")
+
+
+def get_llm_provider() -> LLMProvider:
+    """Return the configured LLM provider (Gemini for now). Swap via config later if needed."""
+    return GeminiProvider()

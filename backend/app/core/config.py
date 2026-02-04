@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     test_password: str = "testpass"
     test_token: str = "test-token"
 
+    # LLM (Gemini / Google AI) — use real key in env
+    google_ai_api_key: str = "placeholder-api-key-replace-with-real"
+    gemini_model: str = "gemini-1.5-flash"
+
     @property
     def allowed_extensions_list(self) -> List[str]:
         return [ext.strip().lower() for ext in self.allowed_extensions.split(",") if ext.strip()]

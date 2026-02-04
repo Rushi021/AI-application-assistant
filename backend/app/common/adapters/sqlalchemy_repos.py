@@ -74,6 +74,26 @@ class SqlAlchemyPipelineRunRepo(PipelineRunRepo):
     def get(self, run_id: int) -> Optional[PipelineRun]:
         return self._db.query(PipelineRun).filter(PipelineRun.id == run_id).first()
 
+    def update_results(
+        self,
+        run_id: int,
+        *,
+        status: str,
+        tailored_resume: Optional[str] = None,
+        cover_letter: Optional[str] = None,
+    ) -> Optional[PipelineRun]:
+        run = self._db.query(PipelineRun).filter(PipelineRun.id == run_id).first()
+        if not run:
+            return None
+        run.status = status
+        if tailored_resume is not None:
+            run.tailored_resume = tailored_resume
+        if cover_letter is not None:
+            run.cover_letter = cover_letter
+        self._db.commit()
+        self._db.refresh(run)
+        return run
+
 
 class SqlAlchemyApplicationRepo(ApplicationRepo):
     def __init__(self, db: Session) -> None:
