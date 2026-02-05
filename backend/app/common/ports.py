@@ -30,6 +30,11 @@ class ResumeStorage(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def get_file_bytes(self, file_key: str) -> bytes:
+        """Return raw file bytes for the given file_key (e.g. for parsing docx)."""
+        raise NotImplementedError
+
+    @abstractmethod
     def delete_file(self, file_key: str) -> None:
         raise NotImplementedError
 
@@ -80,6 +85,7 @@ class PipelineRunRepo(ABC):
         *,
         status: str,
         tailored_resume: Optional[str] = None,
+        tailored_sections: Optional[str] = None,
         cover_letter: Optional[str] = None,
     ) -> Optional[PipelineRun]:
         raise NotImplementedError

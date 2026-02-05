@@ -21,6 +21,15 @@ def create_app() -> FastAPI:
 
     Base.metadata.create_all(bind=engine)
 
+    @app.get("/")
+    def root() -> dict:
+        return {
+            "app": "AI Job Application Assistant",
+            "docs": "/docs",
+            "health": "/health",
+            "openapi": "/openapi.json",
+        }
+
     @app.get("/health")
     def health() -> dict[str, str]:
         return {"status": "ok"}

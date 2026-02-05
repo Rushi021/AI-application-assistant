@@ -8,5 +8,8 @@ class S3ResumeStorage(ResumeStorage):
     def get_file_url_or_path(self, file_key: str) -> str:
         raise NotImplementedError("TODO: implement S3 presigned URL")
 
+    def get_file_bytes(self, file_key: str) -> bytes:
+        raise NotImplementedError("TODO: implement S3 download")
+
     def delete_file(self, file_key: str) -> None:
         raise NotImplementedError("TODO: implement S3 delete")

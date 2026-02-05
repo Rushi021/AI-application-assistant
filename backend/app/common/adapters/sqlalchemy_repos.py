@@ -80,6 +80,7 @@ class SqlAlchemyPipelineRunRepo(PipelineRunRepo):
         *,
         status: str,
         tailored_resume: Optional[str] = None,
+        tailored_sections: Optional[str] = None,
         cover_letter: Optional[str] = None,
     ) -> Optional[PipelineRun]:
         run = self._db.query(PipelineRun).filter(PipelineRun.id == run_id).first()
@@ -88,6 +89,8 @@ class SqlAlchemyPipelineRunRepo(PipelineRunRepo):
         run.status = status
         if tailored_resume is not None:
             run.tailored_resume = tailored_resume
+        if tailored_sections is not None:
+            run.tailored_sections = tailored_sections
         if cover_letter is not None:
             run.cover_letter = cover_letter
         self._db.commit()

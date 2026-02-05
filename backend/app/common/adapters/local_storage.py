@@ -24,6 +24,11 @@ class LocalResumeStorage(ResumeStorage):
     def get_file_url_or_path(self, file_key: str) -> str:
         return os.path.join(self._base_path, file_key)
 
+    def get_file_bytes(self, file_key: str) -> bytes:
+        path = os.path.join(self._base_path, file_key)
+        with open(path, "rb") as f:
+            return f.read()
+
     def delete_file(self, file_key: str) -> None:
         path = os.path.join(self._base_path, file_key)
         if os.path.exists(path):
