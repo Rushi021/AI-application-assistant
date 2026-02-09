@@ -5,7 +5,7 @@ from pydantic import BaseModel, model_validator
 
 
 class PipelineRunCreate(BaseModel):
-    """Job description and resume: either resume_text, or resume_id (uploaded Word doc), or both."""
+    """Job description + resume: provide resume_text, or resume_id (uploaded Word doc), or both."""
 
     job_description: str
     resume_text: Optional[str] = None
@@ -22,14 +22,15 @@ class PipelineRunCreate(BaseModel):
 
 class PipelineRunRead(BaseModel):
     id: int
-    user_id: int
+    session_id: str
+    user_id: Optional[int] = None
     status: str
     created_at: datetime
     job_description: Optional[str] = None
     resume_text: Optional[str] = None
     resume_id: Optional[int] = None
     tailored_resume: Optional[str] = None
-    tailored_sections: Optional[str] = None  # JSON array of section strings (for apply-doc)
+    tailored_sections: Optional[str] = None
     cover_letter: Optional[str] = None
 
     class Config:
