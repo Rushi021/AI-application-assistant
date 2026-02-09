@@ -1,11 +1,13 @@
 from datetime import datetime
+from typing import Optional
 
 from pydantic import BaseModel
 
 
 class ResumeRead(BaseModel):
     id: int
-    user_id: int
+    session_id: str
+    user_id: Optional[int] = None
     original_filename: str
     file_key: str
     content_type: str
