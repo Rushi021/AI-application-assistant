@@ -17,9 +17,23 @@ class Settings(BaseSettings):
     max_upload_size_mb: int = 10
     allowed_extensions: str = "pdf,doc,docx"
 
+    # Output paths for generated/tailored files saved to local machine
+    output_resume_path: str = r"E:\rushi\storage - resume\resumes"
+    output_cover_letter_path: str = r"E:\rushi\storage - resume\cover letters"
+
+    # Legacy test auth (kept for backward compat; will be removed)
     test_username: str = "testuser"
     test_password: str = "testpass"
     test_token: str = "test-token"
+
+    # Google OAuth
+    google_oauth_client_id: str = ""
+
+    # JWT settings
+    jwt_secret_key: str = "change-me-in-production-use-a-long-random-string"
+    jwt_algorithm: str = "HS256"
+    jwt_access_token_expire_minutes: int = 60 * 24  # 24 hours
+    jwt_refresh_token_expire_minutes: int = 60 * 24 * 30  # 30 days
 
     # LLM (Gemini / Google AI) — use real key in env
     google_ai_api_key: str = "placeholder-api-key-replace-with-real"

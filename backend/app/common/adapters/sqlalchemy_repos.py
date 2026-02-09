@@ -1,3 +1,5 @@
+"""SQLAlchemy implementations of all repo ports. Every query is scoped by session_id."""
+
 from __future__ import annotations
 
 from typing import Iterable, Optional
@@ -5,13 +7,14 @@ from typing import Iterable, Optional
 from sqlalchemy.orm import Session
 
 from app.common.ports import (
+    ApplicationEventRepo,
     ApplicationRepo,
     JobRepo,
     PipelineRunRepo,
     ResumeRepo,
     UserRepo,
 )
-from app.modules.applications.models import Application
+from app.modules.applications.models import Application, ApplicationEvent
 from app.modules.jobs.models import Job
 from app.modules.pipeline.models import PipelineRun
 from app.modules.resumes.models import Resume
@@ -43,11 +46,23 @@ class SqlAlchemyResumeRepo(ResumeRepo):
         self._db.refresh(resume)
         return resume
 
-    def list_by_user(self, user_id: int) -> Iterable[Resume]:
-        return self._db.query(Resume).filter(Resume.user_id == user_id).all()
+    def list_by_session(self, session_id: str) -> Iterable[Resume]:
+        return (
+            self._db.query(Resume)
+            .filter(Resume.session_id == session_id)
+            .order_by(Resume.created_at.desc())
+            .all()
+        )
 
-    def get(self, resume_id: int) -> Optional[Resume]:
-        return self._db.query(Resume).filter(Resume.id == resume_id).first()
+    def get_by_scope(self, session_id: str, resume_id: int) -> Optional[Resume]:
+        return (
+            self._db.query(Resume)
+            .filter(Resume.session_id == session_id, Resume.id == resume_id)
+            .first()
+        )
+
+    def count_by_session(self, session_id: str) -> int:
+        return self._db.query(Resume).filter(Resume.session_id == session_id).count()
 
 
 class SqlAlchemyJobRepo(JobRepo):
@@ -60,6 +75,13 @@ class SqlAlchemyJobRepo(JobRepo):
         self._db.refresh(job)
         return job
 
+    def get_by_scope(self, session_id: str, job_id: int) -> Optional[Job]:
+        return (
+            self._db.query(Job)
+            .filter(Job.session_id == session_id, Job.id == job_id)
+            .first()
+        )
+
 
 class SqlAlchemyPipelineRunRepo(PipelineRunRepo):
     def __init__(self, db: Session) -> None:
@@ -71,11 +93,24 @@ class SqlAlchemyPipelineRunRepo(PipelineRunRepo):
         self._db.refresh(run)
         return run
 
-    def get(self, run_id: int) -> Optional[PipelineRun]:
-        return self._db.query(PipelineRun).filter(PipelineRun.id == run_id).first()
+    def get_by_scope(self, session_id: str, run_id: int) -> Optional[PipelineRun]:
+        return (
+            self._db.query(PipelineRun)
+            .filter(PipelineRun.session_id == session_id, PipelineRun.id == run_id)
+            .first()
+        )
+
+    def list_by_session(self, session_id: str) -> Iterable[PipelineRun]:
+        return (
+            self._db.query(PipelineRun)
+            .filter(PipelineRun.session_id == session_id)
+            .order_by(PipelineRun.created_at.desc())
+            .all()
+        )
 
     def update_results(
         self,
+        session_id: str,
         run_id: int,
         *,
         status: str,
@@ -83,7 +118,11 @@ class SqlAlchemyPipelineRunRepo(PipelineRunRepo):
         tailored_sections: Optional[str] = None,
         cover_letter: Optional[str] = None,
     ) -> Optional[PipelineRun]:
-        run = self._db.query(PipelineRun).filter(PipelineRun.id == run_id).first()
+        run = (
+            self._db.query(PipelineRun)
+            .filter(PipelineRun.session_id == session_id, PipelineRun.id == run_id)
+            .first()
+        )
         if not run:
             return None
         run.status = status
@@ -108,14 +147,52 @@ class SqlAlchemyApplicationRepo(ApplicationRepo):
         self._db.refresh(application)
         return application
 
-    def list_by_user(self, user_id: int) -> Iterable[Application]:
-        return self._db.query(Application).filter(Application.user_id == user_id).all()
+    def list_by_session(self, session_id: str) -> Iterable[Application]:
+        return (
+            self._db.query(Application)
+            .filter(Application.session_id == session_id)
+            .order_by(Application.created_at.desc())
+            .all()
+        )
 
-    def update_status(self, application_id: int, status: str) -> Optional[Application]:
-        application = self._db.query(Application).filter(Application.id == application_id).first()
+    def get_by_scope(self, session_id: str, application_id: int) -> Optional[Application]:
+        return (
+            self._db.query(Application)
+            .filter(Application.session_id == session_id, Application.id == application_id)
+            .first()
+        )
+
+    def update_status(self, session_id: str, application_id: int, status: str) -> Optional[Application]:
+        application = (
+            self._db.query(Application)
+            .filter(Application.session_id == session_id, Application.id == application_id)
+            .first()
+        )
         if not application:
             return None
         application.status = status
         self._db.commit()
         self._db.refresh(application)
         return application
+
+
+class SqlAlchemyApplicationEventRepo(ApplicationEventRepo):
+    def __init__(self, db: Session) -> None:
+        self._db = db
+
+    def create(self, event: ApplicationEvent) -> ApplicationEvent:
+        self._db.add(event)
+        self._db.commit()
+        self._db.refresh(event)
+        return event
+
+    def list_by_application(self, session_id: str, application_id: int) -> Iterable[ApplicationEvent]:
+        return (
+            self._db.query(ApplicationEvent)
+            .filter(
+                ApplicationEvent.session_id == session_id,
+                ApplicationEvent.application_id == application_id,
+            )
+            .order_by(ApplicationEvent.created_at)
+            .all()
+        )
