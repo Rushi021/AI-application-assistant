@@ -1,0 +1,32 @@
+/** Backend API base URL. Change in production. */
+export const API_BASE_URL = "http://localhost:8000";
+
+/** Chrome storage keys */
+export const STORAGE_KEYS = {
+  ACCESS_TOKEN: "access_token",
+  REFRESH_TOKEN: "refresh_token",
+  SESSION_ID: "session_id",
+  USER_PROFILE: "user_profile",
+} as const;
+
+/** Message types for communication between extension parts */
+export const MSG = {
+  // Auth
+  GET_AUTH_TOKEN: "GET_AUTH_TOKEN",
+  AUTH_STATE_CHANGED: "AUTH_STATE_CHANGED",
+
+  // Autofill
+  START_AUTOFILL: "START_AUTOFILL",
+  AUTOFILL_PROGRESS: "AUTOFILL_PROGRESS",
+  AUTOFILL_PAUSED: "AUTOFILL_PAUSED",
+  AUTOFILL_RESUME: "AUTOFILL_RESUME",
+  AUTOFILL_COMPLETE: "AUTOFILL_COMPLETE",
+  AUTOFILL_FIELD_MANUAL: "AUTOFILL_FIELD_MANUAL",
+
+  // Profile
+  GET_USER_PROFILE: "GET_USER_PROFILE",
+
+  // Content script
+  DETECT_JOB_DESCRIPTION: "DETECT_JOB_DESCRIPTION",
+  JOB_DESCRIPTION_DETECTED: "JOB_DESCRIPTION_DETECTED",
+} as const;

@@ -1,0 +1,9 @@
+/* Minimal styles injected by the content script.
+   The main overlay UI uses Shadow DOM to avoid conflicts. */
+
+.field-highlight {
+  outline: 3px solid #F97316 !important;
+  outline-offset: 2px;
+  box-shadow: 0 0 0 6px rgba(249, 115, 22, 0.15) !important;
+  transition: outline 0.2s ease, box-shadow 0.2s ease;
+}

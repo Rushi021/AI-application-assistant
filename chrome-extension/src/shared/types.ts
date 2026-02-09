@@ -1,0 +1,194 @@
+// ---------------------------------------------------------------------------
+// User / Auth
+// ---------------------------------------------------------------------------
+
+export interface UserProfile {
+  id: number;
+  username: string;
+  email: string | null;
+  picture_url: string | null;
+
+  // Basic
+  full_name: string | null;
+  phone: string | null;
+  address_line1: string | null;
+  address_line2: string | null;
+  city: string | null;
+  state: string | null;
+  zip_code: string | null;
+  country: string | null;
+
+  // Professional
+  linkedin_url: string | null;
+  portfolio_url: string | null;
+  github_url: string | null;
+  years_of_experience: number | null;
+  current_title: string | null;
+  current_company: string | null;
+
+  // Education
+  degree: string | null;
+  field_of_study: string | null;
+  university: string | null;
+  graduation_year: number | null;
+  gpa: number | null;
+
+  // Work authorization
+  visa_status: string | null;
+  work_authorization: string | null;
+  sponsorship_needed: boolean | null;
+
+  // Demographics (EEO)
+  gender: string | null;
+  ethnicity: string | null;
+  veteran_status: string | null;
+  disability_status: string | null;
+
+  // Salary
+  expected_salary: string | null;
+  current_salary: string | null;
+  salary_currency: string | null;
+
+  // Custom
+  custom_fields: Record<string, unknown> | null;
+}
+
+export interface AuthTokens {
+  access_token: string;
+  refresh_token?: string;
+  token_type: string;
+  is_new_user: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Resume
+// ---------------------------------------------------------------------------
+
+export interface Resume {
+  id: number;
+  session_id: string;
+  original_filename: string;
+  content_type: string;
+  size_bytes: number;
+  created_at: string;
+}
+
+export interface ResumeScore {
+  resume_id: number;
+  original_filename: string;
+  score: number;
+  matched_keywords: string[];
+  missing_keywords: string[];
+  rationale: string;
+}
+
+// ---------------------------------------------------------------------------
+// Job
+// ---------------------------------------------------------------------------
+
+export interface Job {
+  id: number;
+  session_id: string;
+  raw_text: string;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Pipeline
+// ---------------------------------------------------------------------------
+
+export interface PipelineRun {
+  id: number;
+  session_id: string;
+  status: "queued" | "running" | "completed" | "failed";
+  job_description: string | null;
+  resume_text: string | null;
+  tailored_resume: string | null;
+  tailored_sections: string | null;
+  cover_letter: string | null;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Draft
+// ---------------------------------------------------------------------------
+
+export interface DraftSection {
+  id: number;
+  draft_id: number;
+  section_id: string;
+  section_title: string;
+  order_index: number;
+  original_text: string;
+  current_text: string;
+  proposed_text: string | null;
+  last_feedback: "liked" | "disliked" | null;
+  editable: boolean;
+}
+
+export interface Draft {
+  id: number;
+  session_id: string;
+  status: "drafting" | "approved" | "applied";
+  starting_source: "base" | "tailored";
+  job_description: string | null;
+  sections: DraftSection[];
+  created_at: string;
+}
+
+export interface ChatMessage {
+  role: "user" | "assistant" | "system";
+  content: string;
+}
+
+// ---------------------------------------------------------------------------
+// Application
+// ---------------------------------------------------------------------------
+
+export interface Application {
+  id: number;
+  session_id: string;
+  status: string;
+  company_name: string | null;
+  role_title: string | null;
+  portal_url: string | null;
+  job_board: string | null;
+  created_at: string;
+}
+
+// ---------------------------------------------------------------------------
+// Autofill
+// ---------------------------------------------------------------------------
+
+export interface DetectedField {
+  selector: string;
+  fieldType: string;
+  label: string;
+  confidence: number;
+  value?: string;
+  filled: boolean;
+  manual: boolean;
+}
+
+export interface AutofillProgress {
+  total: number;
+  filled: number;
+  manual: number;
+  skipped: number;
+  currentField: string | null;
+  paused: boolean;
+  completed: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Extension pages / navigation
+// ---------------------------------------------------------------------------
+
+export type PageId =
+  | "login"
+  | "profile-setup"
+  | "job-description"
+  | "resume-select"
+  | "section-editor"
+  | "cover-letter"
+  | "autofill";
