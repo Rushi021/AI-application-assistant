@@ -58,6 +58,23 @@ _ALL_SECTION_KEYWORDS = _DATE_SUBSECTION_TYPES | _EDUCATION_TYPES | _SKILLS_TYPE
     "languages", "references", "coursework", "relevant coursework",
 }
 
+# Ordered (substring, type) for contains-based section-type resolution; first match wins.
+# More specific substrings must appear before broader ones (e.g. "technical skills" before "skills").
+_SECTION_TYPE_CONTAINS: List[tuple] = [
+    ("technical skills", "skills"),
+    ("education", "education"),
+    ("work experience", "date"),
+    ("professional experience", "date"),
+    ("academic projects", "date"),
+    ("personal projects", "date"),
+    ("leadership", "date"),
+    ("volunteer", "date"),
+    ("activities", "date"),
+    ("experience", "date"),
+    ("projects", "date"),
+    ("skills", "skills"),
+]
+
 # ---------------------------------------------------------------------------
 # Regex patterns
 # ---------------------------------------------------------------------------
@@ -239,8 +256,9 @@ def _is_section_heading(block: Block) -> bool:
     """
     Detect section headers with a clean priority chain:
     1. Known keyword match (most reliable)
-    2. Heading style + keyword match
-    3. Short ALL-CAPS line with heading style (<=5 words)
+    2. Heading style + ALL CAPS + short line
+    3. ALL CAPS + short line + known keyword (fallback for unstyled docs)
+    4. Fallback: non-bullet, short (<=6 words), all caps — treat as section even if not in keyword set (e.g. "Relevant Experience", "Additional Info")
     """
     if not block.text:
         return False
@@ -250,12 +268,17 @@ def _is_section_heading(block: Block) -> bool:
     # Priority 2: heading style + ALL CAPS + short line
     if block.is_heading_style and block.all_caps and len(block.text.split()) <= 5:
         return True
-    # Priority 3: ALL CAPS + short line + NOT a bullet (fallback for unstyled docs)
+    # Priority 3: ALL CAPS + short line + NOT a bullet + known keyword
     if (block.all_caps
             and not block.is_bullet
             and len(block.text.split()) <= 4
             and _is_known_section_heading(block.text)):
         return True  # already caught by P1, but explicit
+    # Priority 4: modular fallback — unknown section names still start a new section
+    if (not block.is_bullet
+            and block.all_caps
+            and len(block.text.split()) <= 6):
+        return True
     return False
 
 
@@ -318,13 +341,14 @@ def _make_chunk(
     blocks: List[Block],
     sec_idx: int,
     editable: bool = True,
+    group: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build one canonical section/sub-section dict from a contiguous block range."""
     paras = [_build_paragraph_entry(b) for b in blocks]
     content = "\n".join(b.text for b in blocks if b.text)
     para_start = blocks[0].idx if blocks else 0
     para_end = (blocks[-1].idx + 1) if blocks else 0
-    return {
+    out: Dict[str, Any] = {
         "id": _make_section_id(title, sec_idx),
         "title": title,
         "editable": editable,
@@ -334,6 +358,9 @@ def _make_chunk(
         "content": content,
         "paragraphs": paras,
     }
+    if group is not None:
+        out["group"] = group
+    return out
 
 
 def _has_date_range(text: str) -> bool:
@@ -344,6 +371,16 @@ def _has_date_range(text: str) -> bool:
     if _YEAR_PATTERN.search(text):
         return True
     return False
+
+
+def _is_date_only_line(text: str) -> bool:
+    """Return True when the stripped text is only a date range (e.g. 'Jun 2023 - Jun 2024')."""
+    stripped = text.strip()
+    if len(stripped) > 30 or not stripped:
+        return False
+    if "," in stripped:
+        return False
+    return _has_date_range(stripped)
 
 
 # ---------------------------------------------------------------------------
@@ -375,7 +412,11 @@ def _chunk_date_subsections(
 
         # Is this a sub-section header? (non-bullet with date/timeline)
         if not block.is_bullet and _has_date_range(block.text):
-            # Save previous sub-section
+            if current_blocks and _is_date_only_line(block.text):
+                current_blocks[-1].text += "\t" + block.text
+                block.text = ""
+                current_blocks.append(block)
+                continue
             if current_blocks:
                 title = current_title or "(General)"
                 subsections.append((title, current_blocks))
@@ -384,6 +425,9 @@ def _chunk_date_subsections(
             current_blocks = [block]
         else:
             # Attach to current sub-section
+            # Reference: non-bullet non-date line (e.g. location) merges into current header
+            if (not block.is_bullet and not _has_date_range(block.text) and current_title is not None):
+                current_title = current_title + " | " + block.text
             current_blocks.append(block)
 
     # Save last sub-section
@@ -510,16 +554,22 @@ def _chunk_flat(
 
 def _get_section_type(heading_text: str) -> str:
     """
-    Determine the section type from its heading text.
+    Determine the section type from its heading text (modular: exact match, then contains, then flat).
     Returns 'date', 'education', 'skills', or 'flat'.
     """
     norm = _normalize_heading_text(heading_text)
+    # 1. Exact match (current behavior)
     if norm in _DATE_SUBSECTION_TYPES:
         return "date"
     if norm in _EDUCATION_TYPES:
         return "education"
     if norm in _SKILLS_TYPES:
         return "skills"
+    # 2. Contains match — e.g. "Technical Skills & Tools", "Relevant Work Experience"
+    for substring, sec_type in _SECTION_TYPE_CONTAINS:
+        if substring in norm:
+            return sec_type
+    # 3. Default
     return "flat"
 
 
@@ -542,9 +592,11 @@ def parse_resume_to_json(file_bytes: bytes) -> Dict[str, Any]:
     sections: List[Dict[str, Any]] = []
     sec_idx = 0
 
-    # --- Find first section heading ---
+    # --- Find first section heading (skip first block so name line is never treated as section) ---
     first_heading_idx: Optional[int] = None
     for bi, block in enumerate(blocks):
+        if bi == 0:
+            continue  # first paragraph is typically name/title; never use as section boundary
         if _is_section_heading(block):
             first_heading_idx = bi
             break
@@ -552,7 +604,7 @@ def parse_resume_to_json(file_bytes: bytes) -> Dict[str, Any]:
     if first_heading_idx is None:
         # No section headings found — treat entire document as one editable section
         logger.warning("No section headings found; treating as single section")
-        sections.append(_make_chunk("Full Resume", blocks, sec_idx))
+        sections.append(_make_chunk("Full Resume", blocks, sec_idx, group="Resume"))
         return {"sections": sections}
 
     # --- Header chunk (everything before first heading) ---
@@ -560,7 +612,7 @@ def parse_resume_to_json(file_bytes: bytes) -> Dict[str, Any]:
         header_blocks = blocks[:first_heading_idx]
         header_content = "\n".join(b.text for b in header_blocks if b.text)
         if header_content:
-            sections.append(_make_chunk("Header", header_blocks, sec_idx, editable=False))
+            sections.append(_make_chunk("Header", header_blocks, sec_idx, editable=False, group="Header"))
             sec_idx += 1
 
     # --- Phase 2: Process sections ---
@@ -579,49 +631,49 @@ def parse_resume_to_json(file_bytes: bytes) -> Dict[str, Any]:
 
         section_type = _get_section_type(heading_block.text)
 
+        main_heading = heading_block.text
         if section_type == "date":
             subsections = _chunk_date_subsections(content_blocks, heading_block)
             if len(subsections) <= 1:
-                # No meaningful sub-sections — treat as flat with heading included
                 all_blocks = [heading_block] + content_blocks
-                sections.append(_make_chunk(heading_block.text, all_blocks, sec_idx))
+                sections.append(_make_chunk(main_heading, all_blocks, sec_idx, group=main_heading))
                 sec_idx += 1
             else:
                 for sub_title, sub_blocks in subsections:
-                    sections.append(_make_chunk(sub_title, sub_blocks, sec_idx))
+                    sections.append(_make_chunk(sub_title, sub_blocks, sec_idx, group=main_heading))
                     sec_idx += 1
 
         elif section_type == "education":
             subsections = _chunk_education_subsections(content_blocks, heading_block)
             if len(subsections) <= 1:
                 all_blocks = [heading_block] + content_blocks
-                sections.append(_make_chunk(heading_block.text, all_blocks, sec_idx))
+                sections.append(_make_chunk(main_heading, all_blocks, sec_idx, group=main_heading))
                 sec_idx += 1
             else:
                 for sub_title, sub_blocks in subsections:
-                    sections.append(_make_chunk(sub_title, sub_blocks, sec_idx))
+                    sections.append(_make_chunk(sub_title, sub_blocks, sec_idx, group=main_heading))
                     sec_idx += 1
 
         elif section_type == "skills":
             subsections = _chunk_skills_subsections(content_blocks, heading_block)
             if len(subsections) <= 1:
                 all_blocks = [heading_block] + content_blocks
-                sections.append(_make_chunk(heading_block.text, all_blocks, sec_idx))
+                sections.append(_make_chunk(main_heading, all_blocks, sec_idx, group=main_heading))
                 sec_idx += 1
             else:
                 for sub_title, sub_blocks in subsections:
-                    sections.append(_make_chunk(sub_title, sub_blocks, sec_idx))
+                    sections.append(_make_chunk(sub_title, sub_blocks, sec_idx, group=main_heading))
                     sec_idx += 1
 
         else:
             # Flat section (Awards, Certifications, Summary, etc.)
             all_blocks = [heading_block] + content_blocks
-            sections.append(_make_chunk(heading_block.text, all_blocks, sec_idx))
+            sections.append(_make_chunk(main_heading, all_blocks, sec_idx, group=main_heading))
             sec_idx += 1
 
     # Fallback: nothing parsed
     if not sections:
-        sections.append(_make_chunk("Full Resume", blocks, sec_idx))
+        sections.append(_make_chunk("Full Resume", blocks, sec_idx, group="Resume"))
 
     logger.info(
         "resume_parser: %d sections — %s",

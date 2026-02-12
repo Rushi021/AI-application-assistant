@@ -8,15 +8,17 @@ import os
 from docx import Document
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
+from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
-from app.common.adapters.sqlalchemy_repos import SqlAlchemyResumeRepo, SqlAlchemyPipelineRunRepo
+from app.common.adapters.sqlalchemy_repos import SqlAlchemyPipelineRunRepo, SqlAlchemyResumeRepo
 from app.common.errors import not_found
 from app.common.ports import LLMProvider, ResumeStorage
 from app.common.resume_parser import parse_resume_to_json
 from app.core.config import get_settings
 from app.core.deps import get_db, get_llm_provider, get_request_scope, get_resume_storage
 from app.core.security import RequestScope
+from app.modules.ai.prompts.pipeline import build_cover_letter_prompt
 from app.modules.ai.prompts.section_chat import build_section_chat_prompt
 from app.modules.drafts.models import ResumeDraft, ResumeDraftSection
 from app.modules.drafts.repos import DraftRepo, DraftSectionRepo, SectionChatRepo
@@ -24,6 +26,8 @@ from app.modules.drafts.schemas import (
     ChatMessageRead,
     DraftCreate,
     DraftRead,
+    GenerateCoverLetterRequest,
+    GenerateCoverLetterResponse,
     SectionChatRequest,
     SectionChatResponse,
     SectionPatchRequest,
@@ -40,12 +44,27 @@ router = APIRouter(prefix="/drafts", tags=["drafts"])
 # ---------------------------------------------------------------------------
 
 def _copy_run_font(source_font, target_font) -> None:
-    """Copy font properties from source to target."""
-    for attr in ("bold", "italic", "underline", "size", "name", "color"):
+    """Copy font properties from source to target.
+
+    Font.color is read-only in python-docx; it must be set via .color.rgb, not setattr.
+    We copy settable attributes first, then copy color via ColorFormat.rgb when present.
+    """
+    for attr in ("bold", "italic", "underline", "size", "name"):
         if hasattr(source_font, attr):
             val = getattr(source_font, attr)
             if val is not None and hasattr(target_font, attr):
-                setattr(target_font, attr, val)
+                try:
+                    setattr(target_font, attr, val)
+                except (AttributeError, TypeError):
+                    pass
+    # Font.color has no setter; copy via .color.rgb to avoid AttributeError
+    try:
+        if hasattr(source_font, "color") and source_font.color is not None:
+            src_rgb = getattr(source_font.color, "rgb", None)
+            if src_rgb is not None and hasattr(target_font, "color") and target_font.color is not None:
+                target_font.color.rgb = src_rgb
+    except (AttributeError, TypeError):
+        pass
 
 
 def _apply_fmt_to_run(run, fmt: dict) -> None:
@@ -63,6 +82,42 @@ def _apply_fmt_to_run(run, fmt: dict) -> None:
     if fmt.get("font_size_pt") is not None:
         from docx.shared import Pt
         run.font.size = Pt(fmt["font_size_pt"])
+
+
+def _build_cover_letter_docx(
+    header_text: str,
+    body_text: str,
+    parsed_json: dict | None = None,
+    header_para_start: int | None = None,
+    header_para_end: int | None = None,
+) -> bytes:
+    """
+    Build a .docx with resume header at top, then cover letter body.
+    Uses header formatting from parsed_json when available.
+    """
+    doc = Document()
+    para_fmt_lookup: dict[int, dict] = {}
+    if parsed_json:
+        for sec_json in parsed_json.get("sections", []):
+            for p in sec_json.get("paragraphs", []):
+                para_fmt_lookup[p["idx"]] = p.get("fmt", {})
+
+    header_lines = [ln.strip() for ln in header_text.split("\n") if ln.strip()]
+    for i, line in enumerate(header_lines):
+        p = doc.add_paragraph()
+        run = p.add_run(line)
+        para_idx = (header_para_start + i) if header_para_start is not None and header_para_end is not None else None
+        if para_idx is not None and para_idx in para_fmt_lookup:
+            _apply_fmt_to_run(run, para_fmt_lookup[para_idx])
+
+    body_lines = body_text.split("\n")
+    for line in body_lines:
+        doc.add_paragraph(line)
+
+    out = io.BytesIO()
+    doc.save(out)
+    out.seek(0)
+    return out.read()
 
 
 def _apply_sections_to_docx(
@@ -96,28 +151,51 @@ def _apply_sections_to_docx(
         if para_start is None or para_end is None:
             continue
 
-        # Split section text into lines (one per paragraph in the range)
         lines = sec.current_text.split("\n")
         target_paras = paragraphs[para_start:para_end]
 
+        title_date_merge = (
+            len(target_paras) == len(lines) + 1
+            and lines
+            and "\t" in lines[0]
+        )
+
         for pi, para in enumerate(target_paras):
-            new_text = lines[pi] if pi < len(lines) else ""
+            if title_date_merge and pi == 1:
+                new_text = ""
+            elif title_date_merge and pi > 1:
+                new_text = lines[pi - 1] if pi - 1 < len(lines) else ""
+            elif title_date_merge and pi == 0:
+                new_text = lines[0]
+            else:
+                new_text = lines[pi] if pi < len(lines) else ""
             abs_idx = para_start + pi
 
-            # Skip empty original paragraphs that are just spacing
             if not para.text.strip() and not new_text:
                 continue
 
-            # Preserve font from original first run
             first_run = para.runs[0] if para.runs else None
             para.clear()
-            new_run = para.add_run(new_text)
 
-            if first_run is not None:
-                _copy_run_font(first_run.font, new_run.font)
-            elif abs_idx in para_fmt_lookup:
-                # Use stored JSON formatting as fallback
-                _apply_fmt_to_run(new_run, para_fmt_lookup[abs_idx])
+            if ":" in new_text and (first_run is not None or abs_idx in para_fmt_lookup):
+                before_colon, after_colon = new_text.split(":", 1)
+                run1 = para.add_run(before_colon + ":")
+                run2 = para.add_run(after_colon)
+                if first_run is not None:
+                    _copy_run_font(first_run.font, run1.font)
+                elif abs_idx in para_fmt_lookup:
+                    _apply_fmt_to_run(run1, para_fmt_lookup[abs_idx])
+                run2.font.bold = False
+                if first_run is not None and first_run.font.size:
+                    run2.font.size = first_run.font.size
+                if first_run is not None and first_run.font.name:
+                    run2.font.name = first_run.font.name
+            else:
+                new_run = para.add_run(new_text)
+                if first_run is not None:
+                    _copy_run_font(first_run.font, new_run.font)
+                elif abs_idx in para_fmt_lookup:
+                    _apply_fmt_to_run(new_run, para_fmt_lookup[abs_idx])
 
     out = io.BytesIO()
     doc.save(out)
@@ -224,6 +302,7 @@ def create_draft(
             original_text=sec.get("content", ""),
             current_text=sec.get("content", ""),
             editable=sec.get("editable", True),
+            section_group=sec.get("group"),
             para_start=sec.get("para_start"),
             para_end=sec.get("para_end"),
         )
@@ -239,6 +318,7 @@ def create_draft(
         starting_source=created_draft.starting_source,
         status=created_draft.status,
         job_description=created_draft.job_description,
+        cover_letter=created_draft.cover_letter,
         created_at=created_draft.created_at,
         updated_at=created_draft.updated_at,
         sections=[SectionRead.model_validate(s) for s in created_sections],
@@ -267,6 +347,7 @@ def get_draft(
         starting_source=draft.starting_source,
         status=draft.status,
         job_description=draft.job_description,
+        cover_letter=draft.cover_letter,
         created_at=draft.created_at,
         updated_at=draft.updated_at,
         sections=[SectionRead.model_validate(s) for s in sections],
@@ -395,6 +476,108 @@ def apply_section(
     return SectionRead.model_validate(updated)
 
 
+@router.post("/{draft_id}/generate-cover-letter", response_model=GenerateCoverLetterResponse)
+def generate_cover_letter(
+    draft_id: int,
+    payload: GenerateCoverLetterRequest = GenerateCoverLetterRequest(),
+    scope: RequestScope = Depends(get_request_scope),
+    db: Session = Depends(get_db),
+    llm: LLMProvider = Depends(get_llm_provider),
+    resume_storage: ResumeStorage = Depends(get_resume_storage),
+) -> GenerateCoverLetterResponse:
+    """
+    Generate cover letter from the draft's finalized resume (all section current_text).
+    Saves to draft and to output_cover_letter_path. Use after apply-all or for Regenerate.
+    """
+    draft_repo = DraftRepo(db)
+    draft = draft_repo.get_by_scope(scope.session_id, draft_id)
+    if not draft:
+        raise not_found("Draft not found")
+    if not draft.job_description:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Draft has no job description; cannot generate cover letter",
+        )
+
+    section_repo = DraftSectionRepo(db)
+    sections = section_repo.list_by_draft(draft_id)
+    if not sections:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Draft has no sections",
+        )
+    finalized_resume_text = "\n\n".join(s.current_text for s in sections)
+
+    cover_letter_instructions = payload.cover_letter_instructions
+    if cover_letter_instructions is None and draft.run_id:
+        run_repo = SqlAlchemyPipelineRunRepo(db)
+        run = run_repo.get_by_scope(scope.session_id, draft.run_id)
+        if run:
+            cover_letter_instructions = run.cover_letter_instructions
+
+    prompt = build_cover_letter_prompt(
+        draft.job_description,
+        finalized_resume_text,
+        cover_letter_instructions,
+    )
+    try:
+        cover_letter = llm.generate(prompt) or ""
+    except Exception as e:
+        logger.exception("Cover letter LLM failed")
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"LLM failed: {type(e).__name__}: {e!s}",
+        ) from e
+
+    draft.cover_letter = cover_letter
+    db.commit()
+    db.refresh(draft)
+
+    header_section = next(
+        (s for s in sections if s.section_title == "Header" or s.section_group == "Header"),
+        None,
+    )
+    header_text = header_section.current_text if header_section else ""
+    parsed_json = None
+    header_para_start = header_section.para_start if header_section else None
+    header_para_end = header_section.para_end if header_section else None
+    resume_repo = SqlAlchemyResumeRepo(db)
+    resume = resume_repo.get_by_scope(scope.session_id, draft.base_resume_id)
+    if resume and resume.parsed_json:
+        parsed_json = json.loads(resume.parsed_json)
+
+    docx_bytes = _build_cover_letter_docx(
+        header_text=header_text,
+        body_text=cover_letter,
+        parsed_json=parsed_json,
+        header_para_start=header_para_start,
+        header_para_end=header_para_end,
+    )
+    settings = get_settings()
+    cl_dir = settings.output_cover_letter_path
+    os.makedirs(cl_dir, exist_ok=True)
+    cl_filename = f"cover_letter_draft_{draft_id}.docx"
+    cl_path = os.path.join(cl_dir, cl_filename)
+    with open(cl_path, "wb") as f:
+        f.write(docx_bytes)
+    logger.info("Saved cover letter to %s", cl_path)
+
+    return GenerateCoverLetterResponse(cover_letter=cover_letter)
+
+
+def _apply_all_detail_from_error(e: BaseException) -> str:
+    """Turn known errors into a clear message for the client."""
+    msg = str(e).lower()
+    if isinstance(e, OperationalError) and ("no such column" in msg or "undefined column" in msg):
+        return (
+            "Database schema is out of date. Run the migration from the backend folder: "
+            "alembic upgrade head"
+        )
+    if "output_resume_path" in msg or "permission" in msg or "access" in msg:
+        return "Cannot write resume to output folder. Check backend output_resume_path and permissions."
+    return str(e)
+
+
 @router.post("/{draft_id}/apply-all", response_class=Response)
 def apply_all(
     draft_id: int,
@@ -408,52 +591,55 @@ def apply_all(
     Uses paragraph ranges (para_start, para_end) for precise mapping,
     with JSON formatting as a fallback.
     """
-    draft_repo = DraftRepo(db)
-    draft = draft_repo.get_by_scope(scope.session_id, draft_id)
-    if not draft:
-        raise not_found("Draft not found")
+    try:
+        draft_repo = DraftRepo(db)
+        draft = draft_repo.get_by_scope(scope.session_id, draft_id)
+        if not draft:
+            raise not_found("Draft not found")
 
-    section_repo = DraftSectionRepo(db)
-    sections = section_repo.list_by_draft(draft_id)
-    if not sections:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Draft has no sections",
+        section_repo = DraftSectionRepo(db)
+        sections = section_repo.list_by_draft(draft_id)
+        if not sections:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Draft has no sections",
+            )
+
+        resume_repo = SqlAlchemyResumeRepo(db)
+        resume = resume_repo.get_by_scope(scope.session_id, draft.base_resume_id)
+        if not resume:
+            raise not_found("Base resume not found")
+
+        parsed_json = json.loads(resume.parsed_json) if resume.parsed_json else None
+
+        file_bytes = resume_storage.get_file_bytes(resume.file_key)
+        out_bytes = _apply_sections_to_docx(file_bytes, sections, parsed_json)
+
+        draft_repo.update_status(scope.session_id, draft_id, "approved")
+
+        filename = f"final_{resume.original_filename}"
+        if not filename.lower().endswith(".docx"):
+            filename += ".docx"
+
+        settings = get_settings()
+        output_dir = settings.output_resume_path
+        os.makedirs(output_dir, exist_ok=True)
+        save_path = os.path.join(output_dir, filename)
+        with open(save_path, "wb") as f:
+            f.write(out_bytes)
+        logger.info("Saved tailored resume to %s", save_path)
+
+        return Response(
+            content=out_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
-
-    # Load original resume docx
-    resume_repo = SqlAlchemyResumeRepo(db)
-    resume = resume_repo.get_by_scope(scope.session_id, draft.base_resume_id)
-    if not resume:
-        raise not_found("Base resume not found")
-
-    # Load parsed_json for formatting reference
-    parsed_json = json.loads(resume.parsed_json) if resume.parsed_json else None
-
-    file_bytes = resume_storage.get_file_bytes(resume.file_key)
-    out_bytes = _apply_sections_to_docx(file_bytes, sections, parsed_json)
-
-    # Mark draft as approved
-    draft_repo.update_status(scope.session_id, draft_id, "approved")
-
-    filename = f"final_{resume.original_filename}"
-    if not filename.lower().endswith(".docx"):
-        filename += ".docx"
-
-    # Auto-save to local output directory
-    settings = get_settings()
-    output_dir = settings.output_resume_path
-    os.makedirs(output_dir, exist_ok=True)
-    save_path = os.path.join(output_dir, filename)
-    with open(save_path, "wb") as f:
-        f.write(out_bytes)
-    logger.info("Saved tailored resume to %s", save_path)
-
-    return Response(
-        content=out_bytes,
-        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("apply_all failed for draft_id=%s", draft_id)
+        detail = _apply_all_detail_from_error(e)
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=detail) from e
 
 
 @router.get("/{draft_id}/sections/{section_id}/history", response_model=list[ChatMessageRead])
