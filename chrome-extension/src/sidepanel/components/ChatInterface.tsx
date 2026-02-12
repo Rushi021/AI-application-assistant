@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { chatSection, getSectionHistory } from "../services/api";
 import type { ChatMessage } from "@/shared/types";
+import SectionContentBlock from "./SectionContentBlock";
 
 interface ChatInterfaceProps {
   draftId: number;
@@ -108,7 +109,15 @@ export default function ChatInterface({
                   : "bg-white border text-gray-800"
               }`}
             >
-              <pre className="whitespace-pre-wrap font-sans">{msg.content}</pre>
+              {msg.role === "assistant" ? (
+                <SectionContentBlock
+                  text={msg.content}
+                  headerLabel="Header"
+                  contentLabel="Content"
+                />
+              ) : (
+                <pre className="whitespace-pre-wrap font-sans">{msg.content}</pre>
+              )}
             </div>
           ))
         )}

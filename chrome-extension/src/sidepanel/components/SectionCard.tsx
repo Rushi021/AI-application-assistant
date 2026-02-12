@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { DraftSection } from "@/shared/types";
+import SectionContentBlock from "./SectionContentBlock";
 
 interface SectionCardProps {
   section: DraftSection;
@@ -67,9 +68,12 @@ export default function SectionCard({
           {section.proposed_text && !editing && (
             <div className="bg-primary-50 border border-primary-200 rounded-lg p-2">
               <p className="text-[10px] font-medium text-primary-700 mb-1">AI Proposed Changes:</p>
-              <pre className="text-xs text-gray-800 whitespace-pre-wrap font-sans leading-relaxed">
-                {section.proposed_text}
-              </pre>
+              <SectionContentBlock
+                text={section.proposed_text}
+                headerLabel="Header"
+                contentLabel="Content"
+                className="bg-white rounded-md p-2"
+              />
               <div className="flex gap-2 mt-2">
                 <button
                   onClick={onAcceptProposed}
@@ -112,9 +116,9 @@ export default function SectionCard({
               </div>
             </div>
           ) : (
-            <pre className="text-xs text-gray-700 whitespace-pre-wrap font-sans leading-relaxed bg-gray-50 rounded-lg p-2">
-              {section.current_text}
-            </pre>
+            <div className="bg-gray-50 rounded-lg p-2">
+              <SectionContentBlock text={section.current_text} />
+            </div>
           )}
 
           {/* Actions */}

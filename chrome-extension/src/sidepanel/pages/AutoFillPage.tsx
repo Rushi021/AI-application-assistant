@@ -30,20 +30,43 @@ export default function AutoFillPage() {
         return;
       }
 
-      // Inject content script if not already injected
+      // Check for restricted URLs where content scripts cannot run
+      const url = tab.url ?? "";
+      const restrictedProtocols = ["chrome:", "edge:", "about:", "chrome-extension:", "moz-extension:"];
+      const isRestricted = restrictedProtocols.some((p) => url.startsWith(p));
+      if (isRestricted) {
+        setError(
+          "Auto-fill cannot run on this page. Open a job application page (e.g., LinkedIn, Indeed, Lever, Greenhouse) and try again."
+        );
+        setStarted(false);
+        return;
+      }
+
+      // Inject content script (required for pages opened before extension load, or when manifest injection missed)
       try {
         await chrome.scripting.executeScript({
           target: { tabId: tab.id },
           files: ["content/content.js"],
         });
-      } catch {
-        // Script may already be injected
+        // Give the content script a moment to register its message listener
+        await new Promise((r) => setTimeout(r, 150));
+      } catch (injectErr) {
+        // Injection may fail on restricted pages; we already checked above
+        console.warn("Content script injection:", injectErr);
       }
 
       // Send start message to content script
       chrome.tabs.sendMessage(tab.id, { type: MSG.START_AUTOFILL }, (response) => {
         if (chrome.runtime.lastError) {
-          setError("Could not connect to the page. Try refreshing the page.");
+          const errMsg = chrome.runtime.lastError.message ?? "";
+          const isConnectionError =
+            errMsg.includes("Receiving end does not exist") ||
+            errMsg.includes("Could not establish connection");
+          setError(
+            isConnectionError
+              ? "Could not connect to the page. Try refreshing the page, then click Start Auto-Fill again."
+              : `Connection failed: ${errMsg}`
+          );
           setStarted(false);
         } else if (response?.error) {
           setError(response.error);

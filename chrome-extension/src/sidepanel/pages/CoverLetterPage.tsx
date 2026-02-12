@@ -1,30 +1,29 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAppStore } from "../store";
-import { runPipeline } from "../services/api";
+import { generateCoverLetter } from "../services/api";
 
 export default function CoverLetterPage() {
-  const { coverLetter, setCoverLetter, jobDescription, selectedResumeId, pipelineRun, setPage } = useAppStore();
+  const { draft, coverLetter, setCoverLetter, setPage } = useAppStore();
   const [text, setText] = useState(coverLetter);
   const [regenerating, setRegenerating] = useState(false);
   const [instructions, setInstructions] = useState("");
   const [showInstructions, setShowInstructions] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    setText(coverLetter);
+  }, [coverLetter]);
+
   const handleRegenerate = async () => {
-    if (!jobDescription) return;
+    if (!draft) return;
     setRegenerating(true);
     setError(null);
     try {
-      const run = await runPipeline({
-        job_description: jobDescription,
-        resume_id: selectedResumeId ?? undefined,
-        resume_text: pipelineRun?.tailored_resume ?? undefined,
+      const res = await generateCoverLetter(draft.id, {
         cover_letter_instructions: instructions || undefined,
       });
-      if (run.cover_letter) {
-        setText(run.cover_letter);
-        setCoverLetter(run.cover_letter);
-      }
+      setText(res.cover_letter);
+      setCoverLetter(res.cover_letter);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to regenerate");
     } finally {

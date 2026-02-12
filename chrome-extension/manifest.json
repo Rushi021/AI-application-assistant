@@ -47,6 +47,7 @@
     }
   ],
   "host_permissions": [
+    "<all_urls>",
     "http://localhost:8000/*",
     "https://oauth2.googleapis.com/*",
     "https://www.googleapis.com/*"

@@ -1,12 +1,30 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useAppStore } from "../store";
-import { patchSection, applySection, applyAllSections } from "../services/api";
+import { patchSection, applySection, applyAllSections, generateCoverLetter, getDraft, ApiError } from "../services/api";
 import type { DraftSection } from "@/shared/types";
 import SectionCard from "../components/SectionCard";
 import ChatInterface from "../components/ChatInterface";
 
+const OTHER_GROUP = "Other";
+
+function groupSectionsByGroup(sections: DraftSection[]): { groupTitle: string; sections: DraftSection[] }[] {
+  const sorted = [...sections].sort((a, b) => a.order_index - b.order_index);
+  const byGroup = new Map<string, DraftSection[]>();
+  for (const s of sorted) {
+    const key = s.section_group ?? OTHER_GROUP;
+    if (!byGroup.has(key)) byGroup.set(key, []);
+    byGroup.get(key)!.push(s);
+  }
+  const entries = Array.from(byGroup.entries()).sort((a, b) => {
+    const orderA = a[1][0]?.order_index ?? 0;
+    const orderB = b[1][0]?.order_index ?? 0;
+    return orderA - orderB;
+  });
+  return entries.map(([groupTitle, secs]) => ({ groupTitle, sections: secs }));
+}
+
 export default function SectionEditorPage() {
-  const { draft, setDraft, updateSection, coverLetter, setPage } = useAppStore();
+  const { draft, setDraft, updateSection, setCoverLetter, setPage } = useAppStore();
   const [chatSectionId, setChatSectionId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,21 +78,35 @@ export default function SectionEditorPage() {
     setSaving(true);
     setError(null);
     try {
-      const blob = await applyAllSections(draft.id);
-      // Save the blob for later download / auto-fill file upload
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `tailored_resume_${draft.id}.docx`;
-      // Don't trigger download automatically - just save the state
-      // User can download from the cover letter page
-      setPage("cover-letter");
+      await applyAllSections(draft.id);
+      setPage("autofill");
+      generateCoverLetter(draft.id)
+        .then((res) => {
+          setCoverLetter(res.cover_letter);
+          return getDraft(draft.id);
+        })
+        .then((updated) => setDraft(updated))
+        .catch(() => {});
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to apply changes");
+      if (err instanceof ApiError && err.status === 500) {
+        try {
+          const parsed = JSON.parse(err.body) as { detail?: string };
+          setError(parsed.detail ?? err.message);
+        } catch {
+          setError(err.message);
+        }
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to apply changes");
+      }
     } finally {
       setSaving(false);
     }
   };
+
+  const sectionGroups = useMemo(
+    () => groupSectionsByGroup(draft.sections),
+    [draft.sections]
+  );
 
   return (
     <div className="flex h-screen">
@@ -91,25 +123,32 @@ export default function SectionEditorPage() {
           </p>
         </div>
 
-        {/* Section list */}
-        <div className="flex-1 overflow-y-auto px-4 py-2 space-y-2">
-          {draft.sections
-            .sort((a: DraftSection, b: DraftSection) => a.order_index - b.order_index)
-            .map((section: DraftSection) => (
-              <SectionCard
-                key={section.section_id}
-                section={section}
-                chatOpen={chatSectionId === section.section_id}
-                onEdit={(text) => handleEdit(section.section_id, text)}
-                onOpenChat={() =>
-                  setChatSectionId(
-                    chatSectionId === section.section_id ? null : section.section_id
-                  )
-                }
-                onAcceptProposed={() => handleAcceptProposed(section.section_id)}
-                onRejectProposed={() => handleRejectProposed(section.section_id)}
-              />
-            ))}
+        {/* Section list: main section headers with sub-section cards */}
+        <div className="flex-1 overflow-y-auto px-4 py-2 space-y-4">
+          {sectionGroups.map(({ groupTitle, sections: groupSections }) => (
+            <div key={groupTitle} className="space-y-2">
+              <h2 className="text-sm font-semibold text-gray-700 sticky top-0 bg-white/95 py-1 -mx-1 px-1">
+                {groupTitle}
+              </h2>
+              <div className="space-y-2">
+                {groupSections.map((section: DraftSection) => (
+                  <SectionCard
+                    key={section.section_id}
+                    section={section}
+                    chatOpen={chatSectionId === section.section_id}
+                    onEdit={(text) => handleEdit(section.section_id, text)}
+                    onOpenChat={() =>
+                      setChatSectionId(
+                        chatSectionId === section.section_id ? null : section.section_id
+                      )
+                    }
+                    onAcceptProposed={() => handleAcceptProposed(section.section_id)}
+                    onRejectProposed={() => handleRejectProposed(section.section_id)}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
 
         {/* Footer */}

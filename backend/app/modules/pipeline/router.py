@@ -1,20 +1,17 @@
 import json
 import logging
-import os
 from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.responses import Response
 from sqlalchemy.orm import Session
 
 from app.common.adapters.sqlalchemy_repos import SqlAlchemyPipelineRunRepo, SqlAlchemyResumeRepo
 from app.common.errors import not_found
 from app.common.ports import LLMProvider, ResumeStorage
 from app.common.resume_parser import get_full_text, parse_resume_to_json
-from app.core.config import get_settings
 from app.core.deps import get_db, get_llm_provider, get_request_scope, get_resume_storage
 from app.core.security import RequestScope
-from app.modules.ai.orchestrator import run_tailor_and_cover_letter
+from app.modules.ai.orchestrator import run_tailor_only
 from app.modules.pipeline.models import PipelineRun
 from app.modules.pipeline.schemas import PipelineRunCreate, PipelineRunRead
 
@@ -98,12 +95,11 @@ def create_run(
     )
     created = repo.create(run)
     try:
-        tailored_resume, tailored_sections_json, cover_letter = run_tailor_and_cover_letter(
+        tailored_resume, tailored_sections_json = run_tailor_only(
             payload.job_description,
             resume_text,
             llm,
             tailor_instructions=payload.tailor_instructions,
-            cover_letter_instructions=payload.cover_letter_instructions,
             parsed_json=parsed_json,
         )
         repo.update_results(
@@ -112,23 +108,8 @@ def create_run(
             status="completed",
             tailored_resume=tailored_resume,
             tailored_sections=tailored_sections_json,
-            cover_letter=cover_letter,
+            cover_letter=None,
         )
-
-        # Auto-save cover letter to local output directory
-        if cover_letter:
-            try:
-                settings = get_settings()
-                cl_dir = settings.output_cover_letter_path
-                os.makedirs(cl_dir, exist_ok=True)
-                cl_filename = f"cover_letter_run_{created.id}.txt"
-                cl_path = os.path.join(cl_dir, cl_filename)
-                with open(cl_path, "w", encoding="utf-8") as f:
-                    f.write(cover_letter)
-                logger.info("Saved cover letter to %s", cl_path)
-            except Exception:
-                logger.exception("Failed to save cover letter to disk (non-fatal)")
-
     except HTTPException:
         repo.update_results(scope.session_id, created.id, status="failed")
         raise

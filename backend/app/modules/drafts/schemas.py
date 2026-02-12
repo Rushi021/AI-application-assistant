@@ -22,6 +22,7 @@ class SectionRead(BaseModel):
     proposed_text: Optional[str] = None
     last_feedback: Optional[str] = None
     editable: bool = True
+    section_group: Optional[str] = None
     para_start: Optional[int] = None
     para_end: Optional[int] = None
 
@@ -37,6 +38,7 @@ class DraftRead(BaseModel):
     starting_source: str
     status: str
     job_description: Optional[str] = None
+    cover_letter: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     sections: List[SectionRead] = []
@@ -72,3 +74,12 @@ class ChatMessageRead(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class GenerateCoverLetterRequest(BaseModel):
+    """Optional instructions for cover letter generation."""
+    cover_letter_instructions: Optional[str] = None
+
+
+class GenerateCoverLetterResponse(BaseModel):
+    cover_letter: str

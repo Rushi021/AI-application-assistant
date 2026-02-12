@@ -159,3 +159,64 @@ def run_tailor_and_cover_letter(
     cover_letter = llm.generate(cover_letter_prompt)
 
     return (tailored_resume_text or "", tailored_sections_json, cover_letter or "")
+
+
+def run_tailor_only(
+    job_description: str,
+    resume_text: str,
+    llm: LLMProvider,
+    *,
+    tailor_instructions: Optional[str] = None,
+    parsed_json: Optional[Dict[str, Any]] = None,
+) -> Tuple[str, Optional[str]]:
+    """
+    Run resume tailoring only (no cover letter). Saves one LLM call.
+
+    Returns (tailored_resume_text, tailored_sections_json_or_none).
+    """
+    tailored_sections_dict: Optional[Dict[str, str]] = None
+
+    if parsed_json is not None:
+        editable = get_editable_sections(parsed_json)
+        if editable:
+            tailor_prompt = build_tailor_resume_json_prompt(
+                job_description, editable, tailor_instructions,
+            )
+            expected_ids = [sec["id"] for sec in editable]
+            logger.info("Sending section-aware tailor prompt (%d editable sections)", len(editable))
+            raw_response = llm.generate(tailor_prompt)
+            logger.info("LLM raw response (first 2000 chars): %s", (raw_response or "")[:2000])
+            if raw_response:
+                tailored_sections_dict = _parse_llm_json_response(raw_response, expected_ids)
+                returned_ids = set(tailored_sections_dict.keys())
+                expected_set = set(expected_ids)
+                missing = expected_set - returned_ids
+                extra = returned_ids - expected_set
+                if missing:
+                    logger.warning("LLM did not return sections: %s", missing)
+                if extra:
+                    logger.warning("LLM returned unexpected sections: %s", extra)
+
+    if tailored_sections_dict is None:
+        tailor_prompt = build_tailor_resume_prompt(
+            job_description, resume_text, tailor_instructions,
+        )
+        logger.info("Using plain-text tailor prompt (no parsed_json)")
+        raw_response = llm.generate(tailor_prompt)
+        tailored_resume_text = raw_response or ""
+    else:
+        if parsed_json:
+            parts = []
+            for sec in parsed_json["sections"]:
+                if sec["id"] in tailored_sections_dict:
+                    parts.append(tailored_sections_dict[sec["id"]])
+                else:
+                    parts.append(sec.get("content", ""))
+            tailored_resume_text = "\n\n".join(parts)
+        else:
+            tailored_resume_text = resume_text
+
+    tailored_sections_json: Optional[str] = None
+    if tailored_sections_dict:
+        tailored_sections_json = json.dumps(tailored_sections_dict)
+    return (tailored_resume_text or "", tailored_sections_json)

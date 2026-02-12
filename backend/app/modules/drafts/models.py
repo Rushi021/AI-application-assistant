@@ -25,6 +25,7 @@ class ResumeDraft(Base):
     starting_source: Mapped[str] = mapped_column(String(20), default="base")  # 'base' or 'tailored'
     status: Mapped[str] = mapped_column(String(20), default="drafting")  # drafting / approved / applied
     job_description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    cover_letter: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -49,6 +50,7 @@ class ResumeDraftSection(Base):
     proposed_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     last_feedback: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)  # liked / disliked / null
     editable: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    section_group: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # main section header e.g. WORK EXPERIENCE
     para_start: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)  # starting paragraph index in docx
     para_end: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)    # ending paragraph index (exclusive)
 

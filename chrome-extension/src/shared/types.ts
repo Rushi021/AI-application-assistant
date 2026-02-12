@@ -124,6 +124,7 @@ export interface DraftSection {
   proposed_text: string | null;
   last_feedback: "liked" | "disliked" | null;
   editable: boolean;
+  section_group?: string | null;
 }
 
 export interface Draft {
@@ -132,6 +133,7 @@ export interface Draft {
   status: "drafting" | "approved" | "applied";
   starting_source: "base" | "tailored";
   job_description: string | null;
+  cover_letter: string | null;
   sections: DraftSection[];
   created_at: string;
 }

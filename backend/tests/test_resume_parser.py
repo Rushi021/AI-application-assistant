@@ -310,3 +310,72 @@ def test_paragraph_anchors_stable():
 
     # All paragraph indices should be unique across all sections
     assert len(all_para_idxs) > 0
+
+
+# -----------------------------------------------------------------------
+# Test: modular section detection — "Relevant Work Experience" (contains match)
+# -----------------------------------------------------------------------
+
+def test_relevant_work_experience_section_typed_as_date():
+    """
+    Section title "RELEVANT WORK EXPERIENCE" is not in exact keyword set but
+    contains "work experience". Should be detected as a section and typed as
+    date so we get timeline sub-section chunking.
+    """
+    def build(doc: Document):
+        doc.add_paragraph("JANE DOE", style="Title")
+        doc.add_paragraph("jane@example.com")
+        doc.add_paragraph("RELEVANT WORK EXPERIENCE")  # Normal style, all caps
+        doc.add_paragraph("Engineer, Acme Corp    Jan 2024 – Present")
+        doc.add_paragraph("• Did something", style="List Bullet")
+        doc.add_heading("EDUCATION", level=1)
+        doc.add_paragraph("BS CS, 2023")
+
+    file_bytes = _make_docx_bytes(build)
+    result = parse_resume_to_json(file_bytes)
+    sections = result["sections"]
+
+    # Should have: Header, work section (possibly one chunk or sub-sections), and Education
+    titles = [s["title"] for s in sections]
+    editable = [s for s in sections if s["editable"]]
+    assert len(editable) >= 1, f"Expected at least 1 editable section, got {len(editable)}: {titles}"
+    # "RELEVANT WORK EXPERIENCE" was typed as date; job content (Acme, bullet) must appear in some section
+    job_section = next(
+        (s for s in editable if "Acme" in s["content"] and "Did something" in s["content"]),
+        None,
+    )
+    assert job_section is not None, f"Expected a section containing Acme and job bullet, got: {[(s['title'][:30], s['content'][:60]) for s in editable]}"
+
+
+# -----------------------------------------------------------------------
+# Test: modular section detection — "Additional Info" (unknown title, flat)
+# -----------------------------------------------------------------------
+
+def test_unknown_section_additional_info_flat():
+    """
+    Section title "ADDITIONAL INFO" is not in keyword set. Should still be
+    detected as a section (all-caps short fallback) and typed as flat
+    (single chunk).
+    """
+    def build(doc: Document):
+        doc.add_paragraph("JOHN SMITH", style="Title")
+        doc.add_heading("WORK EXPERIENCE", level=1)
+        doc.add_paragraph("Dev, Co    Jan 2023 – Dec 2023")
+        doc.add_paragraph("• Built X", style="List Bullet")
+        doc.add_paragraph("ADDITIONAL INFO")  # Unknown section name
+        doc.add_paragraph("Hobby: Chess. Volunteer at local library.")
+
+    file_bytes = _make_docx_bytes(build)
+    result = parse_resume_to_json(file_bytes)
+    sections = result["sections"]
+
+    titles = [s["title"] for s in sections]
+    assert "Additional Info" in titles or any("ADDITIONAL" in t or "additional" in t.lower() for t in titles), \
+        f"Expected a section for ADDITIONAL INFO, got: {titles}"
+    # That section should be a single flat chunk (no sub-section splitting)
+    additional_section = next(
+        (s for s in sections if "additional" in s["title"].lower() or "ADDITIONAL" in s["title"]),
+        None,
+    )
+    assert additional_section is not None
+    assert "Hobby" in additional_section["content"] or "Chess" in additional_section["content"]

@@ -1,4 +1,11 @@
+import sys
+from pathlib import Path
 from logging.config import fileConfig
+
+# Ensure backend root is on path so "app" can be imported when running alembic from backend
+_backend_root = Path(__file__).resolve().parents[3]
+if str(_backend_root) not in sys.path:
+    sys.path.insert(0, str(_backend_root))
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
