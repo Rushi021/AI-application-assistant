@@ -4,6 +4,7 @@ import {
   listResumes,
   scoreResumes,
   uploadResume,
+  deleteResume,
   runPipeline,
   createDraft,
 } from "../services/api";
@@ -26,9 +27,11 @@ export default function ResumeSelectPage() {
 
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [removing, setRemoving] = useState(false);
   const [tailoring, setTailoring] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const fileInputRef2 = useRef<HTMLInputElement>(null);
 
   // Fetch resumes and scores on mount
   useEffect(() => {
@@ -60,7 +63,6 @@ export default function ResumeSelectPage() {
       setResumes(updated);
       setSelectedResumeId(newResume.id);
 
-      // Re-score
       if (jobDescription) {
         const scores = await scoreResumes(jobDescription);
         setResumeScores(scores);
@@ -69,7 +71,31 @@ export default function ResumeSelectPage() {
       setError(err instanceof Error ? err.message : "Upload failed");
     } finally {
       setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+      fileInputRef.current!.value = "";
+      fileInputRef2.current!.value = "";
+    }
+  };
+
+  const handleRemove = async (resumeId: number) => {
+    setRemoving(true);
+    setError(null);
+    try {
+      await deleteResume(resumeId);
+      const updated = resumes.filter((r) => r.id !== resumeId);
+      setResumes(updated);
+      if (selectedResumeId === resumeId) {
+        setSelectedResumeId(updated[0]?.id ?? null);
+      }
+      if (jobDescription && updated.length > 0) {
+        const scores = await scoreResumes(jobDescription);
+        setResumeScores(scores);
+      } else {
+        setResumeScores([]);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to remove resume");
+    } finally {
+      setRemoving(false);
     }
   };
 
@@ -102,11 +128,7 @@ export default function ResumeSelectPage() {
       });
       setPipelineRun(run);
 
-      if (run.cover_letter) {
-        setCoverLetter(run.cover_letter);
-      }
-
-      // Create draft from tailored output
+      // Create draft from tailored output (cover letter generated later on Apply)
       const draft = await createDraft({
         resume_id: resumeId,
         run_id: run.id,
@@ -143,35 +165,71 @@ export default function ResumeSelectPage() {
         </p>
       </div>
 
-      {/* Resume list */}
-      <div className="flex-1 overflow-y-auto px-4 py-2 space-y-2">
-        {resumes.length === 0 ? (
-          <div className="text-center py-8">
-            <svg className="w-12 h-12 mx-auto text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+      {/* Resume slots (max 2) */}
+      <div className="flex-1 overflow-y-auto px-4 py-2 space-y-3">
+        {/* Slot 1 */}
+        {resumes[0] ? (
+          <ResumeCard
+            key={resumes[0].id}
+            resume={resumes[0]}
+            score={resumeScores.find((s) => s.resume_id === resumes[0].id)}
+            selected={selectedResumeId === resumes[0].id}
+            onSelect={() => setSelectedResumeId(resumes[0].id)}
+            onUse={() => handleUse(resumes[0].id)}
+            onTailor={() => handleTailor(resumes[0].id)}
+            onRemove={() => handleRemove(resumes[0].id)}
+            tailoring={tailoring}
+          />
+        ) : (
+          <div
+            onClick={() => !uploading && fileInputRef.current?.click()}
+            className={`flex flex-col items-center justify-center py-6 rounded-lg border-2 border-dashed transition-colors ${
+              uploading ? "border-gray-200 bg-gray-50 cursor-not-allowed" : "border-gray-300 hover:border-primary-400 hover:bg-primary-50/30 cursor-pointer"
+            }`}
+          >
+            <svg className="w-10 h-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
             </svg>
-            <p className="mt-2 text-sm text-gray-500">No resumes uploaded yet.</p>
-            <p className="text-xs text-gray-400">Upload a .docx file to get started.</p>
+            <p className="mt-2 text-sm text-gray-500">Upload resume (.docx)</p>
           </div>
-        ) : (
-          resumes.map((r) => (
+        )}
+
+        {/* Slot 2 - only show when slot 1 is filled or we have 0 resumes */}
+        {resumes.length >= 1 && (
+          resumes[1] ? (
             <ResumeCard
-              key={r.id}
-              resume={r}
-              score={resumeScores.find((s) => s.resume_id === r.id)}
-              selected={selectedResumeId === r.id}
-              onSelect={() => setSelectedResumeId(r.id)}
-              onUse={() => handleUse(r.id)}
-              onTailor={() => handleTailor(r.id)}
+              key={resumes[1].id}
+              resume={resumes[1]}
+              score={resumeScores.find((s) => s.resume_id === resumes[1].id)}
+              selected={selectedResumeId === resumes[1].id}
+              onSelect={() => setSelectedResumeId(resumes[1].id)}
+              onUse={() => handleUse(resumes[1].id)}
+              onTailor={() => handleTailor(resumes[1].id)}
+              onRemove={() => handleRemove(resumes[1].id)}
               tailoring={tailoring}
             />
-          ))
+          ) : (
+            <div
+              onClick={() => !uploading && fileInputRef2.current?.click()}
+              className={`flex flex-col items-center justify-center py-6 rounded-lg border-2 border-dashed transition-colors ${
+                uploading ? "border-gray-200 bg-gray-50 cursor-not-allowed" : "border-gray-300 hover:border-primary-400 hover:bg-primary-50/30 cursor-pointer"
+              }`}
+            >
+              <svg className="w-10 h-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+              </svg>
+              <p className="mt-2 text-sm text-gray-500">Upload another resume (max 2)</p>
+            </div>
+          )
         )}
       </div>
 
       {/* Footer */}
       <div className="px-4 py-3 border-t bg-white space-y-2">
         {error && <p className="text-xs text-red-600">{error}</p>}
+        {(removing || uploading) && (
+          <p className="text-xs text-gray-500">{removing ? "Removing..." : "Uploading..."}</p>
+        )}
         <div className="flex gap-2">
           <button
             onClick={() => setPage("job-description")}
@@ -179,16 +237,25 @@ export default function ResumeSelectPage() {
           >
             Back
           </button>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-            className="flex-1 px-4 py-2 text-sm font-medium text-primary-600 border border-primary-300 rounded-lg hover:bg-primary-50 disabled:opacity-50 transition-colors"
-          >
-            {uploading ? "Uploading..." : "Upload Resume"}
-          </button>
+          {resumes.length < 2 && (
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className="flex-1 px-4 py-2 text-sm font-medium text-primary-600 border border-primary-300 rounded-lg hover:bg-primary-50 disabled:opacity-50 transition-colors"
+            >
+                {uploading ? "Uploading..." : "Upload Resume"}
+            </button>
+          )}
         </div>
         <input
           ref={fileInputRef}
+          type="file"
+          accept=".docx,.doc,.pdf"
+          onChange={handleUpload}
+          className="hidden"
+        />
+        <input
+          ref={fileInputRef2}
           type="file"
           accept=".docx,.doc,.pdf"
           onChange={handleUpload}

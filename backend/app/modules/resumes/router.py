@@ -14,6 +14,7 @@ from app.core.config import get_settings
 from app.core.deps import get_db, get_request_scope, get_resume_storage
 from app.core.security import RequestScope
 from app.common.ports import ResumeStorage
+from app.modules.drafts.models import ResumeDraft
 from app.modules.resumes.models import Resume
 from app.modules.resumes.schemas import ResumeRead
 from app.modules.resumes.scoring import score_resume_against_jd
@@ -118,6 +119,35 @@ def get_resume(
     if not item:
         raise not_found("Resume not found")
     return _resume_to_read(item, storage)
+
+
+@router.delete("/{resume_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_resume(
+    resume_id: int,
+    scope: RequestScope = Depends(get_request_scope),
+    storage: ResumeStorage = Depends(get_resume_storage),
+    db: Session = Depends(get_db),
+) -> None:
+    """Remove a resume from the session. Frees the slot for a new upload."""
+    repo = SqlAlchemyResumeRepo(db)
+    item = repo.get_by_scope(scope.session_id, resume_id)
+    if not item:
+        raise not_found("Resume not found")
+    draft_ref = db.query(ResumeDraft).filter(
+        ResumeDraft.session_id == scope.session_id,
+        ResumeDraft.base_resume_id == resume_id,
+    ).first()
+    if draft_ref:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot remove resume that is used by a draft. Finish or discard the draft first.",
+        )
+    try:
+        storage.delete_file(item.file_key)
+    except Exception as e:
+        logger.warning("Failed to delete resume file %s: %s", item.file_key, e)
+    db.delete(item)
+    db.commit()
 
 
 # ---------------------------------------------------------------------------

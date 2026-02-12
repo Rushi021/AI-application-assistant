@@ -156,6 +156,10 @@ export async function listResumes(): Promise<Resume[]> {
   return request<Resume[]>("/resumes");
 }
 
+export async function deleteResume(resumeId: number): Promise<void> {
+  return request<void>(`/resumes/${resumeId}`, { method: "DELETE" });
+}
+
 export async function scoreResumes(jobDescription: string, resumeIds?: number[]): Promise<ResumeScore[]> {
   const body: Record<string, unknown> = { job_description: jobDescription };
   if (resumeIds) body.resume_ids = resumeIds;
@@ -250,6 +254,16 @@ export async function applyAllSections(draftId: number): Promise<Blob> {
   });
   if (!resp.ok) throw new ApiError(resp.status, await resp.text());
   return resp.blob();
+}
+
+export async function generateCoverLetter(
+  draftId: number,
+  params?: { cover_letter_instructions?: string }
+): Promise<{ cover_letter: string }> {
+  return request<{ cover_letter: string }>(`/drafts/${draftId}/generate-cover-letter`, {
+    method: "POST",
+    body: JSON.stringify(params ?? {}),
+  });
 }
 
 export async function getSectionHistory(draftId: number, sectionId: string): Promise<ChatMessage[]> {

@@ -8,18 +8,31 @@ interface ResumeCardProps {
   onSelect: () => void;
   onUse: () => void;
   onTailor: () => void;
+  onRemove?: () => void;
   tailoring: boolean;
 }
 
-export default function ResumeCard({ resume, score, selected, onSelect, onUse, onTailor, tailoring }: ResumeCardProps) {
+export default function ResumeCard({ resume, score, selected, onSelect, onUse, onTailor, onRemove, tailoring }: ResumeCardProps) {
   return (
     <div
       onClick={onSelect}
-      className={`rounded-lg border-2 p-3 cursor-pointer transition-all ${
+      className={`relative rounded-lg border-2 p-3 cursor-pointer transition-all ${
         selected ? "border-primary-500 bg-primary-50" : "border-gray-200 bg-white hover:border-gray-300"
       }`}
     >
-      <div className="flex items-start justify-between">
+      {onRemove && (
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); onRemove(); }}
+          className="absolute top-2 right-2 w-6 h-6 flex items-center justify-center rounded-full text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+          aria-label="Remove resume"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      )}
+      <div className="flex items-start justify-between pr-8">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <svg className="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
