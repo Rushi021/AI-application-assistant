@@ -159,9 +159,92 @@ export interface Application {
 }
 
 // ---------------------------------------------------------------------------
-// Autofill
+// Autofill - Form Model (State A: Page Intake)
 // ---------------------------------------------------------------------------
 
+export type ConfidenceTier = "high" | "medium" | "low";
+
+export interface FormField {
+  selector: string;
+  fieldType: string;
+  label: string;
+  /** name, id, placeholder, aria-label, autocomplete, data-testid */
+  signals: string[];
+  required: boolean;
+  visible: boolean;
+  enabled: boolean;
+  filled: boolean;
+  manual: boolean;
+  /** Populated after matching; null = no match or low confidence */
+  profileValue: string | null;
+  confidence: number;
+  confidenceTier: ConfidenceTier;
+  /** Section/step if detectable (e.g. "Personal Info", "Experience") */
+  section: string | null;
+}
+
+export interface FormAction {
+  type: "next" | "submit" | "continue";
+  selector: string;
+  label: string;
+}
+
+export type BlockerType = "file_upload" | "captcha" | "otp" | "agreement" | "submit_confirmation";
+
+export interface FormBlocker {
+  type: BlockerType;
+  selector: string;
+  label: string;
+  /** For file_upload: resume | cover_letter | generic */
+  subType?: string;
+  resolved: boolean;
+}
+
+export interface FormModel {
+  fields: FormField[];
+  actions: FormAction[];
+  blockers: FormBlocker[];
+  /** Section/step grouping if detectable */
+  sections: string[];
+}
+
+// ---------------------------------------------------------------------------
+// Autofill - State Machine
+// ---------------------------------------------------------------------------
+
+export type AutofillStateType =
+  | "intake"
+  | "matching"
+  | "apply"
+  | "validate"
+  | "navigate"
+  | "blocked"
+  | "complete"
+  | "stopped";
+
+export interface AutofillProgress {
+  state: AutofillStateType;
+  total: number;
+  filled: number;
+  manual: number;
+  skipped: number;
+  currentField: string | null;
+  currentAction: string | null;
+  paused: boolean;
+  completed: boolean;
+  /** Current step index for multi-step forms */
+  stepIndex: number;
+  /** Detected fields with confidence (for UI preview) */
+  fields: FormField[];
+  /** Active blocker when state=blocked */
+  activeBlocker: FormBlocker | null;
+  /** Validation errors after fill */
+  validationErrors: string[];
+  /** Last filled value for undo */
+  lastFilledField: { selector: string; label: string; previousValue: string } | null;
+}
+
+// Legacy compatibility — keep DetectedField for any external references
 export interface DetectedField {
   selector: string;
   fieldType: string;
@@ -170,16 +253,6 @@ export interface DetectedField {
   value?: string;
   filled: boolean;
   manual: boolean;
-}
-
-export interface AutofillProgress {
-  total: number;
-  filled: number;
-  manual: number;
-  skipped: number;
-  currentField: string | null;
-  paused: boolean;
-  completed: boolean;
 }
 
 // ---------------------------------------------------------------------------

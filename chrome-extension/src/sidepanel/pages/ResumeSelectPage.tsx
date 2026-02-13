@@ -29,6 +29,9 @@ export default function ResumeSelectPage() {
   const [uploading, setUploading] = useState(false);
   const [removing, setRemoving] = useState(false);
   const [tailoring, setTailoring] = useState(false);
+  const [tailorResumeId, setTailorResumeId] = useState<number | null>(null);
+  const [showInstructionsInput, setShowInstructionsInput] = useState(false);
+  const [instructions, setInstructions] = useState("");
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef2 = useRef<HTMLInputElement>(null);
@@ -117,25 +120,62 @@ export default function ResumeSelectPage() {
     }
   };
 
-  const handleTailor = async (resumeId: number) => {
+  const handleTailorClick = (resumeId: number) => {
+    setError(null);
+    setTailorResumeId(resumeId);
+    setShowInstructionsInput(false);
+    setInstructions("");
+  };
+
+  const handleTailorContinue = async () => {
+    if (!tailorResumeId) return;
     setError(null);
     setTailoring(true);
     try {
-      // Run pipeline
       const run = await runPipeline({
         job_description: jobDescription,
-        resume_id: resumeId,
+        resume_id: tailorResumeId,
       });
       setPipelineRun(run);
-
-      // Create draft from tailored output (cover letter generated later on Apply)
       const draft = await createDraft({
-        resume_id: resumeId,
+        resume_id: tailorResumeId,
         run_id: run.id,
         starting_source: "tailored",
         job_description: jobDescription,
       });
       setDraft(draft);
+      setTailorResumeId(null);
+      setShowInstructionsInput(false);
+      setInstructions("");
+      setPage("section-editor");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Tailoring failed");
+    } finally {
+      setTailoring(false);
+    }
+  };
+
+  const handleTailorWithInstructions = async () => {
+    if (!tailorResumeId) return;
+    setError(null);
+    setTailoring(true);
+    try {
+      const run = await runPipeline({
+        job_description: jobDescription,
+        resume_id: tailorResumeId,
+        tailor_instructions: instructions.trim() || undefined,
+      });
+      setPipelineRun(run);
+      const draft = await createDraft({
+        resume_id: tailorResumeId,
+        run_id: run.id,
+        starting_source: "tailored",
+        job_description: jobDescription,
+      });
+      setDraft(draft);
+      setTailorResumeId(null);
+      setShowInstructionsInput(false);
+      setInstructions("");
       setPage("section-editor");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Tailoring failed");
@@ -165,6 +205,72 @@ export default function ResumeSelectPage() {
         </p>
       </div>
 
+      {/* Tailor step: show when tailorResumeId is set */}
+      {tailorResumeId ? (
+        <div className="flex-1 overflow-y-auto px-4 py-2 space-y-3">
+          <div className="rounded-lg border-2 border-primary-200 bg-primary-50/50 p-4 space-y-3">
+            <p className="text-sm font-medium text-gray-900">
+              Tailor: {resumes.find((r) => r.id === tailorResumeId)?.original_filename ?? "Resume"}
+            </p>
+            {!showInstructionsInput ? (
+              <div className="flex gap-2">
+                <button
+                  onClick={() => setShowInstructionsInput(true)}
+                  className="px-3 py-2 text-xs font-medium text-primary-600 border border-primary-300 rounded-lg hover:bg-primary-50 transition-colors"
+                >
+                  Add Additional Instructions
+                </button>
+                <button
+                  onClick={handleTailorContinue}
+                  disabled={tailoring}
+                  className="px-3 py-2 text-xs font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
+                >
+                  {tailoring ? "Tailoring..." : "Continue"}
+                </button>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <textarea
+                  value={instructions}
+                  onChange={(e) => setInstructions(e.target.value)}
+                  placeholder="e.g., Emphasize cloud experience, downplay front-end work..."
+                  className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  rows={3}
+                />
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      setShowInstructionsInput(false);
+                      setInstructions("");
+                    }}
+                    className="px-3 py-2 text-xs font-medium border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                  >
+                    Back
+                  </button>
+                  <button
+                    onClick={handleTailorWithInstructions}
+                    disabled={tailoring}
+                    className="px-3 py-2 text-xs font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
+                  >
+                    {tailoring ? "Tailoring..." : "Tailor"}
+                  </button>
+                </div>
+              </div>
+            )}
+            <button
+              onClick={() => {
+                setTailorResumeId(null);
+                setShowInstructionsInput(false);
+                setInstructions("");
+              }}
+              className="text-xs text-gray-500 hover:text-gray-700"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        <>
       {/* Resume slots (max 2) */}
       <div className="flex-1 overflow-y-auto px-4 py-2 space-y-3">
         {/* Slot 1 */}
@@ -176,7 +282,7 @@ export default function ResumeSelectPage() {
             selected={selectedResumeId === resumes[0].id}
             onSelect={() => setSelectedResumeId(resumes[0].id)}
             onUse={() => handleUse(resumes[0].id)}
-            onTailor={() => handleTailor(resumes[0].id)}
+            onTailor={() => handleTailorClick(resumes[0].id)}
             onRemove={() => handleRemove(resumes[0].id)}
             tailoring={tailoring}
           />
@@ -204,7 +310,7 @@ export default function ResumeSelectPage() {
               selected={selectedResumeId === resumes[1].id}
               onSelect={() => setSelectedResumeId(resumes[1].id)}
               onUse={() => handleUse(resumes[1].id)}
-              onTailor={() => handleTailor(resumes[1].id)}
+              onTailor={() => handleTailorClick(resumes[1].id)}
               onRemove={() => handleRemove(resumes[1].id)}
               tailoring={tailoring}
             />
@@ -223,6 +329,8 @@ export default function ResumeSelectPage() {
           )
         )}
       </div>
+        </>
+      )}
 
       {/* Footer */}
       <div className="px-4 py-3 border-t bg-white space-y-2">

@@ -28,12 +28,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === MSG.START_AUTOFILL) {
-    // Forward to the active tab's content script
+    handleStartAutofill(sendResponse);
+    return true;
+  }
+
+  if (message.type === MSG.STOP_AUTOFILL) {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (tabs[0]?.id) {
-        chrome.tabs.sendMessage(tabs[0].id, message, sendResponse);
+        chrome.tabs.sendMessage(tabs[0].id, message, () => {
+          sendResponse({ success: true });
+        });
       } else {
-        sendResponse({ error: "No active tab" });
+        sendResponse({ success: true });
       }
     });
     return true;
@@ -52,6 +58,64 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 });
+
+// ---------------------------------------------------------------------------
+// Autofill: inject content script and forward to tab
+// ---------------------------------------------------------------------------
+
+async function handleStartAutofill(sendResponse: (response: unknown) => void) {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab?.id) {
+      sendResponse({ error: "No active tab found. Navigate to a job application page first." });
+      return;
+    }
+
+    const url = tab.url ?? "";
+    const restrictedProtocols = ["chrome:", "edge:", "about:", "chrome-extension:", "moz-extension:"];
+    if (restrictedProtocols.some((p) => url.startsWith(p))) {
+      sendResponse({
+        error:
+          "Auto-fill cannot run on this page. Open a job application page (e.g., LinkedIn, Indeed, Lever, Greenhouse) and try again.",
+      });
+      return;
+    }
+
+    // Inject content script (required for pages opened before extension load, or when manifest injection missed)
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ["content/content.js"],
+      });
+      await new Promise((r) => setTimeout(r, 200));
+    } catch (injectErr) {
+      const msg = injectErr instanceof Error ? injectErr.message : String(injectErr);
+      sendResponse({
+        error: `Failed to inject script: ${msg}. Try refreshing the page and ensure you're loading the extension from the 'dist' folder after running 'npm run build'.`,
+      });
+      return;
+    }
+
+    chrome.tabs.sendMessage(tab.id, { type: MSG.START_AUTOFILL }, (response) => {
+      if (chrome.runtime.lastError) {
+        const errMsg = chrome.runtime.lastError.message ?? "";
+        sendResponse({
+          error:
+            errMsg.includes("Receiving end does not exist") ||
+            errMsg.includes("Could not establish connection")
+              ? "Could not connect to the page. Refresh the page fully (Ctrl+Shift+R or Cmd+Shift+R), then click Start Auto-Fill again."
+              : `Connection failed: ${errMsg}`,
+        });
+      } else {
+        sendResponse(response ?? { success: true });
+      }
+    });
+  } catch (err) {
+    sendResponse({
+      error: err instanceof Error ? err.message : "Failed to start auto-fill",
+    });
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Google OAuth via Chrome Identity API
