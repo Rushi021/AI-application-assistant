@@ -77,6 +77,10 @@ export default function AutoFillPage() {
     setStarted(false);
   }, []);
 
+  const handleUndoAll = useCallback(() => {
+    chrome.runtime.sendMessage({ type: MSG.AUTOFILL_UNDO_ALL }).catch(() => {});
+  }, []);
+
   const progress = autofillProgress;
   const isComplete = progress?.completed ?? false;
   const isPaused = progress?.paused ?? false;
@@ -260,12 +264,20 @@ export default function AutoFillPage() {
           {!isComplete ? (
             <>
               {started && (
-                <button
-                  onClick={handleStopAutofill}
-                  className="px-4 py-2 text-sm text-red-600 border border-red-300 rounded-lg hover:bg-red-50"
-                >
-                  Stop
-                </button>
+                <>
+                  <button
+                    onClick={handleUndoAll}
+                    className="px-4 py-2 text-sm text-amber-600 border border-amber-300 rounded-lg hover:bg-amber-50"
+                  >
+                    Undo All
+                  </button>
+                  <button
+                    onClick={handleStopAutofill}
+                    className="px-4 py-2 text-sm text-red-600 border border-red-300 rounded-lg hover:bg-red-50"
+                  >
+                    Stop
+                  </button>
+                </>
               )}
               <button
                 onClick={handleStartAutofill}

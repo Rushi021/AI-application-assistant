@@ -20,12 +20,128 @@ import type {
 } from "@/shared/types";
 import { buildFormModel } from "./form-model";
 import { matchFieldsToProfile } from "./field-matcher";
+import { detectPlatform } from "./adapters";
+import { saveLearnedMapping, normalizeLabel } from "./site-learning";
+import {
+  computeStepFingerprint,
+  waitForStepChange,
+  startPassiveFormMonitor,
+  patchHistoryAPI,
+} from "./spa-observer";
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const FIELD_DELAY_MS = 150;
+/** Random delay 30-80ms between fills to reduce bot detection */
+function getInterFieldDelayMs(): number {
+  return 30 + Math.random() * 50;
+}
+
+/** Placeholder values that should be treated as empty */
+const PLACEHOLDER_PATTERNS = [
+  /^\s*$/, // whitespace only
+  /^select\s*$/i,
+  /^choose\s*$/i,
+  /^--\s*select\s*--\s*$/i,
+  /^select\s+one\s*$/i,
+  /^choose\s+one\s*$/i,
+  /^please\s+select\s*$/i,
+];
+
+/** Abbreviations for select option matching (value -> display text) */
+const SELECT_ABBREVIATIONS: Record<string, string[]> = {
+  US: ["United States", "United States of America", "USA"],
+  "United States": ["US", "USA", "United States of America"],
+  UK: ["United Kingdom", "Great Britain"],
+  "United Kingdom": ["UK", "GB", "Great Britain"],
+  CA: ["California", "Canada"],
+  California: ["CA"],
+  Canada: ["CA"],
+  NY: ["New York"],
+  "New York": ["NY"],
+  TX: ["Texas"],
+  Texas: ["TX"],
+  FL: ["Florida"],
+  Florida: ["FL"],
+  GA: ["Georgia"],
+  Georgia: ["GA"],
+};
+
+function isValueEffectivelyEmpty(value: string | null | undefined): boolean {
+  if (value == null) return true;
+  const trimmed = String(value).trim();
+  if (trimmed.length === 0) return true;
+  return PLACEHOLDER_PATTERNS.some((p) => p.test(trimmed));
+}
+
+function valuesMatch(a: string, b: string): boolean {
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+/**
+ * Find best-matching option for a select. Order: exact value -> exact text -> case-insensitive includes -> abbreviation map.
+ * Uses context (e.g. country) for disambiguation when multiple options match (e.g. CA = California vs Canada).
+ */
+function findBestSelectOption(
+  select: HTMLSelectElement,
+  value: string,
+  countryContext?: string | null
+): HTMLOptionElement | null {
+  const options = Array.from(select.options).filter((o) => o.value);
+  const valLower = value.trim().toLowerCase();
+  const countryLower = countryContext?.trim().toLowerCase();
+
+  // 1. Exact value match
+  const exactValue = options.find((o) => o.value.toLowerCase() === valLower);
+  if (exactValue) return exactValue;
+
+  // 2. Exact text content match
+  const exactText = options.find(
+    (o) => o.textContent?.trim().toLowerCase() === valLower
+  );
+  if (exactText) return exactText;
+
+  // 3. Case-insensitive includes
+  const includes = options.filter(
+    (o) =>
+      o.value.toLowerCase().includes(valLower) ||
+      o.textContent?.toLowerCase().includes(valLower)
+  );
+
+  if (includes.length === 0) {
+    // 4. Abbreviation lookup
+    const expanded = SELECT_ABBREVIATIONS[value.trim()] ?? [];
+    for (const exp of expanded) {
+      const found = options.find(
+        (o) =>
+          o.value.toLowerCase().includes(exp.toLowerCase()) ||
+          o.textContent?.toLowerCase().includes(exp.toLowerCase())
+      );
+      if (found) return found;
+    }
+    return null;
+  }
+
+  if (includes.length === 1) return includes[0];
+
+  // Disambiguation: use country context (e.g. US state vs Canada province)
+  if (countryLower) {
+    const isUS = /united\s*states|usa|us\b/.test(countryLower);
+    const isCanada = /canada|ca\b/.test(countryLower);
+    for (const opt of includes) {
+      const text = opt.textContent?.toLowerCase() ?? "";
+      if (isUS && (text.includes("california") || text.includes("new york") || text.includes("texas"))) return opt;
+      if (isCanada && text.includes("canada")) return opt;
+    }
+  }
+
+  return includes[0] ?? null;
+}
+
+const MAX_NAVIGATION_CLICKS = 20;
+const MAX_LOOP_TIME_MS = 5 * 60 * 1000;
+
 const VALIDATION_ERROR_SELECTORS = [
   '[class*="error"]',
   '[class*="invalid"]',
@@ -42,55 +158,96 @@ const VALIDATION_ERROR_SELECTORS = [
 
 let stopped = false;
 
+interface UndoEntry {
+  element: HTMLElement | HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
+  selector: string;
+  previousValue: string;
+  isCustomSelect: boolean;
+}
+let undoSnapshot: UndoEntry[] = [];
+
 // ---------------------------------------------------------------------------
 // DOM value setter (State C: Apply — triggers React/Angular/Vue)
 // ---------------------------------------------------------------------------
 
 function setFieldValue(
   el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
-  value: string
+  value: string,
+  countryContext?: string | null
 ): void {
   if (el instanceof HTMLSelectElement) {
-    const options = Array.from(el.options);
-    const match =
-      options.find((o) => o.value.toLowerCase() === value.toLowerCase()) ||
-      options.find((o) => o.textContent?.toLowerCase().includes(value.toLowerCase()));
+    const match = findBestSelectOption(el, value, countryContext);
     if (match) {
       el.value = match.value;
     } else {
       el.value = value;
     }
-  } else {
-    const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype,
-      "value"
-    )?.set;
-    const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(
-      window.HTMLTextAreaElement.prototype,
-      "value"
-    )?.set;
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return;
+  }
 
-    if (el instanceof HTMLTextAreaElement && nativeTextAreaValueSetter) {
-      nativeTextAreaValueSetter.call(el, value);
-    } else if (nativeInputValueSetter) {
-      nativeInputValueSetter.call(el, value);
-    } else {
-      el.value = value;
-    }
+  // Input / Textarea: native setter + fallback, then input + change + blur()
+  const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+    window.HTMLInputElement.prototype,
+    "value"
+  )?.set;
+  const nativeTextAreaValueSetter = Object.getOwnPropertyDescriptor(
+    window.HTMLTextAreaElement.prototype,
+    "value"
+  )?.set;
+
+  if (el instanceof HTMLTextAreaElement && nativeTextAreaValueSetter) {
+    nativeTextAreaValueSetter.call(el, value);
+  } else if (nativeInputValueSetter) {
+    nativeInputValueSetter.call(el, value);
+  } else {
+    el.value = value;
   }
 
   el.dispatchEvent(new Event("input", { bubbles: true }));
   el.dispatchEvent(new Event("change", { bubbles: true }));
-  el.dispatchEvent(new Event("blur", { bubbles: true }));
+  el.blur();
 }
 
 function applyToField(
   el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
-  value: string
+  value: string,
+  countryContext?: string | null
 ): string {
   const previous = el.value ?? "";
   el.focus();
-  setFieldValue(el, value);
+  setFieldValue(el, value, countryContext);
+  return previous;
+}
+
+async function fillCustomDropdown(
+  triggerEl: Element,
+  value: string,
+  _countryContext?: string | null
+): Promise<string> {
+  const previous =
+    (triggerEl as HTMLInputElement).value ??
+    triggerEl.textContent?.trim() ??
+    "";
+
+  (triggerEl as HTMLElement).click();
+  await sleep(50);
+
+  for (let i = 0; i < 10; i++) {
+    await sleep(50);
+    const options = document.querySelectorAll('[role="option"], [role="listbox"] [role="option"]');
+    const valLower = value.toLowerCase();
+    for (const opt of options) {
+      const text = opt.textContent?.trim().toLowerCase();
+      if (text?.includes(valLower) || valLower.includes(text ?? "")) {
+        (opt as HTMLElement).click();
+        await sleep(100);
+        return previous;
+      }
+    }
+  }
+
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
   return previous;
 }
 
@@ -266,13 +423,97 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function performUndoAll(): void {
+  for (const entry of undoSnapshot) {
+    let el: HTMLElement | null = null;
+    if (document.contains(entry.element)) {
+      el = entry.element;
+    } else {
+      try {
+        el = document.querySelector(entry.selector);
+      } catch {
+        continue;
+      }
+    }
+    if (!el) continue;
+
+    if (entry.isCustomSelect) {
+      // Custom dropdowns: cannot easily restore; skip
+      continue;
+    }
+    if (
+      el instanceof HTMLInputElement ||
+      el instanceof HTMLTextAreaElement ||
+      el instanceof HTMLSelectElement
+    ) {
+      applyToField(el, entry.previousValue);
+    }
+  }
+  undoSnapshot = [];
+}
+
+function getEffectiveActions(formModel: FormModel): {
+  nextAction: FormAction | null;
+  submitAction: FormAction | null;
+} {
+  const adapter = detectPlatform();
+  let nextAction = formModel.actions.find((a) => a.type === "next") ?? null;
+  let submitAction = formModel.actions.find((a) => a.type === "submit") ?? null;
+
+  if (adapter) {
+    const nextSel = adapter.getNextSelector();
+    if (nextSel) {
+      const el = document.querySelector(nextSel);
+      if (el) {
+        const sel = (el as HTMLElement).id
+          ? `#${CSS.escape((el as HTMLElement).id)}`
+          : nextSel;
+        nextAction = { type: "next", selector: sel, label: "Next" };
+      }
+    }
+    const submitSel = adapter.getSubmitSelector();
+    if (submitSel) {
+      const el = document.querySelector(submitSel);
+      if (el) {
+        const sel = (el as HTMLElement).id
+          ? `#${CSS.escape((el as HTMLElement).id)}`
+          : submitSel;
+        submitAction = { type: "submit", selector: sel, label: "Submit" };
+      }
+    }
+  }
+
+  return { nextAction, submitAction };
+}
+
 // ---------------------------------------------------------------------------
 // State machine: main loop
 // ---------------------------------------------------------------------------
 
 async function runAutofill(profile: UserProfile): Promise<void> {
   stopped = false;
+  const loopStartTime = Date.now();
+  const navCount = { value: 0 };
 
+  const stopPassiveMonitor = startPassiveFormMonitor(() => {
+    // Rescan will happen at next loop iteration
+  });
+  const unpatchHistory = patchHistoryAPI(() => {
+    // Route change - rescan will happen at next loop iteration
+  });
+  try {
+    await runAutofillLoop(profile, loopStartTime, navCount);
+  } finally {
+    stopPassiveMonitor();
+    unpatchHistory();
+  }
+}
+
+async function runAutofillLoop(
+  profile: UserProfile,
+  loopStartTime: number,
+  navCount: { value: number }
+): Promise<void> {
   const createProgress = (overrides: Partial<AutofillProgress> = {}): AutofillProgress => ({
     state: "intake",
     total: 0,
@@ -296,6 +537,32 @@ async function runAutofill(profile: UserProfile): Promise<void> {
 
   // Main loop: intake → match → (blockers) → apply → validate → navigate
   while (!stopped) {
+    if (Date.now() - loopStartTime >= MAX_LOOP_TIME_MS) {
+      progress.state = "blocked";
+      progress.paused = true;
+      sendProgress(progress);
+      await new Promise<void>((resolve) => {
+        showOverlay(
+          null,
+          {
+            title: "Autofill Timeout",
+            message:
+              "Autofill has been running for 5 minutes. Continue manually or restart.",
+            showCheckbox: false,
+            primaryLabel: "OK",
+            secondaryLabel: "OK",
+            onPrimary: resolve,
+          },
+          resolve
+        );
+      });
+      removeOverlay();
+      progress.state = "stopped";
+      progress.completed = true;
+      sendProgress(progress);
+      return;
+    }
+
     // State A: Page Intake
     progress.state = "intake";
     progress.currentField = null;
@@ -309,7 +576,7 @@ async function runAutofill(profile: UserProfile): Promise<void> {
 
     // State B: Field → Profile Matching
     progress.state = "matching";
-    const matchedFields = matchFieldsToProfile(formModel.fields, profile);
+    const matchedFields = await matchFieldsToProfile(formModel.fields, profile);
 
     progress.fields = matchedFields;
     progress.total = fillableFields.length;
@@ -344,21 +611,102 @@ async function runAutofill(profile: UserProfile): Promise<void> {
 
     // No fillable fields — try navigation or complete
     if (fillableFields.length === 0) {
-      const nextAction = formModel.actions.find((a) => a.type === "next");
-      const submitAction = formModel.actions.find((a) => a.type === "submit");
+      const { nextAction, submitAction } = getEffectiveActions(formModel);
 
       if (nextAction && !stopped) {
+        if (navCount.value >= MAX_NAVIGATION_CLICKS) {
+          progress.state = "blocked";
+          progress.paused = true;
+          sendProgress(progress);
+          await new Promise<void>((resolve) => {
+            showOverlay(
+              null,
+              {
+                title: "Step Limit Reached",
+                message:
+                  "Autofill has completed 20 steps. Continue manually or restart.",
+                showCheckbox: false,
+                primaryLabel: "OK",
+                secondaryLabel: "OK",
+                onPrimary: resolve,
+              },
+              resolve
+            );
+          });
+          removeOverlay();
+          progress.state = "stopped";
+          progress.completed = true;
+          sendProgress(progress);
+          return;
+        }
         progress.state = "navigate";
         progress.currentAction = nextAction.label;
         sendProgress(progress);
 
         const btn = document.querySelector(nextAction.selector);
         if (btn && btn instanceof HTMLElement) {
+          const prevFingerprint = computeStepFingerprint(formModel);
           btn.click();
-          await sleep(500);
-          progress.stepIndex++;
-          sendProgress(progress);
-          continue;
+          navCount.value++;
+          const result = await waitForStepChange(buildFormModel, prevFingerprint, 5000);
+          if (result === "new_step") {
+            progress.stepIndex++;
+            sendProgress(progress);
+            continue;
+          }
+          if (result === "validation_error") {
+            const errors = detectValidationErrors();
+            progress.state = "validate";
+            progress.validationErrors = errors;
+            progress.paused = true;
+            sendProgress(progress);
+            await new Promise<void>((resolve) => {
+              showOverlay(
+                btn,
+                {
+                  title: "Validation Error",
+                  message: `Server reported errors: ${errors[0] ?? "Please fix and continue."}`,
+                  showCheckbox: true,
+                  checkboxLabel: "I have corrected the errors",
+                  primaryLabel: "Continue",
+                  secondaryLabel: "Skip",
+                  onPrimary: resolve,
+                },
+                resolve,
+                resolve
+              );
+            });
+            progress.paused = false;
+            progress.validationErrors = [];
+            sendProgress(progress);
+            removeOverlay();
+            continue;
+          }
+          if (result === "stuck") {
+            progress.state = "blocked";
+            progress.paused = true;
+            sendProgress(progress);
+            await new Promise<void>((resolve) => {
+              showOverlay(
+                btn,
+                {
+                  title: "Stuck",
+                  message:
+                    "The form did not change after clicking Next. Continue manually or restart.",
+                  showCheckbox: false,
+                  primaryLabel: "OK",
+                  secondaryLabel: "OK",
+                  onPrimary: resolve,
+                },
+                resolve
+              );
+            });
+            removeOverlay();
+            progress.state = "stopped";
+            progress.completed = true;
+            sendProgress(progress);
+            return;
+          }
         }
       }
 
@@ -415,17 +763,33 @@ async function runAutofill(profile: UserProfile): Promise<void> {
     // State C: Apply — fill fields
     progress.state = "apply";
 
+    undoSnapshot = [];
+    for (const field of fillableFields) {
+      const mf = matchedFields.find((f) => f.selector === field.selector);
+      if (mf?.confidenceTier === "A" && mf?.profileValue) {
+        const el = document.querySelector(field.selector);
+        if (el) {
+          const prev =
+            field.fieldKind === "custom_select"
+              ? (el as HTMLElement).textContent?.trim() ?? ""
+              : (el as HTMLInputElement).value ?? "";
+          undoSnapshot.push({
+            element: el as HTMLElement,
+            selector: field.selector,
+            previousValue: prev,
+            isCustomSelect: field.fieldKind === "custom_select",
+          });
+        }
+      }
+    }
+
     for (const field of fillableFields) {
       if (stopped) return;
 
       const matchedField = matchedFields.find((f) => f.selector === field.selector);
       if (!matchedField) continue;
 
-      const el = document.querySelector(progress.fields.find((f) => f.selector === field.selector)?.selector ?? field.selector) as
-        | HTMLInputElement
-        | HTMLTextAreaElement
-        | HTMLSelectElement
-        | null;
+      const el = document.querySelector(progress.fields.find((f) => f.selector === field.selector)?.selector ?? field.selector);
 
       if (!el) {
         progress.skipped++;
@@ -436,21 +800,77 @@ async function runAutofill(profile: UserProfile): Promise<void> {
       progress.currentField = field.label;
       sendProgress(progress);
 
-      const shouldFill =
-        matchedField.confidenceTier === "high" ||
-        (matchedField.confidenceTier === "medium" && matchedField.profileValue);
+      const shouldFill = matchedField.confidenceTier === "A" && !!matchedField.profileValue;
 
       if (shouldFill && matchedField.profileValue) {
-        const previousValue = applyToField(el, matchedField.profileValue);
+        const currentValue =
+          field.fieldKind === "custom_select"
+            ? ""
+            : (el as HTMLInputElement).value ?? "";
+        const profileValue = matchedField.profileValue;
+
+        if (!isValueEffectivelyEmpty(String(currentValue).trim())) {
+          if (valuesMatch(currentValue, profileValue)) {
+            matchedField.filled = true;
+            progress.filled++;
+            sendProgress(progress);
+            await sleep(getInterFieldDelayMs());
+            continue;
+          }
+          progress.paused = true;
+          progress.state = "blocked";
+          sendProgress(progress);
+
+          const useProfile = await new Promise<boolean>((resolve) => {
+            showOverlay(
+              el,
+              {
+                title: "Pre-filled Field",
+                message: `This field already has: "${currentValue.slice(0, 50)}${currentValue.length > 50 ? "..." : ""}". Your profile has: "${profileValue.slice(0, 50)}${profileValue.length > 50 ? "..." : ""}". Which do you want?`,
+                showCheckbox: false,
+                primaryLabel: "Use Profile",
+                secondaryLabel: "Keep Existing",
+                onPrimary: () => {},
+              },
+              () => resolve(true),
+              () => resolve(false)
+            );
+          });
+
+          progress.paused = false;
+          progress.state = "apply";
+          removeOverlay();
+
+          if (!useProfile) {
+            progress.skipped++;
+            sendProgress(progress);
+            await sleep(getInterFieldDelayMs());
+            continue;
+          }
+        }
+
+        let previousValue: string;
+        if (field.fieldKind === "custom_select") {
+          const trigger = field.triggerSelector
+            ? document.querySelector(field.triggerSelector) ?? el
+            : el;
+          previousValue = await fillCustomDropdown(
+            trigger,
+            profileValue,
+            profile.country ?? null
+          );
+        } else {
+          previousValue = applyToField(
+            el as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
+            profileValue,
+            profile.country ?? null
+          );
+        }
         matchedField.filled = true;
         progress.filled++;
-        progress.lastFilledField = {
-          selector: field.selector,
-          label: field.label,
-          previousValue,
-        };
+        progress.lastFilledField = { selector: field.selector, label: field.label };
         sendProgress(progress);
-        await sleep(FIELD_DELAY_MS);
+        await sleep(getInterFieldDelayMs());
 
         // State D: Validation
         const errors = detectValidationErrors();
@@ -474,7 +894,13 @@ async function runAutofill(profile: UserProfile): Promise<void> {
               },
               resolve,
               () => {
-                applyToField(el, previousValue);
+                if (
+                  el instanceof HTMLInputElement ||
+                  el instanceof HTMLTextAreaElement ||
+                  el instanceof HTMLSelectElement
+                ) {
+                  applyToField(el, previousValue);
+                }
                 matchedField.filled = false;
                 progress.filled--;
                 progress.lastFilledField = null;
@@ -488,8 +914,59 @@ async function runAutofill(profile: UserProfile): Promise<void> {
           sendProgress(progress);
           removeOverlay();
         }
+      } else if (matchedField.confidenceTier === "B" && matchedField.profileValue) {
+        // Tier B: suggest value, user confirms Fill or Skip
+        progress.paused = true;
+        progress.state = "blocked";
+        sendProgress(progress);
+
+        const result = await new Promise<"fill" | "skip">((resolve) => {
+          showOverlay(
+            el,
+            {
+              title: "Suggestion",
+              message: `I think this is ${field.label}. Value: "${(matchedField.profileValue ?? "").slice(0, 60)}${(matchedField.profileValue ?? "").length > 60 ? "..." : ""}"`,
+              showCheckbox: false,
+              primaryLabel: "Fill",
+              secondaryLabel: "Skip",
+              onPrimary: () => {},
+            },
+            () => resolve("fill"),
+            () => resolve("skip")
+          );
+        });
+
+        progress.paused = false;
+        progress.state = "apply";
+        removeOverlay();
+
+        if (result === "fill") {
+          saveLearnedMapping(
+            field.selector,
+            normalizeLabel(field.label),
+            field.fieldType
+          ).catch(() => {});
+          if (field.fieldKind === "custom_select") {
+            const trigger = field.triggerSelector
+              ? document.querySelector(field.triggerSelector) ?? el
+              : el;
+            await fillCustomDropdown(trigger, matchedField.profileValue!, profile.country ?? null);
+          } else {
+            applyToField(
+              el as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
+              matchedField.profileValue!,
+              profile.country ?? null
+            );
+          }
+          matchedField.filled = true;
+          progress.filled++;
+        } else {
+          progress.skipped++;
+        }
+        sendProgress(progress);
+        await sleep(getInterFieldDelayMs());
       } else {
-        // Low confidence — pause for manual
+        // Tier C / unknown — pause for manual
         progress.paused = true;
         progress.state = "blocked";
         sendProgress(progress);
@@ -504,8 +981,7 @@ async function runAutofill(profile: UserProfile): Promise<void> {
               checkboxLabel: "I have filled this field manually",
               primaryLabel: "Continue",
               secondaryLabel: "Skip",
-              onPrimary: () => resolve("manual"),
-              onSecondary: () => resolve("skip"),
+              onPrimary: () => {},
             },
             () => resolve("manual"),
             () => resolve("skip")
@@ -527,18 +1003,97 @@ async function runAutofill(profile: UserProfile): Promise<void> {
     }
 
     // After filling all fields on this "page", try to click Next
-    const nextAction = formModel.actions.find((a) => a.type === "next");
+    const { nextAction } = getEffectiveActions(formModel);
     if (nextAction && !stopped) {
+      if (navCount.value >= MAX_NAVIGATION_CLICKS) {
+        progress.state = "blocked";
+        progress.paused = true;
+        sendProgress(progress);
+        await new Promise<void>((resolve) => {
+          showOverlay(
+            null,
+            {
+              title: "Step Limit Reached",
+              message:
+                "Autofill has completed 20 steps. Continue manually or restart.",
+              showCheckbox: false,
+              primaryLabel: "OK",
+              secondaryLabel: "OK",
+              onPrimary: resolve,
+            },
+            resolve
+          );
+        });
+        removeOverlay();
+        progress.state = "stopped";
+        progress.completed = true;
+        sendProgress(progress);
+        return;
+      }
       progress.state = "navigate";
       progress.currentAction = nextAction.label;
       sendProgress(progress);
 
       const btn = document.querySelector(nextAction.selector);
       if (btn && btn instanceof HTMLElement) {
+        const prevFingerprint = computeStepFingerprint(formModel);
         btn.click();
-        await sleep(500);
-        progress.stepIndex++;
-        sendProgress(progress);
+        navCount.value++;
+        const result = await waitForStepChange(buildFormModel, prevFingerprint, 5000);
+        if (result === "new_step") {
+          progress.stepIndex++;
+          sendProgress(progress);
+        } else if (result === "validation_error") {
+          const errors = detectValidationErrors();
+          progress.state = "validate";
+          progress.validationErrors = errors;
+          progress.paused = true;
+          sendProgress(progress);
+          await new Promise<void>((resolve) => {
+            showOverlay(
+              btn,
+              {
+                title: "Validation Error",
+                message: `Server reported errors: ${errors[0] ?? "Please fix and continue."}`,
+                showCheckbox: true,
+                checkboxLabel: "I have corrected the errors",
+                primaryLabel: "Continue",
+                secondaryLabel: "Skip",
+                onPrimary: resolve,
+              },
+              resolve,
+              resolve
+            );
+          });
+          progress.paused = false;
+          progress.validationErrors = [];
+          sendProgress(progress);
+          removeOverlay();
+        } else if (result === "stuck") {
+          progress.state = "blocked";
+          progress.paused = true;
+          sendProgress(progress);
+          await new Promise<void>((resolve) => {
+            showOverlay(
+              btn,
+              {
+                title: "Stuck",
+                message:
+                  "The form did not change after clicking Next. Continue manually or restart.",
+                showCheckbox: false,
+                primaryLabel: "OK",
+                secondaryLabel: "OK",
+                onPrimary: resolve,
+              },
+              resolve
+            );
+          });
+          removeOverlay();
+          progress.state = "stopped";
+          progress.completed = true;
+          sendProgress(progress);
+          return;
+        }
       }
     }
   }
@@ -609,6 +1164,10 @@ function getBlockerOverlayConfig(blocker: FormBlocker): OverlayConfig {
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === MSG.START_AUTOFILL) {
+    if (window !== window.top) {
+      sendResponse({ error: "Auto-fill runs in the main frame only." });
+      return false;
+    }
     chrome.storage.local.get([STORAGE_KEYS.USER_PROFILE], (result) => {
       const profile = result[STORAGE_KEYS.USER_PROFILE] as UserProfile | undefined;
       if (!profile) {
@@ -623,6 +1182,12 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === MSG.STOP_AUTOFILL) {
     stopped = true;
     removeOverlay();
+    sendResponse({ success: true });
+    return false;
+  }
+
+  if (message.type === MSG.AUTOFILL_UNDO_ALL) {
+    performUndoAll();
     sendResponse({ success: true });
     return false;
   }

@@ -6,8 +6,42 @@
 import type { FormModel, FormField, FormAction, FormBlocker } from "@/shared/types";
 
 // ---------------------------------------------------------------------------
-// Signal extraction
+// Signal extraction (label resolution order: label[for] → aria-label → aria-labelledby → closest label → placeholder)
 // ---------------------------------------------------------------------------
+
+function getAssociatedLabel(el: HTMLElement): string | null {
+  if (el.id) {
+    const label = document.querySelector(`label[for="${el.id}"]`);
+    if (label?.textContent) return label.textContent.trim();
+  }
+  if (el.getAttribute("aria-label")) return el.getAttribute("aria-label")!.trim();
+  const labelledBy = el.getAttribute("aria-labelledby");
+  if (labelledBy) {
+    const parts = labelledBy
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent?.trim())
+      .filter(Boolean);
+    if (parts.length) return parts.join(" ");
+  }
+  const wrappingLabel = el.closest("label");
+  if (wrappingLabel?.textContent) {
+    const clone = wrappingLabel.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll("input, select, textarea").forEach((n) => n.remove());
+    const text = clone.textContent?.trim();
+    if (text) return text;
+  }
+  return null;
+}
+
+function getNearbyText(el: Element, levels = 2): string | null {
+  let node: Element | null = el.parentElement;
+  for (let i = 0; i < levels && node; i++) {
+    const text = node.textContent?.trim().slice(0, 100);
+    if (text && text.length > 2) return text;
+    node = node.parentElement;
+  }
+  return null;
+}
 
 function getSignals(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement): string[] {
   const signals: string[] = [];
@@ -22,39 +56,42 @@ function getSignals(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectEleme
   const labelText = getAssociatedLabel(el);
   if (labelText) signals.push(labelText);
 
-  const parent = el.closest("[class*='field'], [class*='form-group'], [class*='input'], label");
-  if (parent) {
-    const parentText = parent.textContent?.trim().slice(0, 100);
-    if (parentText) signals.push(parentText);
-  }
+  const nearbyText = getNearbyText(el);
+  if (nearbyText) signals.push(nearbyText);
 
   return signals.filter(Boolean);
 }
 
-function getAssociatedLabel(el: HTMLElement): string | null {
-  if (el.id) {
-    const label = document.querySelector(`label[for="${el.id}"]`);
-    if (label?.textContent) return label.textContent.trim();
+function getSignalsWithSource(
+  el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
+): Array<{ source: string; value: string }> {
+  const out: Array<{ source: string; value: string }> = [];
+  if (el.getAttribute("autocomplete")) {
+    out.push({ source: "autocomplete", value: el.getAttribute("autocomplete")! });
   }
-
-  const wrappingLabel = el.closest("label");
-  if (wrappingLabel?.textContent) {
-    const clone = wrappingLabel.cloneNode(true) as HTMLElement;
-    clone.querySelectorAll("input, select, textarea").forEach((n) => n.remove());
-    const text = clone.textContent?.trim();
-    if (text) return text;
+  if (el instanceof HTMLInputElement && el.type) {
+    out.push({ source: "type", value: el.type });
   }
-
-  const labelledBy = el.getAttribute("aria-labelledby");
-  if (labelledBy) {
-    const parts = labelledBy
-      .split(/\s+/)
-      .map((id) => document.getElementById(id)?.textContent?.trim())
-      .filter(Boolean);
-    if (parts.length) return parts.join(" ");
+  if (el.name) out.push({ source: "name", value: el.name });
+  if (el.id) out.push({ source: "id", value: el.id });
+  if ("placeholder" in el && el.placeholder) {
+    out.push({ source: "placeholder", value: el.placeholder });
   }
-
-  return null;
+  if (el.getAttribute("aria-label")) {
+    out.push({ source: "aria-label", value: el.getAttribute("aria-label")! });
+  }
+  const labelText = getAssociatedLabel(el);
+  if (labelText) out.push({ source: "label", value: labelText });
+  const nearbyText = getNearbyText(el);
+  if (nearbyText) out.push({ source: "nearby", value: nearbyText });
+  if (el.hasAttribute("required")) out.push({ source: "required", value: "true" });
+  const pattern = el.getAttribute("pattern");
+  if (pattern) out.push({ source: "pattern", value: pattern });
+  const minLen = el.getAttribute("minLength") ?? (el as HTMLInputElement).minLength;
+  if (minLen != null && minLen !== -1) out.push({ source: "minLength", value: String(minLen) });
+  const maxLen = el.getAttribute("maxLength") ?? (el as HTMLInputElement).maxLength;
+  if (maxLen != null && maxLen !== -1) out.push({ source: "maxLength", value: String(maxLen) });
+  return out;
 }
 
 function getFieldLabel(el: HTMLElement, signals: string[]): string {
@@ -244,39 +281,124 @@ function detectBlockers(): FormBlocker[] {
 }
 
 // ---------------------------------------------------------------------------
+// Custom dropdown detection (ARIA combobox/listbox)
+// ---------------------------------------------------------------------------
+
+function detectCustomDropdowns(): FormField[] {
+  const fields: FormField[] = [];
+  const comboboxes = document.querySelectorAll('[role="combobox"][aria-haspopup="listbox"]');
+
+  comboboxes.forEach((el, idx) => {
+    if (!isVisible(el)) return;
+    if (el.closest("select") || el.querySelector("select")) return;
+
+    const trigger = el;
+    const triggerSelector = generateSelector(trigger as Element);
+    const selector = triggerSelector;
+
+    const label =
+      el.getAttribute("aria-label") ??
+      (el.querySelector("label")?.textContent?.trim() ?? `Custom dropdown ${idx + 1}`);
+
+    fields.push({
+      selector,
+      fieldType: "unknown",
+      label,
+      fieldKind: "custom_select",
+      triggerSelector,
+      signals: [label, el.getAttribute("aria-label") ?? ""].filter(Boolean),
+      required: el.getAttribute("aria-required") === "true",
+      visible: true,
+      enabled: true,
+      filled: false,
+      manual: false,
+      profileValue: null,
+      confidence: 0,
+      confidenceTier: "C",
+      section: detectSection(el),
+    });
+  });
+
+  return fields;
+}
+
+// ---------------------------------------------------------------------------
+// Shadow DOM: collect inputs from document and all shadow roots
+// ---------------------------------------------------------------------------
+
+function collectInputs(root: Document | ShadowRoot): Element[] {
+  const list: Element[] = [];
+
+  function walk(currentRoot: Document | ShadowRoot) {
+    const fields = currentRoot.querySelectorAll(
+      'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]), textarea, select'
+    );
+    list.push(...Array.from(fields));
+
+    const all = currentRoot.querySelectorAll("*");
+    for (const el of all) {
+      if (el.shadowRoot) walk(el.shadowRoot);
+    }
+  }
+
+  walk(root);
+  return list;
+}
+
+function detectFieldGroup(
+  el: Element,
+  signals: string[],
+  label: string
+): string | null {
+  const combined = [...signals, label].join(" ").toLowerCase();
+  if (
+    /address|street|city|state|zip|postal|country/.test(combined)
+  ) {
+    return "address";
+  }
+  if (/first.?name|last.?name|full.?name|given|family/.test(combined)) {
+    return "name";
+  }
+  if (/phone|mobile|tel|contact.?number/.test(combined)) {
+    return "phone";
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // Main API: build Form Model
 // ---------------------------------------------------------------------------
 
 export function buildFormModel(): FormModel {
   const fields: FormField[] = [];
-  const inputs = document.querySelectorAll<
-    HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-  >(
-    'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="reset"]):not([type="image"]), textarea, select'
-  );
+  const inputElements = collectInputs(document);
 
   // Skip file inputs (handled as blockers)
   const fileInputSelectors = new Set(
     Array.from(document.querySelectorAll('input[type="file"]')).map((el) => generateSelector(el))
   );
 
-  inputs.forEach((el) => {
+  inputElements.forEach((el) => {
+    const inputEl = el as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
     if (fileInputSelectors.has(generateSelector(el))) return;
     if (!isVisible(el)) return;
 
-    const signals = getSignals(el);
+    const signals = getSignals(inputEl);
+    const signalsWithSource = getSignalsWithSource(inputEl);
     const required =
-      el.hasAttribute("required") ||
-      el.getAttribute("aria-required") === "true" ||
+      inputEl.hasAttribute("required") ||
+      inputEl.getAttribute("aria-required") === "true" ||
       /required|mandatory/i.test(signals.join(" "));
-    const enabled = !el.disabled && !el.hasAttribute("readonly");
-    const isFilled = !!(el.value && String(el.value).trim());
+    const enabled = !inputEl.disabled && !inputEl.hasAttribute("readonly");
+    const isFilled = !!((inputEl as HTMLInputElement).value && String((inputEl as HTMLInputElement).value).trim());
 
     fields.push({
       selector: generateSelector(el),
       fieldType: "unknown", // populated by field-matcher
-      label: getFieldLabel(el, signals),
+      label: getFieldLabel(inputEl, signals),
+      fieldKind: "native",
       signals,
+      signalsWithSource,
       required,
       visible: true,
       enabled,
@@ -284,10 +406,14 @@ export function buildFormModel(): FormModel {
       manual: false,
       profileValue: null,
       confidence: 0,
-      confidenceTier: "low",
+      confidenceTier: "C",
       section: detectSection(el),
+      groupId: detectFieldGroup(el, signals, getFieldLabel(inputEl, signals)),
     });
   });
+
+  const customDropdownFields = detectCustomDropdowns();
+  fields.push(...customDropdownFields);
 
   const actions = detectActions();
   const blockers = detectBlockers();

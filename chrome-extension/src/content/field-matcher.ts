@@ -1,65 +1,62 @@
 /**
- * State B: Field → Profile Matching — Maps form fields to profile values
- * with confidence tiers: high (auto-fill), medium (preview/undo), low (ask user).
+ * State B: Field → Profile Matching — Weighted scoring with Tier A/B/C.
+ * Platform adapter results run first; generic matcher handles the rest.
  */
 
 import type { UserProfile } from "@/shared/types";
 import type { FormField } from "@/shared/types";
+import { detectPlatform } from "./adapters";
+import {
+  lookupLearnedMapping,
+  normalizeLabel,
+} from "./site-learning";
 
-// ---------------------------------------------------------------------------
-// High confidence: deterministic mapping (autocomplete, type, known ids)
-// ---------------------------------------------------------------------------
+export type ConfidenceTier = "A" | "B" | "C";
 
-const AUTOCOMPLETE_MAP: Record<string, string> = {
+const SIGNAL_WEIGHTS: Record<string, number> = {
+  autocomplete: 10,
+  type: 8,
+  platform_adapter: 9,
+  learned_mapping: 9,
+  "aria-label": 7,
+  label: 7,
+  name: 5,
+  id: 4,
+  placeholder: 4,
+  nearby: 2,
+};
+
+const AUTOCOMPLETE_TO_FIELDTYPE: Record<string, string> = {
   "given-name": "first_name",
   "family-name": "last_name",
-  "name": "full_name",
-  "email": "email",
-  "tel": "phone",
+  name: "full_name",
+  email: "email",
+  tel: "phone",
   "street-address": "address_line1",
   "address-line2": "address_line2",
   "address-level2": "city",
   "address-level1": "state",
   "postal-code": "zip_code",
-  "country": "country",
-};
-
-const KNOWN_ID_NAME_MAP: Record<string, string> = {
-  email: "email",
-  "user-email": "email",
-  "applicant-email": "email",
-  "e-mail": "email",
-  "first-name": "first_name",
-  firstname: "first_name",
-  "first_name": "first_name",
-  fname: "first_name",
-  "last-name": "last_name",
-  lastname: "last_name",
-  "last_name": "last_name",
-  lname: "last_name",
-  "full-name": "full_name",
-  fullname: "full_name",
-  name: "full_name",
-  phone: "phone",
-  telephone: "phone",
-  mobile: "phone",
-  "phone-number": "phone",
-  address: "address_line1",
-  city: "city",
-  state: "state",
-  zip: "zip_code",
-  "zip-code": "zip_code",
-  postal: "zip_code",
   country: "country",
-  linkedin: "linkedin_url",
-  github: "github_url",
-  portfolio: "portfolio_url",
-  website: "portfolio_url",
 };
 
-// ---------------------------------------------------------------------------
-// Label patterns (medium/high confidence depending on specificity)
-// ---------------------------------------------------------------------------
+const NEGATIVE_PATTERNS: RegExp[] = [
+  /phone\s+device\s+type/i,
+  /device\s+type/i,
+  /email\s+preferences/i,
+  /email\s+me/i,
+  /marketing\s+email/i,
+  /company\s+name/i,
+  /employer\s+name/i,
+  /referral\s+name/i,
+  /name\s+of\s+referral/i,
+  /id\s*\.?\s*number/i,
+  /employee\s*\.?\s*code/i,
+  /linkedin\s*\.?\s*headline/i,
+  /headline/i,
+  /employee\s*\.?\s*id/i,
+  /reference/i,
+];
 
 const FIELD_PATTERNS: Record<string, RegExp[]> = {
   first_name: [/first.?name/i, /given.?name/i, /fname/i, /^first$/i, /prenom/i],
@@ -94,20 +91,6 @@ const FIELD_PATTERNS: Record<string, RegExp[]> = {
   expected_salary: [/salary/i, /compensation/i, /expected.?pay/i, /desired.?salary/i, /pay.?expectation/i],
   current_salary: [/current.?salary/i, /current.?compensation/i, /present.?salary/i],
 };
-
-// Low confidence: do not auto-fill
-const LOW_CONFIDENCE_PATTERNS = [
-  /id.?number/i,
-  /employee.?code/i,
-  /linkedin.?headline/i,
-  /headline/i,
-  /employee.?id/i,
-  /reference/i,
-];
-
-// ---------------------------------------------------------------------------
-// Profile value resolver
-// ---------------------------------------------------------------------------
 
 export function resolveProfileValue(fieldType: string, profile: UserProfile): string | null {
   switch (fieldType) {
@@ -180,94 +163,181 @@ export function resolveProfileValue(fieldType: string, profile: UserProfile): st
   }
 }
 
-// ---------------------------------------------------------------------------
-// Matching logic
-// ---------------------------------------------------------------------------
+function scoreField(
+  field: FormField
+): { fieldType: string; rawScore: number; normalizedScore: number; tier: ConfidenceTier; matchReason: string } | null {
+  const combined = field.signals.join(" ").toLowerCase();
 
-export type ConfidenceTier = "high" | "medium" | "low";
-
-function matchFieldType(signals: string[]): { fieldType: string; confidence: number; tier: ConfidenceTier } | null {
-  const combined = signals.join(" ");
-
-  // Low confidence — do not fill
-  if (LOW_CONFIDENCE_PATTERNS.some((p) => p.test(combined))) {
+  if (NEGATIVE_PATTERNS.some((p) => p.test(combined))) {
     return null;
   }
 
-  // High confidence: direct autocomplete value in signals (e.g. "email", "given-name")
-  for (const signal of signals) {
-    const key = signal.toLowerCase().trim();
-    if (AUTOCOMPLETE_MAP[key]) {
-      return { fieldType: AUTOCOMPLETE_MAP[key], confidence: 0.95, tier: "high" };
-    }
-  }
+  const src = field.signalsWithSource ?? field.signals.map((v) => ({ source: "nearby", value: v }));
 
-  // High confidence: input type=email
-  if (signals.some((s) => s.toLowerCase() === "type:email")) {
-    return { fieldType: "email", confidence: 0.95, tier: "high" };
-  }
+  const scoresByFieldType: Record<string, { score: number; reason: string }> = {};
 
-  // High confidence: known id/name
-  for (const signal of signals) {
-    const normalized = signal.toLowerCase().replace(/[^a-z0-9-]/g, "-").replace(/-+/g, "-");
-    const key = Object.keys(KNOWN_ID_NAME_MAP).find(
-      (k) => normalized === k || normalized.includes(k) || signal.toLowerCase() === k
-    );
-    if (key) {
-      return { fieldType: KNOWN_ID_NAME_MAP[key], confidence: 0.9, tier: "high" };
-    }
-  }
+  for (const { source, value } of src) {
+    const weight = SIGNAL_WEIGHTS[source] ?? 2;
 
-  // Label patterns
-  let bestMatch: { fieldType: string; confidence: number; tier: ConfidenceTier } | null = null;
-
-  for (const [fieldType, patterns] of Object.entries(FIELD_PATTERNS)) {
-    for (const pattern of patterns) {
-      for (const signal of signals) {
-        if (pattern.test(signal)) {
-          // Short signals (name, id) = high; parent text = medium
-          const confidence = signal.length < 50 ? 0.85 : 0.65;
-          const tier: ConfidenceTier = confidence >= 0.8 ? "high" : confidence >= 0.6 ? "medium" : "low";
-          if (!bestMatch || confidence > bestMatch.confidence) {
-            bestMatch = { fieldType, confidence, tier };
+    if (source === "autocomplete") {
+      const ft = AUTOCOMPLETE_TO_FIELDTYPE[value.toLowerCase().trim()];
+      if (ft) {
+        scoresByFieldType[ft] = {
+          score: (scoresByFieldType[ft]?.score ?? 0) + weight,
+          reason: `autocomplete:${ft}`,
+        };
+      }
+    } else if (source === "type" && (value === "email" || value === "tel")) {
+      const ft = value === "email" ? "email" : "phone";
+      scoresByFieldType[ft] = {
+        score: (scoresByFieldType[ft]?.score ?? 0) + weight,
+        reason: `type:${ft}`,
+      };
+    } else {
+      for (const [fieldType, patterns] of Object.entries(FIELD_PATTERNS)) {
+        for (const p of patterns) {
+          if (p.test(value)) {
+            const prev = scoresByFieldType[fieldType];
+            const newScore = (prev?.score ?? 0) + weight;
+            scoresByFieldType[fieldType] = {
+              score: newScore,
+              reason: prev && prev.score >= weight ? prev.reason : `${source}:${fieldType}`,
+            };
+            break;
           }
         }
       }
     }
   }
 
-  return bestMatch;
+  const entries = Object.entries(scoresByFieldType);
+  if (entries.length === 0) return null;
+
+  const best = entries.reduce((a, b) => (a[1].score >= b[1].score ? a : b));
+  const [fieldType, { score: rawScore, reason: matchReason }] = best;
+
+  const maxPossible = 25;
+  const normalizedScore = Math.min(100, Math.round((rawScore / maxPossible) * 100));
+
+  const tier: ConfidenceTier =
+    normalizedScore >= 80 ? "A" : normalizedScore >= 50 ? "B" : "C";
+
+  return {
+    fieldType,
+    rawScore,
+    normalizedScore,
+    tier,
+    matchReason,
+  };
 }
 
-// ---------------------------------------------------------------------------
-// Main API: match fields to profile
-// ---------------------------------------------------------------------------
-
-export function matchFieldsToProfile(
+function applyAdapterMappings(
   fields: FormField[],
   profile: UserProfile
-): FormField[] {
-  return fields.map((field) => {
-    const match = matchFieldType(field.signals);
+): Map<string, FormField> {
+  const adapter = detectPlatform();
+  const matched = new Map<string, FormField>();
 
-    if (!match) {
+  if (!adapter) return matched;
+
+  const mappings = adapter.getFieldMappings();
+
+  for (const mapping of mappings) {
+    let container: Element | null = null;
+    try {
+      container = document.querySelector(mapping.selector);
+    } catch {
+      continue;
+    }
+    if (!container) continue;
+
+    for (const field of fields) {
+      if (matched.has(field.selector)) continue;
+      let fieldEl: Element | null = null;
+      try {
+        fieldEl = document.querySelector(field.selector);
+      } catch {
+        continue;
+      }
+      if (!fieldEl) continue;
+
+      if (container === fieldEl || container.contains(fieldEl)) {
+        const profileValue = resolveProfileValue(mapping.fieldType, profile);
+        matched.set(field.selector, {
+          ...field,
+          fieldType: mapping.fieldType,
+          confidence: 90,
+          confidenceTier: "A" as const,
+          profileValue: profileValue ?? null,
+          matchReason: `adapter:${adapter.name}`,
+        });
+        break;
+      }
+    }
+  }
+
+  return matched;
+}
+
+async function applyLearnedMappings(
+  fields: FormField[],
+  profile: UserProfile
+): Promise<Map<string, FormField>> {
+  const matched = new Map<string, FormField>();
+
+  for (const field of fields) {
+    const labelNorm = normalizeLabel(field.label);
+    const learned = await lookupLearnedMapping(field.selector, labelNorm);
+    if (!learned) continue;
+
+    const profileValue = resolveProfileValue(learned.fieldType, profile);
+    matched.set(field.selector, {
+      ...field,
+      fieldType: learned.fieldType,
+      confidence: 90,
+      confidenceTier: "A" as const,
+      profileValue: profileValue ?? null,
+      matchReason: `learned:${learned.fieldType}`,
+    });
+  }
+
+  return matched;
+}
+
+export async function matchFieldsToProfile(
+  fields: FormField[],
+  profile: UserProfile
+): Promise<FormField[]> {
+  const adapterMatched = applyAdapterMappings(fields, profile);
+  const learnedMatched = await applyLearnedMappings(fields, profile);
+
+  return fields.map((field) => {
+    const adapterResult = adapterMatched.get(field.selector);
+    if (adapterResult) return adapterResult;
+    const learnedResult = learnedMatched.get(field.selector);
+    if (learnedResult) return learnedResult;
+
+    const result = scoreField(field);
+
+    if (!result) {
       return {
         ...field,
         fieldType: "unknown",
         confidence: 0,
-        confidenceTier: "low" as const,
+        confidenceTier: "C" as const,
         profileValue: null,
       };
     }
 
-    const profileValue = resolveProfileValue(match.fieldType, profile);
+    const profileValue = resolveProfileValue(result.fieldType, profile);
 
     return {
       ...field,
-      fieldType: match.fieldType,
-      confidence: match.confidence,
-      confidenceTier: match.tier,
+      fieldType: result.fieldType,
+      confidence: result.normalizedScore,
+      confidenceTier: result.tier,
       profileValue: profileValue ?? null,
+      matchReason: result.matchReason,
     };
   });
 }

@@ -162,14 +162,20 @@ export interface Application {
 // Autofill - Form Model (State A: Page Intake)
 // ---------------------------------------------------------------------------
 
-export type ConfidenceTier = "high" | "medium" | "low";
+export type ConfidenceTier = "A" | "B" | "C";
+
+export type FieldKind = "native" | "custom_select";
 
 export interface FormField {
   selector: string;
   fieldType: string;
   label: string;
+  fieldKind?: FieldKind;
+  triggerSelector?: string;
   /** name, id, placeholder, aria-label, autocomplete, data-testid */
   signals: string[];
+  /** (source, value) for weighted scoring. Sources: autocomplete, type, name, id, placeholder, aria-label, label, nearby, required, pattern, minLength, maxLength */
+  signalsWithSource?: Array<{ source: string; value: string }>;
   required: boolean;
   visible: boolean;
   enabled: boolean;
@@ -181,6 +187,10 @@ export interface FormField {
   confidenceTier: ConfidenceTier;
   /** Section/step if detectable (e.g. "Personal Info", "Experience") */
   section: string | null;
+  /** Why this field matched (e.g. "autocomplete:email", "label:first_name", "platform:greenhouse") */
+  matchReason?: string;
+  /** Logical group (address, name, phone) for atomic fill */
+  groupId?: string | null;
 }
 
 export interface FormAction {
@@ -240,8 +250,8 @@ export interface AutofillProgress {
   activeBlocker: FormBlocker | null;
   /** Validation errors after fill */
   validationErrors: string[];
-  /** Last filled value for undo */
-  lastFilledField: { selector: string; label: string; previousValue: string } | null;
+  /** Last filled field for UI display; previousValue kept only in content script for Undo */
+  lastFilledField: { selector: string; label: string } | null;
 }
 
 // Legacy compatibility — keep DetectedField for any external references

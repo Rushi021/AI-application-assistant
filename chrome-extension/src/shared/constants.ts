@@ -7,6 +7,7 @@ export const STORAGE_KEYS = {
   REFRESH_TOKEN: "refresh_token",
   SESSION_ID: "session_id",
   USER_PROFILE: "user_profile",
+  FIELD_MAPPINGS: "autofill_field_mappings",
 } as const;
 
 /** Message types for communication between extension parts */
@@ -23,6 +24,7 @@ export const MSG = {
   AUTOFILL_RESUME: "AUTOFILL_RESUME",
   AUTOFILL_BLOCKER_RESOLVED: "AUTOFILL_BLOCKER_RESOLVED",
   AUTOFILL_UNDO: "AUTOFILL_UNDO",
+  AUTOFILL_UNDO_ALL: "AUTOFILL_UNDO_ALL",
   AUTOFILL_CONFIRM_SUBMIT: "AUTOFILL_CONFIRM_SUBMIT",
   AUTOFILL_COMPLETE: "AUTOFILL_COMPLETE",
   AUTOFILL_FIELD_MANUAL: "AUTOFILL_FIELD_MANUAL",
