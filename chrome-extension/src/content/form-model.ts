@@ -9,7 +9,57 @@ import type { FormModel, FormField, FormAction, FormBlocker } from "@/shared/typ
 // Signal extraction (label resolution order: label[for] → aria-label → aria-labelledby → closest label → placeholder)
 // ---------------------------------------------------------------------------
 
+/** Smart label extraction: ordered resolution for Pass 2 keyword matching. */
+export function getLabelTextForElement(el: HTMLElement): string {
+  const withLabels = el as HTMLInputElement & { labels?: NodeListOf<HTMLLabelElement> };
+  if (withLabels.labels?.length) {
+    const labelText = Array.from(withLabels.labels)
+      .map((l) => l.textContent?.trim())
+      .filter(Boolean)
+      .join(" ");
+    if (labelText) return labelText;
+  }
+  const labelledBy = el.getAttribute("aria-labelledby");
+  if (labelledBy) {
+    const parts = labelledBy
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent?.trim())
+      .filter(Boolean);
+    if (parts.length) return parts.join(" ").slice(0, 200);
+  }
+  const ariaLabel = el.getAttribute("aria-label");
+  if (ariaLabel) return ariaLabel.trim().slice(0, 200);
+  const wrappingLabel = el.closest("label");
+  if (wrappingLabel?.textContent) {
+    const clone = wrappingLabel.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll("input, select, textarea").forEach((n) => n.remove());
+    const text = clone.textContent?.trim();
+    if (text && text.length < 200) return text;
+  }
+  if ("placeholder" in el && (el as HTMLInputElement).placeholder) {
+    return (el as HTMLInputElement).placeholder.trim().slice(0, 200);
+  }
+  const parent = el.parentElement;
+  if (parent) {
+    const prev = el.previousElementSibling;
+    if (prev) {
+      const tag = prev.tagName.toLowerCase();
+      if (tag === "label" || tag === "span" || tag === "div") {
+        const t = prev.textContent?.trim();
+        if (t && t.length < 60) return t;
+      }
+    }
+    for (const candidate of parent.querySelectorAll(":scope > label, :scope > span, :scope > div")) {
+      const t = candidate.textContent?.trim();
+      if (t && t.length < 60 && candidate !== el) return t;
+    }
+  }
+  return "";
+}
+
 function getAssociatedLabel(el: HTMLElement): string | null {
+  const fromSmart = getLabelTextForElement(el);
+  if (fromSmart) return fromSmart;
   if (el.id) {
     const label = document.querySelector(`label[for="${el.id}"]`);
     if (label?.textContent) return label.textContent.trim();
@@ -345,6 +395,24 @@ function collectInputs(root: Document | ShadowRoot): Element[] {
   return list;
 }
 
+function collectContentEditable(root: Document | ShadowRoot): HTMLElement[] {
+  const list: HTMLElement[] = [];
+
+  function walk(currentRoot: Document | ShadowRoot) {
+    const editables = currentRoot.querySelectorAll<HTMLElement>('[contenteditable="true"]');
+    editables.forEach((el) => {
+      if (isVisible(el) && (el.textContent?.length ?? 0) < 5000) list.push(el);
+    });
+    const all = currentRoot.querySelectorAll("*");
+    for (const el of all) {
+      if (el.shadowRoot) walk(el.shadowRoot);
+    }
+  }
+
+  walk(root);
+  return list;
+}
+
 function detectFieldGroup(
   el: Element,
   signals: string[],
@@ -414,6 +482,31 @@ export function buildFormModel(): FormModel {
 
   const customDropdownFields = detectCustomDropdowns();
   fields.push(...customDropdownFields);
+
+  const contentEditableElements = collectContentEditable(document);
+  contentEditableElements.forEach((el) => {
+    const selector = generateSelector(el);
+    const label = getLabelTextForElement(el) || getAssociatedLabel(el) || "Editable field";
+    const signals = [label, el.getAttribute("aria-label") ?? "", el.getAttribute("placeholder") ?? ""].filter(Boolean);
+    fields.push({
+      selector,
+      fieldType: "unknown",
+      label: label.slice(0, 100),
+      fieldKind: "contenteditable",
+      signals,
+      signalsWithSource: signals.map((s) => ({ source: "label", value: s })),
+      required: false,
+      visible: true,
+      enabled: !el.hasAttribute("contenteditable") || el.getAttribute("contenteditable") === "true",
+      filled: !!(el.textContent?.trim()),
+      manual: false,
+      profileValue: null,
+      confidence: 0,
+      confidenceTier: "C",
+      section: detectSection(el),
+      groupId: null,
+    });
+  });
 
   const actions = detectActions();
   const blockers = detectBlockers();

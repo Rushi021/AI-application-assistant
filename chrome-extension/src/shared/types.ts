@@ -164,7 +164,7 @@ export interface Application {
 
 export type ConfidenceTier = "A" | "B" | "C";
 
-export type FieldKind = "native" | "custom_select";
+export type FieldKind = "native" | "custom_select" | "contenteditable";
 
 export interface FormField {
   selector: string;
@@ -225,12 +225,21 @@ export interface FormModel {
 export type AutofillStateType =
   | "intake"
   | "matching"
+  | "preview"
   | "apply"
   | "validate"
   | "navigate"
   | "blocked"
   | "complete"
   | "stopped";
+
+/** One validation error with optional field context for side panel and highlight */
+export interface ValidationErrorItem {
+  message: string;
+  fieldSelector?: string;
+  fieldLabel?: string;
+  value?: string;
+}
 
 export interface AutofillProgress {
   state: AutofillStateType;
@@ -248,10 +257,12 @@ export interface AutofillProgress {
   fields: FormField[];
   /** Active blocker when state=blocked */
   activeBlocker: FormBlocker | null;
-  /** Validation errors after fill */
-  validationErrors: string[];
+  /** Validation errors after fill (field + value for reporting/highlight) */
+  validationErrors: ValidationErrorItem[];
   /** Last filled field for UI display; previousValue kept only in content script for Undo */
   lastFilledField: { selector: string; label: string } | null;
+  /** Pre-fill preview: field labels we will fill; unknown count */
+  previewSummary?: { total: number; willFill: string[]; unknownCount: number };
 }
 
 // Legacy compatibility — keep DetectedField for any external references

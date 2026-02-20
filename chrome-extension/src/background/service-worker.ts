@@ -58,6 +58,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === MSG.AUTOFILL_RESUME) {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]?.id) {
+        chrome.tabs.sendMessage(tabs[0].id, message, () => {
+          sendResponse({ success: true });
+        });
+      } else {
+        sendResponse({ success: true });
+      }
+    });
+    return true;
+  }
+
   // Track application after autofill completes
   if (message.type === "TRACK_APPLICATION") {
     trackApplication(message.data).then(sendResponse).catch((err) => sendResponse({ error: String(err) }));
@@ -78,11 +91,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
 async function handleStartAutofill(sendResponse: (response: unknown) => void) {
   try {
+    console.log("AUTOFILL: START_AUTOFILL received from side panel");
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab?.id) {
       sendResponse({ error: "No active tab found. Navigate to a job application page first." });
       return;
     }
+    console.log("AUTOFILL: active tab", { id: tab.id, url: tab.url, status: tab.status });
 
     const url = tab.url ?? "";
     const restrictedProtocols = ["chrome:", "edge:", "about:", "chrome-extension:", "moz-extension:"];
@@ -96,6 +111,7 @@ async function handleStartAutofill(sendResponse: (response: unknown) => void) {
 
     // Inject content script (required for pages opened before extension load, or when manifest injection missed)
     try {
+      console.log("AUTOFILL: injecting content script");
       await chrome.scripting.executeScript({
         target: { tabId: tab.id },
         files: ["content/content.js"],
@@ -103,14 +119,17 @@ async function handleStartAutofill(sendResponse: (response: unknown) => void) {
       await new Promise((r) => setTimeout(r, 200));
     } catch (injectErr) {
       const msg = injectErr instanceof Error ? injectErr.message : String(injectErr);
+      console.error("AUTOFILL: injection failed", injectErr);
       sendResponse({
         error: `Failed to inject script: ${msg}. Try refreshing the page and ensure you're loading the extension from the 'dist' folder after running 'npm run build'.`,
       });
       return;
     }
 
+    console.log("AUTOFILL: sending START_AUTOFILL to tab");
     chrome.tabs.sendMessage(tab.id, { type: MSG.START_AUTOFILL }, (response) => {
       if (chrome.runtime.lastError) {
+        console.log("AUTOFILL: sendMessage lastError", chrome.runtime.lastError);
         const errMsg = chrome.runtime.lastError.message ?? "";
         sendResponse({
           error:
@@ -120,10 +139,12 @@ async function handleStartAutofill(sendResponse: (response: unknown) => void) {
               : `Connection failed: ${errMsg}`,
         });
       } else {
+        console.log("AUTOFILL: sendMessage response", response);
         sendResponse(response ?? { success: true });
       }
     });
   } catch (err) {
+    console.error("AUTOFILL: handleStartAutofill error", err);
     sendResponse({
       error: err instanceof Error ? err.message : "Failed to start auto-fill",
     });

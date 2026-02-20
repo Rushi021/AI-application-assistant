@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAppStore } from "../store";
-import { MSG } from "@/shared/constants";
-import type { AutofillProgress, FormBlocker } from "@/shared/types";
+import { MSG, STORAGE_KEYS } from "@/shared/constants";
+import type { AutofillProgress, FormBlocker, UserProfile } from "@/shared/types";
 
 const STATE_LABELS: Record<string, string> = {
   intake: "Reading form...",
   matching: "Matching fields...",
+  preview: "Preview",
   apply: "Filling fields...",
   validate: "Checking validation...",
   navigate: "Navigating...",
@@ -35,10 +36,32 @@ function getBlockerMessage(blocker: FormBlocker): string {
   }
 }
 
+function hasRequiredProfile(p: UserProfile | null): boolean {
+  if (!p) return false;
+  const hasName =
+    (p.full_name?.trim().length ?? 0) > 0 ||
+    ((p as UserProfile & { first_name?: string }).first_name?.trim().length ?? 0) > 0;
+  const hasLast =
+    (p.full_name?.trim().split(/\s+/).length ?? 0) >= 2 ||
+    ((p as UserProfile & { last_name?: string }).last_name?.trim().length ?? 0) > 0;
+  const hasEmail = (p.email?.trim().length ?? 0) > 0;
+  return hasName && hasLast && hasEmail;
+}
+
 export default function AutoFillPage() {
-  const { autofillProgress, setAutofillProgress, draft, coverLetter, setPage } = useAppStore();
+  const { autofillProgress, setAutofillProgress, draft, coverLetter, setPage, profile } = useAppStore();
   const [error, setError] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
+  const [profileFromStorage, setProfileFromStorage] = useState<UserProfile | null>(null);
+
+  useEffect(() => {
+    chrome.storage.local.get([STORAGE_KEYS.USER_PROFILE], (result) => {
+      setProfileFromStorage((result[STORAGE_KEYS.USER_PROFILE] as UserProfile) ?? null);
+    });
+  }, []);
+
+  const effectiveProfile = profile ?? profileFromStorage;
+  const canStartAutofill = hasRequiredProfile(effectiveProfile);
 
   useEffect(() => {
     const listener = (message: { type: string; data: AutofillProgress }) => {
@@ -55,7 +78,9 @@ export default function AutoFillPage() {
     setError(null);
 
     try {
+      console.log("AUTOFILL: sending START_AUTOFILL");
       chrome.runtime.sendMessage({ type: MSG.START_AUTOFILL }, (response) => {
+        console.log("AUTOFILL: response", chrome.runtime.lastError, response);
         if (chrome.runtime.lastError) {
           setError(chrome.runtime.lastError.message ?? "Failed to start auto-fill");
           setStarted(false);
@@ -79,6 +104,10 @@ export default function AutoFillPage() {
 
   const handleUndoAll = useCallback(() => {
     chrome.runtime.sendMessage({ type: MSG.AUTOFILL_UNDO_ALL }).catch(() => {});
+  }, []);
+
+  const handleFillAll = useCallback(() => {
+    chrome.runtime.sendMessage({ type: MSG.AUTOFILL_RESUME }).catch(() => {});
   }, []);
 
   const progress = autofillProgress;
@@ -133,6 +162,11 @@ export default function AutoFillPage() {
             <p className="text-xs text-gray-500 mt-1">
               Make sure you&apos;re on the job application page,<br />then click the button below.
             </p>
+            {!canStartAutofill && (
+              <p className="text-xs text-amber-600 mt-2">
+                Complete your profile first (name and email required). Go to Profile Setup or complete login.
+              </p>
+            )}
           </div>
         )}
 
@@ -191,12 +225,35 @@ export default function AutoFillPage() {
                   </svg>
                   <span className="text-xs font-medium text-red-800">Validation errors</span>
                 </div>
-                <p className="text-xs text-red-700 mt-1">{validationErrors[0]}</p>
+                <div className="text-xs text-red-700 mt-1 space-y-1">
+                  {validationErrors.map((err, i) => (
+                    <p key={i}>
+                      {err.fieldLabel || err.fieldSelector ? (
+                        <>Field: {err.fieldLabel || err.fieldSelector}{err.value != null && err.value !== "" ? ` (value: "${String(err.value).slice(0, 40)}${String(err.value).length > 40 ? "…" : ""}")` : ""} — {err.message}</>
+                      ) : (
+                        err.message
+                      )}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Pre-fill preview */}
+            {state === "preview" && progress.previewSummary && (
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <p className="text-xs font-medium text-blue-800">
+                  Found {progress.previewSummary.total} fields. Will fill: {progress.previewSummary.willFill.slice(0, 6).join(", ")}
+                  {progress.previewSummary.willFill.length > 6 ? "…" : ""}
+                </p>
+                <p className="text-xs text-blue-700 mt-1">
+                  Unknown: {progress.previewSummary.unknownCount} fields. Click &quot;Fill All&quot; to proceed.
+                </p>
               </div>
             )}
 
             {/* Paused - field manual */}
-            {isPaused && !activeBlocker && (
+            {isPaused && !activeBlocker && state !== "preview" && (
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
                 <div className="flex items-center gap-2">
                   <svg className="w-4 h-4 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -279,13 +336,22 @@ export default function AutoFillPage() {
                   </button>
                 </>
               )}
-              <button
-                onClick={handleStartAutofill}
-                disabled={started && !isComplete}
-                className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
-              >
-                {started ? (isPaused ? "Waiting..." : "Filling...") : "Start Auto-Fill"}
-              </button>
+              {state === "preview" && isPaused ? (
+                <button
+                  onClick={handleFillAll}
+                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
+                >
+                  Fill All
+                </button>
+              ) : (
+                <button
+                  onClick={handleStartAutofill}
+                  disabled={(!canStartAutofill) || (started && !isComplete)}
+                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
+                >
+                  {started ? (isPaused ? "Waiting..." : "Filling...") : "Start Auto-Fill"}
+                </button>
+              )}
             </>
           ) : (
             <button

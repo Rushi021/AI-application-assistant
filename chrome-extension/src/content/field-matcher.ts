@@ -11,7 +11,37 @@ import {
   normalizeLabel,
 } from "./site-learning";
 
+/** Phase 3: re-enabled after generic two-pass matching is solid. */
+const USE_PLATFORM_ADAPTERS = true;
+/** Re-enable when core filling is solid. */
+const USE_SITE_LEARNING = false;
+
 export type ConfidenceTier = "A" | "B" | "C";
+
+/** Pass 2: flat keyword → field type. full_name is fallback when first_name/last_name did not match. */
+const FIELD_KEYWORD_MAP: Record<string, string[]> = {
+  first_name: ["first name", "given name", "fname", "first"],
+  last_name: ["last name", "family name", "surname", "lname", "last"],
+  full_name: ["full name", "your name", "name"],
+  email: ["email", "e-mail", "email address"],
+  phone: ["phone", "telephone", "mobile", "cell", "phone number"],
+  address_line1: ["street", "address line 1", "address", "street address"],
+  city: ["city", "town", "municipality"],
+  state: ["state", "province", "region"],
+  zip_code: ["zip", "postal", "postcode", "zip code", "postal code"],
+  country: ["country", "nation"],
+  linkedin_url: ["linkedin", "linkedin url", "linkedin profile"],
+  current_company: ["current company", "company name", "current employer", "employer"],
+  current_title: ["current title", "job title", "current position", "title"],
+  work_authorization: ["work authorization", "authorized to work", "legal right to work", "eligibility to work"],
+  sponsorship_needed: ["sponsorship", "visa sponsorship", "require sponsorship", "sponsor"],
+  years_of_experience: ["years of experience", "experience years", "years exp", "yoe"],
+  expected_salary: ["salary", "expected salary", "desired salary", "compensation", "pay expectations"],
+  gender: ["gender", "sex"],
+  ethnicity: ["ethnicity", "race", "ethnic"],
+  veteran_status: ["veteran", "military", "armed forces"],
+  disability_status: ["disability", "accommodation"],
+};
 
 const SIGNAL_WEIGHTS: Record<string, number> = {
   autocomplete: 10,
@@ -235,9 +265,10 @@ function applyAdapterMappings(
   fields: FormField[],
   profile: UserProfile
 ): Map<string, FormField> {
-  const adapter = detectPlatform();
   const matched = new Map<string, FormField>();
+  if (!USE_PLATFORM_ADAPTERS) return matched;
 
+  const adapter = detectPlatform();
   if (!adapter) return matched;
 
   const mappings = adapter.getFieldMappings();
@@ -284,6 +315,7 @@ async function applyLearnedMappings(
   profile: UserProfile
 ): Promise<Map<string, FormField>> {
   const matched = new Map<string, FormField>();
+  if (!USE_SITE_LEARNING) return matched;
 
   for (const field of fields) {
     const labelNorm = normalizeLabel(field.label);
@@ -304,6 +336,31 @@ async function applyLearnedMappings(
   return matched;
 }
 
+/** Pass 2: match by FIELD_KEYWORD_MAP. Prefer longer (more specific) keyword. full_name only if first_name/last_name did not match. */
+function matchByKeywordMap(field: FormField): { fieldType: string; keyword: string } | null {
+  const labelText = (field.signals.join(" ") || field.label || "").toLowerCase().trim();
+  if (!labelText) return null;
+
+  const firstKeywords = FIELD_KEYWORD_MAP.first_name ?? [];
+  const lastKeywords = FIELD_KEYWORD_MAP.last_name ?? [];
+  const labelMatchesFirst = firstKeywords.some((k) => labelText.includes(k));
+  const labelMatchesLast = lastKeywords.some((k) => labelText.includes(k));
+
+  let best: { fieldType: string; keyword: string } | null = null;
+
+  for (const [fieldType, keywords] of Object.entries(FIELD_KEYWORD_MAP)) {
+    if (fieldType === "full_name" && (labelMatchesFirst || labelMatchesLast)) continue;
+    for (const keyword of keywords) {
+      if (!labelText.includes(keyword)) continue;
+      if (!best || keyword.length > best.keyword.length) {
+        best = { fieldType, keyword };
+      }
+    }
+  }
+
+  return best;
+}
+
 export async function matchFieldsToProfile(
   fields: FormField[],
   profile: UserProfile
@@ -316,6 +373,49 @@ export async function matchFieldsToProfile(
     if (adapterResult) return adapterResult;
     const learnedResult = learnedMatched.get(field.selector);
     if (learnedResult) return learnedResult;
+
+    const src = field.signalsWithSource ?? field.signals.map((v) => ({ source: "nearby", value: v }));
+    for (const { source, value } of src) {
+      if (source === "autocomplete") {
+        const ft = AUTOCOMPLETE_TO_FIELDTYPE[value.toLowerCase().trim()];
+        if (ft) {
+          const profileValue = resolveProfileValue(ft, profile);
+          return {
+            ...field,
+            fieldType: ft,
+            confidence: 95,
+            confidenceTier: "A" as const,
+            profileValue: profileValue ?? null,
+            matchReason: `autocomplete:${ft}`,
+          };
+        }
+      }
+      if (source === "type" && (value === "email" || value === "tel")) {
+        const ft = value === "email" ? "email" : "phone";
+        const profileValue = resolveProfileValue(ft, profile);
+        return {
+          ...field,
+          fieldType: ft,
+          confidence: 95,
+          confidenceTier: "A" as const,
+          profileValue: profileValue ?? null,
+          matchReason: `type:${ft}`,
+        };
+      }
+    }
+
+    const keywordMatch = matchByKeywordMap(field);
+    if (keywordMatch) {
+      const profileValue = resolveProfileValue(keywordMatch.fieldType, profile);
+      return {
+        ...field,
+        fieldType: keywordMatch.fieldType,
+        confidence: 70,
+        confidenceTier: "B" as const,
+        profileValue: profileValue ?? null,
+        matchReason: `keyword:${keywordMatch.keyword}`,
+      };
+    }
 
     const result = scoreField(field);
 

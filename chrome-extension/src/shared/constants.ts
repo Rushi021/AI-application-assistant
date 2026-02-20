@@ -8,6 +8,8 @@ export const STORAGE_KEYS = {
   SESSION_ID: "session_id",
   USER_PROFILE: "user_profile",
   FIELD_MAPPINGS: "autofill_field_mappings",
+  /** Optional: URL to fetch resume file for programmatic file input fill (set by side panel when available). */
+  RESUME_FILE_URL: "autofill_resume_file_url",
 } as const;
 
 /** Message types for communication between extension parts */

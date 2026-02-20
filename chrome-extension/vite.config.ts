@@ -9,12 +9,10 @@ export default defineConfig({
     {
       name: "copy-extension-files",
       closeBundle() {
-        // Copy manifest.json to dist
         copyFileSync(
           resolve(__dirname, "manifest.json"),
           resolve(__dirname, "dist/manifest.json")
         );
-        // Copy icons
         const iconsDir = resolve(__dirname, "dist/icons");
         if (!existsSync(iconsDir)) mkdirSync(iconsDir, { recursive: true });
         const srcIcons = resolve(__dirname, "public/icons");
@@ -24,7 +22,6 @@ export default defineConfig({
             if (existsSync(src)) copyFileSync(src, resolve(iconsDir, size));
           }
         }
-        // Copy content.css
         const contentCss = resolve(__dirname, "src/content/content.css");
         if (existsSync(contentCss)) {
           const destDir = resolve(__dirname, "dist/content");

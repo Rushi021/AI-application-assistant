@@ -13,6 +13,7 @@ import { MSG, STORAGE_KEYS } from "@/shared/constants";
 import type {
   UserProfile,
   AutofillProgress,
+  ValidationErrorItem,
   FormModel,
   FormField,
   FormBlocker,
@@ -139,6 +140,7 @@ function findBestSelectOption(
   return includes[0] ?? null;
 }
 
+/** Phase 2: 0 for single-page fill. Phase 3+: multi-step navigation (never auto-click Submit). */
 const MAX_NAVIGATION_CLICKS = 20;
 const MAX_LOOP_TIME_MS = 5 * 60 * 1000;
 
@@ -157,6 +159,7 @@ const VALIDATION_ERROR_SELECTORS = [
 // ---------------------------------------------------------------------------
 
 let stopped = false;
+let resolvePreviewPromise: (() => void) | null = null;
 
 interface UndoEntry {
   element: HTMLElement | HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
@@ -170,7 +173,7 @@ let undoSnapshot: UndoEntry[] = [];
 // DOM value setter (State C: Apply — triggers React/Angular/Vue)
 // ---------------------------------------------------------------------------
 
-function setFieldValue(
+function setFieldValueSync(
   el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
   value: string,
   countryContext?: string | null
@@ -186,7 +189,6 @@ function setFieldValue(
     return;
   }
 
-  // Input / Textarea: native setter + fallback, then input + change + blur()
   const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
     window.HTMLInputElement.prototype,
     "value"
@@ -209,14 +211,42 @@ function setFieldValue(
   el.blur();
 }
 
-function applyToField(
+/** Single robust value setter: native setter + events, then re-read after 100ms; if value didn't stick, use execCommand('insertText'). */
+async function setFieldValue(
   el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
   value: string,
   countryContext?: string | null
-): string {
+): Promise<void> {
+  if (el instanceof HTMLSelectElement) {
+    setFieldValueSync(el, value, countryContext);
+    return;
+  }
+
+  setFieldValueSync(el, value, countryContext);
+  await sleep(100);
+  const current = (el as HTMLInputElement | HTMLTextAreaElement).value ?? "";
+  if (current.trim() === value.trim()) return;
+
+  el.focus();
+  el.select();
+  try {
+    document.execCommand("insertText", false, value);
+  } catch {
+    setFieldValueSync(el, value, countryContext);
+  }
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+  el.blur();
+}
+
+async function applyToField(
+  el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
+  value: string,
+  countryContext?: string | null
+): Promise<string> {
   const previous = el.value ?? "";
   el.focus();
-  setFieldValue(el, value, countryContext);
+  await setFieldValue(el, value, countryContext);
   return previous;
 }
 
@@ -252,18 +282,111 @@ async function fillCustomDropdown(
 }
 
 // ---------------------------------------------------------------------------
+// File upload — programmatic fill when resume/cover letter URL is available
+// ---------------------------------------------------------------------------
+
+async function tryFillFileBlocker(blocker: FormBlocker): Promise<boolean> {
+  if (blocker.type !== "file_upload" || (blocker.subType !== "resume" && blocker.subType !== "cover_letter"))
+    return false;
+  const el = document.querySelector(blocker.selector) as HTMLInputElement | null;
+  if (!el || el.type !== "file") return false;
+
+  const stored = await new Promise<Record<string, string>>((resolve) => {
+    chrome.storage.local.get([STORAGE_KEYS.RESUME_FILE_URL], (r) => resolve(r as Record<string, string>));
+  });
+  const fileUrl = stored[STORAGE_KEYS.RESUME_FILE_URL];
+  if (!fileUrl) return false;
+
+  try {
+    const resp = await fetch(fileUrl, { credentials: "omit" });
+    if (!resp.ok) return false;
+    const blob = await resp.blob();
+    const filename = fileUrl.split("/").pop()?.split("?")[0] || "resume.docx";
+    const file = new File([blob], filename, { type: blob.type || "application/vnd.openxmlformats-officedocument.wordprocessingml.document" });
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    el.files = dt.files;
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // State D: Validation — detect inline errors
 // ---------------------------------------------------------------------------
 
-function detectValidationErrors(): string[] {
-  const errors: string[] = [];
+function stableSelectorForElement(el: Element): string {
+  if ((el as HTMLElement).id) return `#${CSS.escape((el as HTMLElement).id)}`;
+  const name = el.getAttribute?.("name");
+  if (name) return `${el.tagName.toLowerCase()}[name="${CSS.escape(name)}"]`;
+  return el.tagName.toLowerCase();
+}
+
+function detectValidationErrors(): ValidationErrorItem[] {
+  const errors: ValidationErrorItem[] = [];
+  const seen = new Set<string>();
+
+  function addError(msg: string, field?: { selector: string; label: string; value?: string }) {
+    const key = `${msg}:${field?.selector ?? ""}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    errors.push({
+      message: msg,
+      fieldSelector: field?.selector,
+      fieldLabel: field?.label,
+      value: field?.value,
+    });
+  }
+
   for (const sel of VALIDATION_ERROR_SELECTORS) {
     document.querySelectorAll(sel).forEach((el) => {
       const text = el.textContent?.trim();
-      if (text && text.length < 200) errors.push(text);
+      if (!text || text.length >= 200) return;
+
+      let fieldEl: Element | null = null;
+      let value: string | undefined;
+
+      if (el.getAttribute?.("aria-invalid") === "true") {
+        fieldEl = el;
+        value = (el as HTMLInputElement).value ?? (el as HTMLElement).textContent ?? undefined;
+      } else {
+        const form = el.closest("form");
+        if (form) {
+          const prev = el.previousElementSibling;
+          if (prev && (prev.matches?.("input, select, textarea") || (prev as HTMLElement).getAttribute?.("for"))) {
+            const forId = (prev as HTMLElement).getAttribute?.("for");
+            fieldEl = forId ? form.querySelector(`#${CSS.escape(forId)}`) : prev;
+            if (fieldEl && "value" in fieldEl) value = (fieldEl as HTMLInputElement).value;
+          }
+          if (!fieldEl) {
+            const input = el.closest("label")?.control ?? el.previousElementSibling ?? el.parentElement?.querySelector?.("input, select, textarea");
+            fieldEl = input ?? null;
+            if (fieldEl && "value" in fieldEl) value = (fieldEl as HTMLInputElement).value;
+          }
+        }
+      }
+
+      const selector = fieldEl ? stableSelectorForElement(fieldEl) : undefined;
+      const label = fieldEl ? (fieldEl.getAttribute?.("aria-label") ?? ((fieldEl as HTMLElement).id ? document.querySelector(`label[for="${(fieldEl as HTMLElement).id}"]`)?.textContent?.trim() : null) ?? "") : undefined;
+      addError(text, selector ? { selector, label: label ?? selector, value } : undefined);
     });
   }
-  return [...new Set(errors)];
+  return errors;
+}
+
+function highlightValidationFields(errors: ValidationErrorItem[]): void {
+  errors.forEach((err) => {
+    if (err.fieldSelector) {
+      try {
+        document.querySelector(err.fieldSelector)?.classList.add("field-highlight");
+      } catch {
+        // ignore invalid selector
+      }
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -402,6 +525,38 @@ function removeOverlay(): void {
   document.querySelectorAll(".field-highlight").forEach((el) => el.classList.remove("field-highlight"));
 }
 
+let undoButtonHost: HTMLDivElement | null = null;
+
+function showUndoButton(): void {
+  if (undoButtonHost || undoSnapshot.length === 0) return;
+  undoButtonHost = document.createElement("div");
+  undoButtonHost.id = "ai-assistant-undo-host";
+  document.body.appendChild(undoButtonHost);
+  const shadow = undoButtonHost.attachShadow({ mode: "open" });
+  shadow.innerHTML = `
+    <style>
+      .undo-pill { position: fixed; bottom: 16px; right: 16px; z-index: 2147483645;
+        padding: 8px 14px; border-radius: 20px; background: #F97316; color: white;
+        font-size: 12px; font-weight: 500; cursor: pointer; border: none;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+      .undo-pill:hover { background: #EA580C; }
+    </style>
+    <button type="button" class="undo-pill">Undo All</button>
+  `;
+  shadow.querySelector("button")!.addEventListener("click", () => {
+    performUndoAll().then(() => {
+      removeUndoButton();
+    });
+  });
+}
+
+function removeUndoButton(): void {
+  if (undoButtonHost) {
+    undoButtonHost.remove();
+    undoButtonHost = null;
+  }
+}
+
 function escapeHtml(s: string): string {
   const div = document.createElement("div");
   div.textContent = s;
@@ -423,7 +578,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function performUndoAll(): void {
+async function performUndoAll(): Promise<void> {
   for (const entry of undoSnapshot) {
     let el: HTMLElement | null = null;
     if (document.contains(entry.element)) {
@@ -438,7 +593,11 @@ function performUndoAll(): void {
     if (!el) continue;
 
     if (entry.isCustomSelect) {
-      // Custom dropdowns: cannot easily restore; skip
+      continue;
+    }
+    if (el.getAttribute?.("contenteditable") === "true") {
+      (el as HTMLElement).textContent = entry.previousValue;
+      (el as HTMLElement).dispatchEvent(new Event("input", { bubbles: true }));
       continue;
     }
     if (
@@ -446,10 +605,11 @@ function performUndoAll(): void {
       el instanceof HTMLTextAreaElement ||
       el instanceof HTMLSelectElement
     ) {
-      applyToField(el, entry.previousValue);
+      await applyToField(el, entry.previousValue);
     }
   }
   undoSnapshot = [];
+  removeUndoButton();
 }
 
 function getEffectiveActions(formModel: FormModel): {
@@ -582,11 +742,36 @@ async function runAutofillLoop(
     progress.total = fillableFields.length;
     sendProgress(progress);
 
+    // Pre-fill preview: show summary and wait for "Fill All"
+    const willFill = fillableFields
+      .map((f) => {
+        const m = matchedFields.find((mf) => mf.selector === f.selector);
+        return m?.confidenceTier === "A" || m?.confidenceTier === "B" ? f.label : null;
+      })
+      .filter(Boolean) as string[];
+    const unknownCount = fillableFields.length - willFill.length;
+    progress.state = "preview";
+    progress.paused = true;
+    progress.previewSummary = { total: fillableFields.length, willFill, unknownCount };
+    sendProgress(progress);
+    await new Promise<void>((resolve) => {
+      resolvePreviewPromise = resolve;
+    });
+    resolvePreviewPromise = null;
+    progress.paused = false;
+    progress.state = "apply";
+    progress.previewSummary = undefined;
+    sendProgress(progress);
+
     // State F: Blockers — check unresolved blockers first
     const unresolvedBlockers = formModel.blockers.filter((b) => !b.resolved);
 
     if (unresolvedBlockers.length > 0) {
       const blocker = unresolvedBlockers[0];
+      const filled = await tryFillFileBlocker(blocker);
+      if (filled) {
+        continue;
+      }
       progress.state = "blocked";
       progress.paused = true;
       progress.activeBlocker = blocker;
@@ -659,6 +844,7 @@ async function runAutofillLoop(
             progress.state = "validate";
             progress.validationErrors = errors;
             progress.paused = true;
+            highlightValidationFields(errors);
             sendProgress(progress);
             await new Promise<void>((resolve) => {
               showOverlay(
@@ -770,7 +956,7 @@ async function runAutofillLoop(
         const el = document.querySelector(field.selector);
         if (el) {
           const prev =
-            field.fieldKind === "custom_select"
+            field.fieldKind === "custom_select" || field.fieldKind === "contenteditable"
               ? (el as HTMLElement).textContent?.trim() ?? ""
               : (el as HTMLInputElement).value ?? "";
           undoSnapshot.push({
@@ -850,7 +1036,14 @@ async function runAutofillLoop(
         }
 
         let previousValue: string;
-        if (field.fieldKind === "custom_select") {
+        if (field.fieldKind === "contenteditable") {
+          const ce = el as HTMLElement;
+          previousValue = ce.textContent?.trim() ?? "";
+          ce.focus();
+          ce.textContent = profileValue;
+          ce.dispatchEvent(new Event("input", { bubbles: true }));
+          ce.dispatchEvent(new Event("change", { bubbles: true }));
+        } else if (field.fieldKind === "custom_select") {
           const trigger = field.triggerSelector
             ? document.querySelector(field.triggerSelector) ?? el
             : el;
@@ -860,7 +1053,7 @@ async function runAutofillLoop(
             profile.country ?? null
           );
         } else {
-          previousValue = applyToField(
+          previousValue = await applyToField(
             el as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
             profileValue,
             profile.country ?? null
@@ -870,7 +1063,12 @@ async function runAutofillLoop(
         progress.filled++;
         progress.lastFilledField = { selector: field.selector, label: field.label };
         sendProgress(progress);
+        showUndoButton();
         await sleep(getInterFieldDelayMs());
+        if (field.fieldKind === "custom_select" || el instanceof HTMLSelectElement || (el instanceof HTMLInputElement && el.type === "radio")) {
+          await sleep(500);
+          break;
+        }
 
         // State D: Validation
         const errors = detectValidationErrors();
@@ -878,6 +1076,7 @@ async function runAutofillLoop(
           progress.state = "validate";
           progress.validationErrors = errors;
           progress.paused = true;
+          highlightValidationFields(errors);
           sendProgress(progress);
 
           await new Promise<void>((resolve) => {
@@ -893,13 +1092,13 @@ async function runAutofillLoop(
                 onPrimary: resolve,
               },
               resolve,
-              () => {
+              async () => {
                 if (
                   el instanceof HTMLInputElement ||
                   el instanceof HTMLTextAreaElement ||
                   el instanceof HTMLSelectElement
                 ) {
-                  applyToField(el, previousValue);
+                  await applyToField(el, previousValue);
                 }
                 matchedField.filled = false;
                 progress.filled--;
@@ -952,7 +1151,7 @@ async function runAutofillLoop(
               : el;
             await fillCustomDropdown(trigger, matchedField.profileValue!, profile.country ?? null);
           } else {
-            applyToField(
+            await applyToField(
               el as HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement,
               matchedField.profileValue!,
               profile.country ?? null
@@ -1048,6 +1247,7 @@ async function runAutofillLoop(
           progress.state = "validate";
           progress.validationErrors = errors;
           progress.paused = true;
+          highlightValidationFields(errors);
           sendProgress(progress);
           await new Promise<void>((resolve) => {
             showOverlay(
@@ -1163,18 +1363,27 @@ function getBlockerOverlayConfig(blocker: FormBlocker): OverlayConfig {
 // ---------------------------------------------------------------------------
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  console.log("AUTOFILL: message received", message?.type);
   if (message.type === MSG.START_AUTOFILL) {
     if (window !== window.top) {
+      console.log("AUTOFILL: in iframe, rejecting");
       sendResponse({ error: "Auto-fill runs in the main frame only." });
       return false;
     }
+    console.log("AUTOFILL: main frame, loading profile");
     chrome.storage.local.get([STORAGE_KEYS.USER_PROFILE], (result) => {
       const profile = result[STORAGE_KEYS.USER_PROFILE] as UserProfile | undefined;
+      console.log("AUTOFILL: profile", profile ? "present" : "null");
       if (!profile) {
         sendResponse({ error: "No user profile found" });
         return;
       }
-      runAutofill(profile).then(() => sendResponse({ success: true }));
+      runAutofill(profile)
+        .then(() => sendResponse({ success: true }))
+        .catch((err) => {
+          console.error("AUTOFILL: runAutofill error", err);
+          sendResponse({ error: String(err) });
+        });
     });
     return true;
   }
@@ -1187,7 +1396,13 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   }
 
   if (message.type === MSG.AUTOFILL_UNDO_ALL) {
-    performUndoAll();
+    performUndoAll().then(() => sendResponse({ success: true }));
+    return true;
+  }
+
+  if (message.type === MSG.AUTOFILL_RESUME) {
+    resolvePreviewPromise?.();
+    resolvePreviewPromise = null;
     sendResponse({ success: true });
     return false;
   }
