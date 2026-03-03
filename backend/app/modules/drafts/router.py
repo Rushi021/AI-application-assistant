@@ -20,7 +20,7 @@ from app.core.deps import get_db, get_llm_provider, get_request_scope, get_resum
 from app.core.security import RequestScope
 from app.modules.ai.prompts.pipeline import build_cover_letter_prompt
 from app.modules.ai.prompts.section_chat import build_section_chat_prompt
-from app.modules.drafts.models import ResumeDraft, ResumeDraftSection
+from app.modules.drafts.models import ResumeDraft, ResumeDraftSection, SectionChatMessage
 from app.modules.drafts.repos import DraftRepo, DraftSectionRepo, SectionChatRepo
 from app.modules.drafts.schemas import (
     ChatMessageRead,
@@ -352,6 +352,28 @@ def get_draft(
         updated_at=draft.updated_at,
         sections=[SectionRead.model_validate(s) for s in sections],
     )
+
+
+@router.delete("/{draft_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_draft(
+    draft_id: int,
+    scope: RequestScope = Depends(get_request_scope),
+    db: Session = Depends(get_db),
+) -> None:
+    """Discard a draft and all of its section/chat history."""
+    draft_repo = DraftRepo(db)
+    draft = draft_repo.get_by_scope(scope.session_id, draft_id)
+    if not draft:
+        raise not_found("Draft not found")
+
+    db.query(SectionChatMessage).filter(
+        SectionChatMessage.draft_id == draft_id,
+    ).delete(synchronize_session=False)
+    db.query(ResumeDraftSection).filter(
+        ResumeDraftSection.draft_id == draft_id,
+    ).delete(synchronize_session=False)
+    db.delete(draft)
+    db.commit()
 
 
 @router.post("/{draft_id}/sections/{section_id}/chat", response_model=SectionChatResponse)

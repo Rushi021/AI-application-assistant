@@ -2,7 +2,7 @@ import json
 import logging
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -14,7 +14,7 @@ from app.core.config import get_settings
 from app.core.deps import get_db, get_request_scope, get_resume_storage
 from app.core.security import RequestScope
 from app.common.ports import ResumeStorage
-from app.modules.drafts.models import ResumeDraft
+from app.modules.drafts.models import ResumeDraft, ResumeDraftSection, SectionChatMessage
 from app.modules.resumes.models import Resume
 from app.modules.resumes.schemas import ResumeRead
 from app.modules.resumes.scoring import score_resume_against_jd
@@ -124,6 +124,10 @@ def get_resume(
 @router.delete("/{resume_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_resume(
     resume_id: int,
+    force: bool = Query(
+        True,
+        description="If true, also discard drafts linked to this resume so deletion can proceed.",
+    ),
     scope: RequestScope = Depends(get_request_scope),
     storage: ResumeStorage = Depends(get_resume_storage),
     db: Session = Depends(get_db),
@@ -133,15 +137,29 @@ def delete_resume(
     item = repo.get_by_scope(scope.session_id, resume_id)
     if not item:
         raise not_found("Resume not found")
-    draft_ref = db.query(ResumeDraft).filter(
+    draft_refs = db.query(ResumeDraft).filter(
         ResumeDraft.session_id == scope.session_id,
         ResumeDraft.base_resume_id == resume_id,
-    ).first()
-    if draft_ref:
+    ).all()
+    if draft_refs and not force:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot remove resume that is used by a draft. Finish or discard the draft first.",
+            detail=(
+                "Cannot remove resume that is used by a draft. "
+                "Discard the draft first (DELETE /drafts/{draft_id}) or retry with ?force=true."
+            ),
         )
+    if draft_refs and force:
+        draft_ids = [d.id for d in draft_refs]
+        db.query(SectionChatMessage).filter(
+            SectionChatMessage.draft_id.in_(draft_ids),
+        ).delete(synchronize_session=False)
+        db.query(ResumeDraftSection).filter(
+            ResumeDraftSection.draft_id.in_(draft_ids),
+        ).delete(synchronize_session=False)
+        db.query(ResumeDraft).filter(
+            ResumeDraft.id.in_(draft_ids),
+        ).delete(synchronize_session=False)
     try:
         storage.delete_file(item.file_key)
     except Exception as e:
