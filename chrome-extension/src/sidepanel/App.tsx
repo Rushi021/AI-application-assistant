@@ -4,6 +4,7 @@ import LoginPage from "./pages/LoginPage";
 import ProfileSetupPage from "./pages/ProfileSetupPage";
 import JobDescriptionPage from "./pages/JobDescriptionPage";
 import ResumeSelectPage from "./pages/ResumeSelectPage";
+import TemporaryResumeUploadPage from "./pages/TemporaryResumeUploadPage";
 import SectionEditorPage from "./pages/SectionEditorPage";
 import CoverLetterPage from "./pages/CoverLetterPage";
 import AutoFillPage from "./pages/AutoFillPage";
@@ -33,6 +34,8 @@ function PageRouter() {
       return <JobDescriptionPage />;
     case "resume-select":
       return <ResumeSelectPage />;
+    case "temporary-resume-upload":
+      return <TemporaryResumeUploadPage />;
     case "section-editor":
       return <SectionEditorPage />;
     case "cover-letter":

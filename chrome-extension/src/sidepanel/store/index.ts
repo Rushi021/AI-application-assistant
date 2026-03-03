@@ -4,6 +4,7 @@
 
 import { create } from "zustand";
 import type {
+  AutofillContext,
   AutofillProgress,
   Draft,
   DraftSection,
@@ -60,6 +61,10 @@ interface AppState {
   // Autofill
   autofillProgress: AutofillProgress | null;
   setAutofillProgress: (p: AutofillProgress | null) => void;
+
+  // Workflow context
+  autofillContext: AutofillContext;
+  setAutofillContext: (updates: Partial<AutofillContext>) => void;
 
   // Reset
   resetWorkflow: () => void;
@@ -122,6 +127,28 @@ export const useAppStore = create<AppState>((set, get) => ({
   autofillProgress: null,
   setAutofillProgress: (p) => set({ autofillProgress: p }),
 
+  // Workflow context
+  autofillContext: {
+    mode: "standard",
+    considerResume: true,
+    hasStoredResume: false,
+    suppressWorkAndSkills: false,
+    applicationResumeSource: null,
+    temporaryResumeId: null,
+    temporaryResumeFilename: null,
+    pendingCoverLetterGeneration: false,
+    pendingCoverLetterBlockerSelector: null,
+    pendingUploadSubtype: null,
+    uploadedSameAsProfileResume: false,
+  },
+  setAutofillContext: (updates) =>
+    set((state) => ({
+      autofillContext: {
+        ...state.autofillContext,
+        ...updates,
+      },
+    })),
+
   // Reset workflow (keep auth)
   resetWorkflow: () =>
     set({
@@ -134,6 +161,19 @@ export const useAppStore = create<AppState>((set, get) => ({
       draft: null,
       coverLetter: "",
       autofillProgress: null,
+      autofillContext: {
+        mode: "standard",
+        considerResume: true,
+        hasStoredResume: false,
+        suppressWorkAndSkills: false,
+        applicationResumeSource: null,
+        temporaryResumeId: null,
+        temporaryResumeFilename: null,
+        pendingCoverLetterGeneration: false,
+        pendingCoverLetterBlockerSelector: null,
+        pendingUploadSubtype: null,
+        uploadedSameAsProfileResume: false,
+      },
       currentPage: "job-description",
     }),
 }));

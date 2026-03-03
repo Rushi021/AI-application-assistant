@@ -200,13 +200,15 @@ export interface FormAction {
 }
 
 export type BlockerType = "file_upload" | "captcha" | "otp" | "agreement" | "submit_confirmation";
+export type FileUploadBlockerSubType = "resume" | "cover_letter" | "generic";
+export type FileUploadBlockerDecision = "resolved_by_user" | "skipped_by_user";
 
 export interface FormBlocker {
   type: BlockerType;
   selector: string;
   label: string;
   /** For file_upload: resume | cover_letter | generic */
-  subType?: string;
+  subType?: FileUploadBlockerSubType | string;
   resolved: boolean;
 }
 
@@ -277,6 +279,24 @@ export interface DetectedField {
 }
 
 // ---------------------------------------------------------------------------
+// Workflow context
+// ---------------------------------------------------------------------------
+
+export interface AutofillContext {
+  mode: "standard" | "direct";
+  considerResume: boolean;
+  hasStoredResume: boolean;
+  suppressWorkAndSkills: boolean;
+  applicationResumeSource: "profile_resume" | "temporary_resume" | null;
+  temporaryResumeId: number | null;
+  temporaryResumeFilename: string | null;
+  pendingCoverLetterGeneration: boolean;
+  pendingCoverLetterBlockerSelector: string | null;
+  pendingUploadSubtype: FileUploadBlockerSubType | null;
+  uploadedSameAsProfileResume: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Extension pages / navigation
 // ---------------------------------------------------------------------------
 
@@ -285,6 +305,7 @@ export type PageId =
   | "profile-setup"
   | "job-description"
   | "resume-select"
+  | "temporary-resume-upload"
   | "section-editor"
   | "cover-letter"
   | "autofill";

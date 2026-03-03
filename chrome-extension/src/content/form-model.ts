@@ -4,83 +4,23 @@
  */
 
 import type { FormModel, FormField, FormAction, FormBlocker } from "@/shared/types";
+import {
+  getLabelTextForElement,
+  getAssociatedLabelText,
+  isVisibleElement,
+  getElementSelector,
+  deepQueryAll,
+  scanCheckboxes,
+  scanDropdowns,
+  scanUploadDetectors,
+} from "@/shared/dom-control-engine";
 
 // ---------------------------------------------------------------------------
 // Signal extraction (label resolution order: label[for] → aria-label → aria-labelledby → closest label → placeholder)
 // ---------------------------------------------------------------------------
 
-/** Smart label extraction: ordered resolution for Pass 2 keyword matching. */
-export function getLabelTextForElement(el: HTMLElement): string {
-  const withLabels = el as HTMLInputElement & { labels?: NodeListOf<HTMLLabelElement> };
-  if (withLabels.labels?.length) {
-    const labelText = Array.from(withLabels.labels)
-      .map((l) => l.textContent?.trim())
-      .filter(Boolean)
-      .join(" ");
-    if (labelText) return labelText;
-  }
-  const labelledBy = el.getAttribute("aria-labelledby");
-  if (labelledBy) {
-    const parts = labelledBy
-      .split(/\s+/)
-      .map((id) => document.getElementById(id)?.textContent?.trim())
-      .filter(Boolean);
-    if (parts.length) return parts.join(" ").slice(0, 200);
-  }
-  const ariaLabel = el.getAttribute("aria-label");
-  if (ariaLabel) return ariaLabel.trim().slice(0, 200);
-  const wrappingLabel = el.closest("label");
-  if (wrappingLabel?.textContent) {
-    const clone = wrappingLabel.cloneNode(true) as HTMLElement;
-    clone.querySelectorAll("input, select, textarea").forEach((n) => n.remove());
-    const text = clone.textContent?.trim();
-    if (text && text.length < 200) return text;
-  }
-  if ("placeholder" in el && (el as HTMLInputElement).placeholder) {
-    return (el as HTMLInputElement).placeholder.trim().slice(0, 200);
-  }
-  const parent = el.parentElement;
-  if (parent) {
-    const prev = el.previousElementSibling;
-    if (prev) {
-      const tag = prev.tagName.toLowerCase();
-      if (tag === "label" || tag === "span" || tag === "div") {
-        const t = prev.textContent?.trim();
-        if (t && t.length < 60) return t;
-      }
-    }
-    for (const candidate of parent.querySelectorAll(":scope > label, :scope > span, :scope > div")) {
-      const t = candidate.textContent?.trim();
-      if (t && t.length < 60 && candidate !== el) return t;
-    }
-  }
-  return "";
-}
-
 function getAssociatedLabel(el: HTMLElement): string | null {
-  const fromSmart = getLabelTextForElement(el);
-  if (fromSmart) return fromSmart;
-  if (el.id) {
-    const label = document.querySelector(`label[for="${el.id}"]`);
-    if (label?.textContent) return label.textContent.trim();
-  }
-  if (el.getAttribute("aria-label")) return el.getAttribute("aria-label")!.trim();
-  const labelledBy = el.getAttribute("aria-labelledby");
-  if (labelledBy) {
-    const parts = labelledBy
-      .split(/\s+/)
-      .map((id) => document.getElementById(id)?.textContent?.trim())
-      .filter(Boolean);
-    if (parts.length) return parts.join(" ");
-  }
-  const wrappingLabel = el.closest("label");
-  if (wrappingLabel?.textContent) {
-    const clone = wrappingLabel.cloneNode(true) as HTMLElement;
-    clone.querySelectorAll("input, select, textarea").forEach((n) => n.remove());
-    const text = clone.textContent?.trim();
-    if (text) return text;
-  }
-  return null;
+  return getAssociatedLabelText(el);
 }
 
 function getNearbyText(el: Element, levels = 2): string | null {
@@ -153,31 +93,8 @@ function getFieldLabel(el: HTMLElement, signals: string[]): string {
   return "Unknown field";
 }
 
-function isVisible(el: Element): boolean {
-  const rect = el.getBoundingClientRect();
-  if (rect.width === 0 || rect.height === 0) return false;
-  const style = window.getComputedStyle(el);
-  return style.display !== "none" && style.visibility !== "hidden";
-}
-
-function generateSelector(el: Element): string {
-  if (el.id) return `#${CSS.escape(el.id)}`;
-  const tag = el.tagName.toLowerCase();
-  const name = el.getAttribute("name");
-  if (name) return `${tag}[name="${CSS.escape(name)}"]`;
-
-  const parent = el.parentElement;
-  if (parent) {
-    const siblings = Array.from(parent.querySelectorAll(`:scope > ${tag}`));
-    const index = siblings.indexOf(el);
-    if (index >= 0) {
-      const parentSelector = parent.id ? `#${CSS.escape(parent.id)}` : parent.tagName.toLowerCase();
-      return `${parentSelector} > ${tag}:nth-of-type(${index + 1})`;
-    }
-  }
-  return tag;
-}
-
+const isVisible = isVisibleElement;
+const generateSelector = getElementSelector;
 // ---------------------------------------------------------------------------
 // Section detection (steps, tabs, sections)
 // ---------------------------------------------------------------------------
@@ -205,7 +122,8 @@ function detectSection(el: Element): string | null {
 
 function detectActions(): FormAction[] {
   const actions: FormAction[] = [];
-  const buttons = document.querySelectorAll(
+  const buttons = deepQueryAll(
+    document,
     'button, input[type="submit"], [role="button"], a[class*="button"], [data-testid*="submit"], [data-testid*="next"]'
   );
 
@@ -263,7 +181,7 @@ function detectBlockers(): FormBlocker[] {
     '[id*="captcha"]',
   ];
   for (const sel of captchaSelectors) {
-    const el = document.querySelector(sel);
+    const el = deepQueryAll(document, sel)[0] ?? null;
     if (el && isVisible(el)) {
       blockers.push({
         type: "captcha",
@@ -276,7 +194,8 @@ function detectBlockers(): FormBlocker[] {
   }
 
   // OTP / verification code
-  const otpInputs = document.querySelectorAll(
+  const otpInputs = deepQueryAll(
+    document,
     'input[type="text"][placeholder*="code"], input[placeholder*="verification"], input[placeholder*="OTP"], input[name*="otp"], input[name*="verification"]'
   );
   otpInputs.forEach((el) => {
@@ -290,39 +209,31 @@ function detectBlockers(): FormBlocker[] {
     }
   });
 
-  // File upload
-  const fileInputs = document.querySelectorAll<HTMLInputElement>('input[type="file"]');
-  fileInputs.forEach((el) => {
-    if (!isVisible(el)) return;
-    const signals = getSignals(el);
-    const label = getFieldLabel(el, signals);
-    const isResume = /resume|cv|curriculum/i.test(signals.join(" "));
-    const isCoverLetter = /cover.?letter/i.test(signals.join(" "));
-    const subType = isResume ? "resume" : isCoverLetter ? "cover_letter" : "generic";
+  const uploadDetection = scanUploadDetectors(document);
+  uploadDetection.candidates.forEach((candidate) => {
+    let resolved = false;
+    const matchedElement = document.querySelector(candidate.selector);
+    if (matchedElement instanceof HTMLInputElement && matchedElement.type === "file") {
+      resolved = !!(matchedElement.files && matchedElement.files.length > 0);
+    }
 
     blockers.push({
       type: "file_upload",
-      selector: generateSelector(el),
-      label,
-      subType,
-      resolved: !!(el.files && el.files.length > 0),
+      selector: candidate.selector,
+      label: candidate.label,
+      subType: candidate.subType,
+      resolved,
     });
   });
 
   // Agreement checkboxes ("I agree", "I accept")
-  const agreementInputs = document.querySelectorAll<HTMLInputElement>(
-    'input[type="checkbox"]'
-  );
-  agreementInputs.forEach((el) => {
-    if (!isVisible(el)) return;
-    const signals = getSignals(el);
-    const combined = signals.join(" ").toLowerCase();
-    if (/agree|accept|terms|conditions|consent/i.test(combined) && !el.checked) {
+  scanCheckboxes(document).forEach((checkbox) => {
+    if (checkbox.classification === "agreement" && !checkbox.checked) {
       blockers.push({
         type: "agreement",
-        selector: generateSelector(el),
-        label: getFieldLabel(el, signals),
-        resolved: el.checked,
+        selector: checkbox.selector,
+        label: checkbox.label,
+        resolved: checkbox.checked,
       });
     }
   });
@@ -335,29 +246,16 @@ function detectBlockers(): FormBlocker[] {
 // ---------------------------------------------------------------------------
 
 function detectCustomDropdowns(): FormField[] {
-  const fields: FormField[] = [];
-  const comboboxes = document.querySelectorAll('[role="combobox"][aria-haspopup="listbox"]');
-
-  comboboxes.forEach((el, idx) => {
-    if (!isVisible(el)) return;
-    if (el.closest("select") || el.querySelector("select")) return;
-
-    const trigger = el;
-    const triggerSelector = generateSelector(trigger as Element);
-    const selector = triggerSelector;
-
-    const label =
-      el.getAttribute("aria-label") ??
-      (el.querySelector("label")?.textContent?.trim() ?? `Custom dropdown ${idx + 1}`);
-
-    fields.push({
-      selector,
+  return scanDropdowns(document).map((dropdown) => {
+    const el = document.querySelector(dropdown.selector);
+    return {
+      selector: dropdown.selector,
       fieldType: "unknown",
-      label,
+      label: dropdown.label,
       fieldKind: "custom_select",
-      triggerSelector,
-      signals: [label, el.getAttribute("aria-label") ?? ""].filter(Boolean),
-      required: el.getAttribute("aria-required") === "true",
+      triggerSelector: dropdown.selector,
+      signals: [dropdown.label, dropdown.pattern].filter(Boolean),
+      required: (el?.getAttribute("aria-required") ?? "false") === "true",
       visible: true,
       enabled: true,
       filled: false,
@@ -365,11 +263,9 @@ function detectCustomDropdowns(): FormField[] {
       profileValue: null,
       confidence: 0,
       confidenceTier: "C",
-      section: detectSection(el),
-    });
+      section: el ? detectSection(el) : null,
+    } satisfies FormField;
   });
-
-  return fields;
 }
 
 // ---------------------------------------------------------------------------
@@ -519,3 +415,4 @@ export function buildFormModel(): FormModel {
     sections,
   };
 }
+

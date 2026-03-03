@@ -9,7 +9,8 @@
  * State F: Blockers — Pause for upload/CAPTCHA/OTP/agreement/submit
  */
 
-import { MSG, STORAGE_KEYS } from "@/shared/constants";
+import { API_BASE_URL, MSG, STORAGE_KEYS } from "@/shared/constants";
+import { runPhase1Fill } from "@/shared/dom-control-engine";
 import type {
   UserProfile,
   AutofillProgress,
@@ -18,6 +19,7 @@ import type {
   FormField,
   FormBlocker,
   FormAction,
+  FileUploadBlockerDecision,
 } from "@/shared/types";
 import { buildFormModel } from "./form-model";
 import { matchFieldsToProfile } from "./field-matcher";
@@ -160,6 +162,32 @@ const VALIDATION_ERROR_SELECTORS = [
 
 let stopped = false;
 let resolvePreviewPromise: (() => void) | null = null;
+let resolveUploadBlockerDecision: ((decision: FileUploadBlockerDecision) => void) | null = null;
+let iframeObserverInitialized = false;
+let autofillRunInProgress = false;
+const handledUploadBlockers = new Map<string, FileUploadBlockerDecision>();
+
+interface AutofillRunOptions {
+  suppressWorkAndSkills: boolean;
+}
+
+const DEFAULT_AUTOFILL_OPTIONS: AutofillRunOptions = {
+  suppressWorkAndSkills: false,
+};
+
+const SUPPRESSED_WORK_SKILL_FIELD_TYPES = new Set([
+  "years_of_experience",
+  "current_title",
+  "current_company",
+]);
+
+const SUPPRESSED_WORK_SKILL_PATTERNS = [
+  /\bskills?\b/i,
+  /\btechnical\s+skills?\b/i,
+  /\btechnologies?\b/i,
+  /\bwork\s+experience\b/i,
+  /\bemployment\s+history\b/i,
+];
 
 interface UndoEntry {
   element: HTMLElement | HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement;
@@ -168,6 +196,53 @@ interface UndoEntry {
   isCustomSelect: boolean;
 }
 let undoSnapshot: UndoEntry[] = [];
+
+type DiagnosticStatus = "PASS" | "FAIL";
+
+interface DiagnosticStepResult {
+  step: string;
+  gist: string;
+  status: DiagnosticStatus;
+  detail?: string;
+}
+
+interface AutofillDiagnosticsResponse {
+  ok: boolean;
+  steps: DiagnosticStepResult[];
+}
+
+function emitDiagTrace(
+  step: string,
+  detail: string,
+  level: "info" | "warn" | "error" = "info"
+): void {
+  const traceData = {
+    source: "content",
+    step,
+    detail,
+    level,
+    ts: Date.now(),
+    isTopFrame: window === window.top,
+    href: window.location.href,
+  };
+  const payload = {
+    type: MSG.AUTOFILL_DIAG_TRACE,
+    data: traceData,
+  };
+  chrome.storage.local
+    .get([STORAGE_KEYS.AUTOFILL_TRACE_LOG])
+    .then((result) => {
+      const prev = Array.isArray(result[STORAGE_KEYS.AUTOFILL_TRACE_LOG])
+        ? (result[STORAGE_KEYS.AUTOFILL_TRACE_LOG] as Array<Record<string, unknown>>)
+        : [];
+      const next = [traceData, ...prev].slice(0, 100);
+      return chrome.storage.local.set({ [STORAGE_KEYS.AUTOFILL_TRACE_LOG]: next });
+    })
+    .catch(() => {});
+  chrome.runtime.sendMessage(payload).catch(() => {});
+  const fn = level === "error" ? console.error : level === "warn" ? console.warn : console.log;
+  fn(`AUTOFILL TRACE [content] ${step}: ${detail}`);
+}
 
 // ---------------------------------------------------------------------------
 // DOM value setter (State C: Apply — triggers React/Angular/Vue)
@@ -568,14 +643,105 @@ function escapeHtml(s: string): string {
 // ---------------------------------------------------------------------------
 
 function sendProgress(progress: AutofillProgress): void {
-  chrome.runtime.sendMessage({
+  chrome.storage.local
+    .set({
+      [STORAGE_KEYS.AUTOFILL_PROGRESS]: {
+        ...progress,
+        _ts: Date.now(),
+      },
+    })
+    .catch(() => {});
+  chrome.runtime
+    .sendMessage({
     type: MSG.AUTOFILL_PROGRESS,
     data: { ...progress },
+    })
+    .catch((err) => {
+      // Keep this loud in console so "stuck at Filling..." has a concrete cause.
+      console.error("AUTOFILL: failed to send progress message", {
+        state: progress.state,
+        currentField: progress.currentField,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+}
+
+function initIframeReloadObserver(): void {
+  if (iframeObserverInitialized || window !== window.top) return;
+  iframeObserverInitialized = true;
+
+  const attachLoadListener = (iframe: HTMLIFrameElement): void => {
+    if ((iframe as HTMLIFrameElement & { __autofillLoadListener?: boolean }).__autofillLoadListener) return;
+    (iframe as HTMLIFrameElement & { __autofillLoadListener?: boolean }).__autofillLoadListener = true;
+    iframe.addEventListener("load", () => {
+      chrome.runtime.sendMessage({
+        type: MSG.IFRAME_RELOADED,
+        data: {
+          pageHref: window.location.href,
+          iframeSrc: iframe.src || "(empty-src)",
+        },
+      }).catch(() => {});
+    });
+  };
+
+  document.querySelectorAll("iframe").forEach((node) => attachLoadListener(node as HTMLIFrameElement));
+  const observer = new MutationObserver(() => {
+    document.querySelectorAll("iframe").forEach((node) => attachLoadListener(node as HTMLIFrameElement));
   });
+  observer.observe(document.documentElement, { childList: true, subtree: true });
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function shouldSuppressWorkAndSkillsField(field: FormField): boolean {
+  if (SUPPRESSED_WORK_SKILL_FIELD_TYPES.has(field.fieldType)) {
+    return true;
+  }
+
+  const combinedSignals = [
+    field.label,
+    field.section ?? "",
+    ...field.signals,
+    ...(field.signalsWithSource ?? []).map((s) => s.value),
+  ]
+    .join(" ")
+    .trim();
+
+  return SUPPRESSED_WORK_SKILL_PATTERNS.some((pattern) => pattern.test(combinedSignals));
+}
+
+function applyMatchedFieldSuppressions(
+  matchedFields: FormField[],
+  options: AutofillRunOptions
+): FormField[] {
+  if (!options.suppressWorkAndSkills) {
+    return matchedFields;
+  }
+
+  return matchedFields.map((field) => {
+    if (!shouldSuppressWorkAndSkillsField(field)) {
+      return field;
+    }
+
+    return {
+      ...field,
+      profileValue: null,
+      confidence: 0,
+      confidenceTier: "C",
+      matchReason: "suppressed:work_and_skills",
+    };
+  });
+}
+
+function getUploadBlockerKey(blocker: FormBlocker): string {
+  return `${blocker.selector}::${blocker.subType ?? "generic"}`;
+}
+
+function isHandledUploadBlocker(blocker: FormBlocker): boolean {
+  if (blocker.type !== "file_upload") return false;
+  return handledUploadBlockers.has(getUploadBlockerKey(blocker));
 }
 
 async function performUndoAll(): Promise<void> {
@@ -650,8 +816,13 @@ function getEffectiveActions(formModel: FormModel): {
 // State machine: main loop
 // ---------------------------------------------------------------------------
 
-async function runAutofill(profile: UserProfile): Promise<void> {
+async function runAutofill(
+  profile: UserProfile,
+  options: AutofillRunOptions = DEFAULT_AUTOFILL_OPTIONS
+): Promise<void> {
   stopped = false;
+  handledUploadBlockers.clear();
+  resolveUploadBlockerDecision = null;
   const loopStartTime = Date.now();
   const navCount = { value: 0 };
 
@@ -662,7 +833,26 @@ async function runAutofill(profile: UserProfile): Promise<void> {
     // Route change - rescan will happen at next loop iteration
   });
   try {
-    await runAutofillLoop(profile, loopStartTime, navCount);
+    await runAutofillLoop(profile, loopStartTime, navCount, options);
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    sendProgress({
+      state: "blocked",
+      total: 0,
+      filled: 0,
+      manual: 0,
+      skipped: 0,
+      currentField: null,
+      currentAction: "runtime_error",
+      paused: true,
+      completed: false,
+      stepIndex: 0,
+      fields: [],
+      activeBlocker: null,
+      validationErrors: [{ message: `Runtime error: ${errorMessage}` }],
+      lastFilledField: null,
+    });
+    throw err;
   } finally {
     stopPassiveMonitor();
     unpatchHistory();
@@ -672,7 +862,8 @@ async function runAutofill(profile: UserProfile): Promise<void> {
 async function runAutofillLoop(
   profile: UserProfile,
   loopStartTime: number,
-  navCount: { value: number }
+  navCount: { value: number },
+  options: AutofillRunOptions
 ): Promise<void> {
   const createProgress = (overrides: Partial<AutofillProgress> = {}): AutofillProgress => ({
     state: "intake",
@@ -730,13 +921,70 @@ async function runAutofillLoop(
     sendProgress(progress);
 
     const formModel: FormModel = buildFormModel();
-    const fillableFields = formModel.fields.filter(
+    const fillableCandidates = formModel.fields.filter(
       (f) => !f.filled && !f.fieldType.includes("upload") && f.enabled
     );
 
-    // State B: Field → Profile Matching
+    // State F: Blockers � check unresolved blockers before preview/fill.
+    const unresolvedBlockers = formModel.blockers.filter((b) => !b.resolved && !isHandledUploadBlocker(b));
+
+    if (unresolvedBlockers.length > 0) {
+      const blocker = unresolvedBlockers[0];
+      const filled = await tryFillFileBlocker(blocker);
+      if (filled) {
+        continue;
+      }
+
+      if (blocker.type === "file_upload") {
+        progress.state = "blocked";
+        progress.paused = true;
+        progress.activeBlocker = blocker;
+        sendProgress(progress);
+        emitDiagTrace("UploadBlocker", `Detected ${blocker.subType ?? "generic"} upload blocker selector=${blocker.selector}`, "warn");
+
+        const decision = await new Promise<FileUploadBlockerDecision>((resolve) => {
+          resolveUploadBlockerDecision = resolve;
+        });
+        resolveUploadBlockerDecision = null;
+        handledUploadBlockers.set(getUploadBlockerKey(blocker), decision);
+        emitDiagTrace("UploadBlocker", `Decision ${decision} selector=${blocker.selector}`, "info");
+        progress.paused = false;
+        progress.activeBlocker = null;
+        sendProgress(progress);
+        emitDiagTrace("UploadBlocker", `Resuming after ${decision} selector=${blocker.selector}`, "info");
+        continue;
+      }
+
+      progress.state = "blocked";
+      progress.paused = true;
+      progress.activeBlocker = blocker;
+      sendProgress(progress);
+
+      const blockerConfig = getBlockerOverlayConfig(blocker);
+      await new Promise<void>((resolve) => {
+        showOverlay(
+          document.querySelector(blocker.selector) ?? null,
+          blockerConfig,
+          () => resolve(),
+          () => resolve()
+        );
+      });
+
+      progress.paused = false;
+      progress.activeBlocker = null;
+      sendProgress(progress);
+      removeOverlay();
+      continue;
+    }
+
+    // State B: Field ? Profile Matching
     progress.state = "matching";
-    const matchedFields = await matchFieldsToProfile(formModel.fields, profile);
+    const matchedFromProfile = await matchFieldsToProfile(formModel.fields, profile);
+    const matchedFields = applyMatchedFieldSuppressions(matchedFromProfile, options);
+    let fillableFields = fillableCandidates.filter((field) => {
+      const matched = matchedFields.find((mf) => mf.selector === field.selector);
+      return matched?.matchReason !== "suppressed:work_and_skills";
+    });
 
     progress.fields = matchedFields;
     progress.total = fillableFields.length;
@@ -763,36 +1011,47 @@ async function runAutofillLoop(
     progress.previewSummary = undefined;
     sendProgress(progress);
 
-    // State F: Blockers — check unresolved blockers first
-    const unresolvedBlockers = formModel.blockers.filter((b) => !b.resolved);
+    progress.currentAction = "Phase 1 basic profile fill";
+    sendProgress(progress);
 
-    if (unresolvedBlockers.length > 0) {
-      const blocker = unresolvedBlockers[0];
-      const filled = await tryFillFileBlocker(blocker);
-      if (filled) {
-        continue;
+    const phase1Run = runPhase1Fill(profile, document);
+    const phase1HandledSelectors = new Set<string>();
+    for (const result of phase1Run.results) {
+      phase1HandledSelectors.add(result.selector);
+      emitDiagTrace(
+        "Phase1Fill",
+        `${result.action} selector=${result.selector} key=${result.canonicalKey ?? "none"} reason=${result.reason}`,
+        result.action === "failed_write" || result.action === "failed_verify" ? "warn" : "info"
+      );
+      const matchedField = matchedFields.find((field) => field.selector === result.selector);
+      if (matchedField && result.action === "filled") {
+        matchedField.filled = true;
       }
-      progress.state = "blocked";
-      progress.paused = true;
-      progress.activeBlocker = blocker;
-      sendProgress(progress);
-
-      const blockerConfig = getBlockerOverlayConfig(blocker);
-      await new Promise<void>((resolve) => {
-        showOverlay(
-          document.querySelector(blocker.selector) ?? null,
-          blockerConfig,
-          () => resolve(),
-          () => resolve()
-        );
-      });
-
-      progress.paused = false;
-      progress.activeBlocker = null;
-      sendProgress(progress);
-      removeOverlay();
-      continue;
+      if (result.action === "filled") {
+        progress.filled++;
+        progress.lastFilledField = { selector: result.selector, label: result.label };
+        try {
+          const el = document.querySelector(result.selector);
+          if (
+            el instanceof HTMLInputElement ||
+            el instanceof HTMLTextAreaElement ||
+            el instanceof HTMLSelectElement
+          ) {
+            undoSnapshot.push({
+              element: el,
+              selector: result.selector,
+              previousValue: result.before,
+              isCustomSelect: false,
+            });
+          }
+        } catch {
+          // ignore selector lookup failures for undo capture
+        }
+      }
     }
+    fillableFields = fillableFields.filter((field) => !phase1HandledSelectors.has(field.selector));
+    progress.currentAction = null;
+    sendProgress(progress);
 
     // No fillable fields — try navigation or complete
     if (fillableFields.length === 0) {
@@ -1358,38 +1617,270 @@ function getBlockerOverlayConfig(blocker: FormBlocker): OverlayConfig {
   }
 }
 
+async function runAutofillDiagnostics(): Promise<AutofillDiagnosticsResponse> {
+  const steps: DiagnosticStepResult[] = [];
+  const startedAt = performance.now();
+  emitDiagTrace("DiagnosticsStart", "runAutofillDiagnostics() entered");
+  const addStep = (
+    step: string,
+    gist: string,
+    status: DiagnosticStatus,
+    detail?: string
+  ): void => {
+    const elapsedMs = Math.round(performance.now() - startedAt);
+    const result: DiagnosticStepResult = { step, gist, status };
+    result.detail = detail ? `${detail}; elapsed=${elapsedMs}ms` : `elapsed=${elapsedMs}ms`;
+    steps.push(result);
+    const prefix = status === "PASS" ? "PASS" : "FAIL";
+    const message = `[AUTOFILL DIAG] ${prefix} ${step}: ${gist}${detail ? ` (${detail})` : ""}`;
+    if (status === "PASS") {
+      console.log(message);
+    } else {
+      console.error(message);
+    }
+  };
+
+  // 1) Frame check
+  emitDiagTrace("FrameContext", "Checking frame context");
+  if (window !== window.top) {
+    addStep(
+      "FrameContext",
+      "Autofill diagnostics must run in top frame",
+      "FAIL",
+      "Current frame is iframe"
+    );
+    return { ok: false, steps };
+  }
+  addStep("FrameContext", "Top frame is active", "PASS");
+
+  // 2) Profile check
+  emitDiagTrace("Profile", "Reading profile from chrome.storage.local");
+  const profileResult = await chrome.storage.local.get([STORAGE_KEYS.USER_PROFILE]);
+  const profile = profileResult[STORAGE_KEYS.USER_PROFILE] as UserProfile | undefined;
+  if (!profile) {
+    addStep("Profile", "User profile available in extension storage", "FAIL", "Missing user_profile");
+    return { ok: false, steps };
+  }
+  addStep("Profile", "User profile loaded from extension storage", "PASS");
+  emitDiagTrace("Profile", "Profile loaded successfully");
+
+  // 3) Session/auth presence
+  emitDiagTrace("Session", "Reading session/auth tokens from storage");
+  const storageResult = await chrome.storage.local.get([
+    STORAGE_KEYS.ACCESS_TOKEN,
+    STORAGE_KEYS.SESSION_ID,
+  ]);
+  const accessToken = storageResult[STORAGE_KEYS.ACCESS_TOKEN] as string | undefined;
+  const sessionId = storageResult[STORAGE_KEYS.SESSION_ID] as string | undefined;
+  if (!sessionId) {
+    addStep("Session", "Session ID required for backend-scoped requests", "FAIL", "Missing session_id");
+  } else {
+    addStep("Session", "Session ID found in extension storage", "PASS");
+  }
+  if (!accessToken) {
+    addStep("AuthToken", "Access token needed for authenticated backend routes", "FAIL", "Missing access_token");
+  } else {
+    addStep("AuthToken", "Access token found in extension storage", "PASS");
+  }
+
+  // 4) Backend health
+  try {
+    emitDiagTrace("BackendHealth", `Calling ${API_BASE_URL}/health`);
+    const healthResp = await fetch(`${API_BASE_URL}/health`, { method: "GET" });
+    if (healthResp.ok) {
+      addStep("BackendHealth", "Backend /health endpoint reachable", "PASS");
+      emitDiagTrace("BackendHealth", "Health call succeeded");
+    } else {
+      addStep(
+        "BackendHealth",
+        "Backend /health endpoint reachable",
+        "FAIL",
+        `HTTP ${healthResp.status}`
+      );
+      emitDiagTrace("BackendHealth", `Health call returned HTTP ${healthResp.status}`, "warn");
+    }
+  } catch (err) {
+    addStep("BackendHealth", "Backend /health endpoint reachable", "FAIL", String(err));
+    emitDiagTrace("BackendHealth", `Health call failed: ${String(err)}`, "error");
+  }
+
+  // 5) Backend auth check
+  if (accessToken) {
+    try {
+      emitDiagTrace("BackendAuth", `Calling ${API_BASE_URL}/auth/me`);
+      const headers: Record<string, string> = {
+        Authorization: `Bearer ${accessToken}`,
+      };
+      if (sessionId) headers["X-Session-Id"] = sessionId;
+      const meResp = await fetch(`${API_BASE_URL}/auth/me`, {
+        method: "GET",
+        headers,
+      });
+      if (meResp.ok) {
+        addStep("BackendAuth", "Backend token validation through /auth/me", "PASS");
+        emitDiagTrace("BackendAuth", "Auth check succeeded");
+      } else {
+        addStep(
+          "BackendAuth",
+          "Backend token validation through /auth/me",
+          "FAIL",
+          `HTTP ${meResp.status}`
+        );
+        emitDiagTrace("BackendAuth", `Auth check returned HTTP ${meResp.status}`, "warn");
+      }
+    } catch (err) {
+      addStep("BackendAuth", "Backend token validation through /auth/me", "FAIL", String(err));
+      emitDiagTrace("BackendAuth", `Auth check failed: ${String(err)}`, "error");
+    }
+  }
+
+  // 6) DOM form intake
+  let model: FormModel | null = null;
+  try {
+    emitDiagTrace("DOMIntake", "buildFormModel() started");
+    model = buildFormModel();
+    const fieldCount = model.fields.length;
+    emitDiagTrace(
+      "DOMIntake",
+      `buildFormModel() completed fields=${fieldCount} actions=${model.actions.length} blockers=${model.blockers.length}`
+    );
+    addStep(
+      "DOMIntake",
+      "Detected form fields/actions/blockers from current page DOM",
+      fieldCount > 0 ? "PASS" : "FAIL",
+      `fields=${fieldCount}, actions=${model.actions.length}, blockers=${model.blockers.length}`
+    );
+  } catch (err) {
+    addStep("DOMIntake", "Detected form fields/actions/blockers from current page DOM", "FAIL", String(err));
+    emitDiagTrace("DOMIntake", `buildFormModel() failed: ${String(err)}`, "error");
+  }
+
+  // 7) Field matching
+  if (model) {
+    try {
+      emitDiagTrace("FieldMatching", "matchFieldsToProfile() started");
+      const matched = await matchFieldsToProfile(model.fields, profile);
+      const confident = matched.filter((f) => f.profileValue && f.confidenceTier !== "C").length;
+      emitDiagTrace("FieldMatching", `matchFieldsToProfile() completed matched=${confident} total=${matched.length}`);
+      addStep(
+        "FieldMatching",
+        "Matched DOM fields with profile values",
+        confident > 0 ? "PASS" : "FAIL",
+        `matched=${confident}, total=${matched.length}`
+      );
+    } catch (err) {
+      addStep("FieldMatching", "Matched DOM fields with profile values", "FAIL", String(err));
+      emitDiagTrace("FieldMatching", `matchFieldsToProfile() failed: ${String(err)}`, "error");
+    }
+  }
+
+  // 8) Autofill readiness summary
+  const failedCritical = steps.some(
+    (s) =>
+      s.status === "FAIL" &&
+      ["FrameContext", "Profile", "BackendHealth", "DOMIntake", "FieldMatching"].includes(s.step)
+  );
+  addStep(
+    "Readiness",
+    "Overall autofill readiness for current tab",
+    failedCritical ? "FAIL" : "PASS",
+    failedCritical ? "One or more critical checks failed" : "Ready to start autofill"
+  );
+  emitDiagTrace("DiagnosticsEnd", `Diagnostics finished ok=${!failedCritical}`);
+
+  return { ok: !failedCritical, steps };
+}
+
 // ---------------------------------------------------------------------------
-// Message listener
+// Message listener (idempotent registration)
 // ---------------------------------------------------------------------------
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+type AutofillWindow = Window & {
+  __aiAutofillMessageListenerRegistered?: boolean;
+};
+
+function onAutofillMessage(
+  message: { type?: string; data?: { suppressWorkAndSkills?: boolean } },
+  _sender: chrome.runtime.MessageSender,
+  sendResponse: (response?: unknown) => void
+): boolean | void {
+  initIframeReloadObserver();
   console.log("AUTOFILL: message received", message?.type);
   if (message.type === MSG.START_AUTOFILL) {
-    if (window !== window.top) {
-      console.log("AUTOFILL: in iframe, rejecting");
-      sendResponse({ error: "Auto-fill runs in the main frame only." });
+    if (autofillRunInProgress) {
+      sendResponse({ success: true, alreadyRunning: true });
       return false;
     }
-    console.log("AUTOFILL: main frame, loading profile");
+
+    // Acknowledge immediately so frame handshake does not wait for full autofill completion.
+    sendResponse({ success: true, started: true });
+    console.log("AUTOFILL: loading profile", { isTopFrame: window === window.top });
+    const runOptions: AutofillRunOptions = {
+      suppressWorkAndSkills: !!message.data?.suppressWorkAndSkills,
+    };
+    emitDiagTrace(
+      "StartAutofill",
+      `Options suppressWorkAndSkills=${String(runOptions.suppressWorkAndSkills)}`
+    );
+    emitDiagTrace("StartAutofill", "START_AUTOFILL acknowledged; loading profile and launching run");
+
     chrome.storage.local.get([STORAGE_KEYS.USER_PROFILE], (result) => {
       const profile = result[STORAGE_KEYS.USER_PROFILE] as UserProfile | undefined;
       console.log("AUTOFILL: profile", profile ? "present" : "null");
       if (!profile) {
-        sendResponse({ error: "No user profile found" });
+        emitDiagTrace("StartAutofill", "No user profile found in content frame", "error");
         return;
       }
-      runAutofill(profile)
-        .then(() => sendResponse({ success: true }))
+
+      autofillRunInProgress = true;
+      runAutofill(profile, runOptions)
         .catch((err) => {
+          const msg = err instanceof Error ? err.message : String(err);
           console.error("AUTOFILL: runAutofill error", err);
-          sendResponse({ error: String(err) });
+          emitDiagTrace("StartAutofill", `runAutofill failed: ${msg}`, "error");
+        })
+        .finally(() => {
+          autofillRunInProgress = false;
+          emitDiagTrace("StartAutofill", "runAutofill finished");
         });
     });
+    return false;
+  }
+
+  if (message.type === MSG.RUN_AUTOFILL_DIAGNOSTICS) {
+    runAutofillDiagnostics()
+      .then((result) => sendResponse(result))
+      .catch((err) =>
+        sendResponse({
+          ok: false,
+          steps: [
+            {
+              step: "DiagnosticsRuntime",
+              gist: "Unexpected diagnostics runtime error",
+              status: "FAIL",
+              detail: String(err),
+            },
+          ],
+        })
+      );
     return true;
+  }
+
+  if (message.type === MSG.AUTOFILL_PING) {
+    sendResponse({
+      ok: true,
+      isTopFrame: window === window.top,
+      href: window.location.href,
+    });
+    return false;
   }
 
   if (message.type === MSG.STOP_AUTOFILL) {
     stopped = true;
+    if (resolveUploadBlockerDecision) {
+      resolveUploadBlockerDecision("skipped_by_user");
+      resolveUploadBlockerDecision = null;
+    }
     removeOverlay();
     sendResponse({ success: true });
     return false;
@@ -1403,6 +1894,24 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message.type === MSG.AUTOFILL_RESUME) {
     resolvePreviewPromise?.();
     resolvePreviewPromise = null;
+    sendResponse({ success: true });
+    return false;
+  }
+
+  if (message.type === MSG.AUTOFILL_UPLOAD_BLOCKER_DECISION) {
+    const selector = typeof (message as { data?: { selector?: string } }).data?.selector === "string"
+      ? (message as { data?: { selector?: string } }).data!.selector!
+      : "";
+    const decision = (message as { data?: { decision?: FileUploadBlockerDecision } }).data?.decision;
+    if (!selector || (decision !== "resolved_by_user" && decision !== "skipped_by_user")) {
+      sendResponse({ success: false, error: "Invalid upload blocker decision payload" });
+      return false;
+    }
+    handledUploadBlockers.set(selector.includes("::") ? selector : `${selector}::generic`, decision);
+    if (resolveUploadBlockerDecision) {
+      resolveUploadBlockerDecision(decision);
+      resolveUploadBlockerDecision = null;
+    }
     sendResponse({ success: true });
     return false;
   }
@@ -1426,4 +1935,16 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     sendResponse({ text: null });
     return;
   }
-});
+}
+
+const autofillWindow = window as AutofillWindow;
+if (!autofillWindow.__aiAutofillMessageListenerRegistered) {
+  chrome.runtime.onMessage.addListener(onAutofillMessage);
+  autofillWindow.__aiAutofillMessageListenerRegistered = true;
+  console.log("AUTOFILL: message listener registered");
+} else {
+  console.log("AUTOFILL: message listener already registered, skipping duplicate registration");
+}
+
+
+

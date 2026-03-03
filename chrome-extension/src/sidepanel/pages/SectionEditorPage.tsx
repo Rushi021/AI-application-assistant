@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useAppStore } from "../store";
 import { patchSection, applySection, applyAllSections, generateCoverLetter, getDraft, ApiError } from "../services/api";
 import type { DraftSection } from "@/shared/types";
@@ -27,7 +27,12 @@ export default function SectionEditorPage() {
   const { draft, setDraft, updateSection, setCoverLetter, setPage } = useAppStore();
   const [chatSectionId, setChatSectionId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [hasEdits, setHasEdits] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setHasEdits(false);
+  }, [draft?.id]);
 
   if (!draft) {
     return (
@@ -43,6 +48,7 @@ export default function SectionEditorPage() {
     try {
       await patchSection(draft.id, sectionId, newText);
       updateSection(sectionId, { current_text: newText });
+      setHasEdits(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save edit");
     }
@@ -58,6 +64,7 @@ export default function SectionEditorPage() {
           proposed_text: null,
           last_feedback: "liked",
         });
+        setHasEdits(true);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to accept changes");
@@ -66,6 +73,7 @@ export default function SectionEditorPage() {
 
   const handleRejectProposed = (sectionId: string) => {
     updateSection(sectionId, { proposed_text: null, last_feedback: "disliked" });
+    setHasEdits(true);
   };
 
   const handleProposedText = (text: string) => {
@@ -103,10 +111,23 @@ export default function SectionEditorPage() {
     }
   };
 
+  const handleStartAutofillShortcut = () => {
+    setError(null);
+    setPage("autofill");
+    generateCoverLetter(draft.id)
+      .then((res) => {
+        setCoverLetter(res.cover_letter);
+        return getDraft(draft.id);
+      })
+      .then((updated) => setDraft(updated))
+      .catch(() => {});
+  };
+
   const sectionGroups = useMemo(
     () => groupSectionsByGroup(draft.sections),
     [draft.sections]
   );
+  const canShowStartAutofillShortcut = draft.starting_source === "base" && !hasEdits;
 
   return (
     <div className="flex h-screen">
@@ -161,6 +182,14 @@ export default function SectionEditorPage() {
             >
               Back
             </button>
+            {canShowStartAutofillShortcut && (
+              <button
+                onClick={handleStartAutofillShortcut}
+                className="px-4 py-2 text-sm font-medium text-primary-600 border border-primary-300 rounded-lg hover:bg-primary-50 transition-colors"
+              >
+                Start Autofill
+              </button>
+            )}
             <button
               onClick={handleApplyAll}
               disabled={saving}

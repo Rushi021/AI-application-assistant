@@ -157,7 +157,7 @@ export async function listResumes(): Promise<Resume[]> {
 }
 
 export async function deleteResume(resumeId: number): Promise<void> {
-  return request<void>(`/resumes/${resumeId}`, { method: "DELETE" });
+  return request<void>(`/resumes/${resumeId}?force=true`, { method: "DELETE" });
 }
 
 export async function scoreResumes(jobDescription: string, resumeIds?: number[]): Promise<ResumeScore[]> {

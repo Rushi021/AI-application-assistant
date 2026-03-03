@@ -22,6 +22,7 @@ export default function ResumeSelectPage() {
     setPipelineRun,
     setDraft,
     setCoverLetter,
+    setAutofillContext,
     setPage,
   } = useAppStore();
 
@@ -42,6 +43,7 @@ export default function ResumeSelectPage() {
       try {
         const resumeList = await listResumes();
         setResumes(resumeList);
+        setAutofillContext({ hasStoredResume: resumeList.length > 0 });
 
         if (resumeList.length > 0 && jobDescription) {
           const scores = await scoreResumes(jobDescription);
@@ -64,6 +66,7 @@ export default function ResumeSelectPage() {
       const newResume = await uploadResume(file);
       const updated = [newResume, ...resumes];
       setResumes(updated);
+      setAutofillContext({ hasStoredResume: updated.length > 0 });
       setSelectedResumeId(newResume.id);
 
       if (jobDescription) {
@@ -86,6 +89,7 @@ export default function ResumeSelectPage() {
       await deleteResume(resumeId);
       const updated = resumes.filter((r) => r.id !== resumeId);
       setResumes(updated);
+      setAutofillContext({ hasStoredResume: updated.length > 0 });
       if (selectedResumeId === resumeId) {
         setSelectedResumeId(updated[0]?.id ?? null);
       }

@@ -1,12 +1,26 @@
 import { useState, useEffect } from "react";
 import { useAppStore } from "../store";
-import { ingestJob } from "../services/api";
+import { createDraft, generateCoverLetter, ingestJob, listResumes, runPipeline } from "../services/api";
 import { MSG } from "@/shared/constants";
 
 export default function JobDescriptionPage() {
-  const { jobDescription, setJobDescription, setJobId, setPage } = useAppStore();
+  const {
+    jobDescription,
+    setJobDescription,
+    setJobId,
+    setDraft,
+    setPipelineRun,
+    setCoverLetter,
+    setAutofillProgress,
+    setAutofillContext,
+    setSelectedResumeId,
+    autofillContext,
+    setPage,
+  } = useAppStore();
   const [text, setText] = useState(jobDescription);
   const [loading, setLoading] = useState(false);
+  const [directLoading, setDirectLoading] = useState(false);
+  const [showDirectPrompt, setShowDirectPrompt] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // Listen for auto-detected JD from context menu
@@ -76,11 +90,93 @@ export default function JobDescriptionPage() {
       const job = await ingestJob(text.trim());
       setJobDescription(text.trim());
       setJobId(job.id);
+      if (autofillContext.pendingCoverLetterGeneration) {
+        if (autofillContext.applicationResumeSource === "profile_resume") {
+          const resumes = await listResumes();
+          const resumeId = useAppStore.getState().selectedResumeId ?? resumes[0]?.id ?? null;
+          if (!resumeId) {
+            setAutofillContext({
+              pendingUploadSubtype: "cover_letter",
+            });
+            setPage("temporary-resume-upload");
+            return;
+          }
+          setSelectedResumeId(resumeId);
+          const run = await runPipeline({
+            job_description: text.trim(),
+            resume_id: resumeId,
+          });
+          setPipelineRun(run);
+          const draft = await createDraft({
+            resume_id: resumeId,
+            run_id: run.id,
+            starting_source: "tailored",
+            job_description: text.trim(),
+          });
+          setDraft(draft);
+          const coverLetterResult = await generateCoverLetter(draft.id);
+          setCoverLetter(coverLetterResult.cover_letter);
+          setAutofillContext({
+            pendingCoverLetterGeneration: false,
+            pendingCoverLetterBlockerSelector: null,
+            pendingUploadSubtype: null,
+          });
+          setPage("cover-letter");
+          return;
+        }
+
+        setAutofillContext({
+          pendingUploadSubtype: "cover_letter",
+        });
+        setPage("temporary-resume-upload");
+        return;
+      }
+      setAutofillContext({
+        mode: "standard",
+        considerResume: true,
+        suppressWorkAndSkills: false,
+        pendingCoverLetterGeneration: false,
+        pendingCoverLetterBlockerSelector: null,
+        pendingUploadSubtype: null,
+      });
       setPage("resume-select");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save job description");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDirectAutofillChoice = async (considerResume: boolean) => {
+    setDirectLoading(true);
+    setError(null);
+    try {
+      const resumes = await listResumes();
+      const hasStoredResume = resumes.length > 0;
+
+      // Direct autofill path should not carry JD/draft pipeline artifacts.
+      setJobDescription("");
+      setJobId(null);
+      setDraft(null);
+      setPipelineRun(null);
+      setCoverLetter("");
+      setAutofillProgress(null);
+      setSelectedResumeId(resumes[0]?.id ?? null);
+      setAutofillContext({
+        mode: "direct",
+        considerResume,
+        hasStoredResume,
+        suppressWorkAndSkills: !considerResume,
+        pendingCoverLetterGeneration: false,
+        pendingCoverLetterBlockerSelector: null,
+        pendingUploadSubtype: null,
+      });
+      setPage("autofill");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to start direct autofill");
+    } finally {
+      setDirectLoading(false);
+      setShowDirectPrompt(false);
     }
   };
 
@@ -107,6 +203,7 @@ export default function JobDescriptionPage() {
         />
         <button
           onClick={handleAutoDetect}
+          disabled={directLoading}
           className="self-start flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-primary-600 bg-primary-50 rounded-lg hover:bg-primary-100 transition-colors"
         >
           <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -114,18 +211,58 @@ export default function JobDescriptionPage() {
           </svg>
           Auto-detect from page
         </button>
+
+        {showDirectPrompt && (
+          <div className="rounded-lg border border-primary-200 bg-primary-50/50 p-3 space-y-2">
+            <p className="text-xs font-medium text-gray-800">
+              Consider uploaded resume for this run?
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => handleDirectAutofillChoice(true)}
+                disabled={directLoading}
+                className="px-3 py-1.5 text-xs font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
+              >
+                {directLoading ? "Loading..." : "Yes"}
+              </button>
+              <button
+                onClick={() => handleDirectAutofillChoice(false)}
+                disabled={directLoading}
+                className="px-3 py-1.5 text-xs font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 disabled:opacity-50 transition-colors"
+              >
+                {directLoading ? "Loading..." : "No"}
+              </button>
+              <button
+                onClick={() => setShowDirectPrompt(false)}
+                disabled={directLoading}
+                className="ml-auto px-3 py-1.5 text-xs text-gray-500 hover:text-gray-700 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Footer */}
       <div className="px-4 py-3 border-t bg-white">
         {error && <p className="text-xs text-red-600 mb-2">{error}</p>}
-        <button
-          onClick={handleNext}
-          disabled={loading || !text.trim()}
-          className="w-full px-4 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-        >
-          {loading ? "Saving..." : "Next"}
-        </button>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowDirectPrompt((prev) => !prev)}
+            disabled={loading || directLoading}
+            className="px-4 py-2.5 text-sm font-medium text-primary-600 border border-primary-300 rounded-lg hover:bg-primary-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            Direct Autofill
+          </button>
+          <button
+            onClick={handleNext}
+            disabled={loading || directLoading || !text.trim()}
+            className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            {loading ? "Saving..." : "Next"}
+          </button>
+        </div>
       </div>
     </div>
   );
