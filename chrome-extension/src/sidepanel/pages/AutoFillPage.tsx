@@ -5,7 +5,7 @@ import { MSG, STORAGE_KEYS } from "@/shared/constants";
 import type { AutofillProgress, FileUploadBlockerDecision, FormBlocker, UserProfile } from "@/shared/types";
 import type {
   Phase1FillResult,
-  Phase1RunResult,
+  UnifiedAutofillRunResult,
   UploadDetectorRunResult,
 } from "@/shared/dom-control-engine";
 
@@ -100,8 +100,6 @@ export default function AutoFillPage() {
   } = useAppStore();
   const [error, setError] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
-  const [isRunningDetectorTest, setIsRunningDetectorTest] = useState(false);
-  const [isRunningPhase1Fill, setIsRunningPhase1Fill] = useState(false);
   const [showUploadCompleteConfirm, setShowUploadCompleteConfirm] = useState(false);
   const [uploadedSameAsProfileResume, setUploadedSameAsProfileResume] = useState(false);
   type UploadDetectorFrameResult = {
@@ -110,14 +108,14 @@ export default function AutoFillPage() {
     isTop: boolean;
     result: UploadDetectorRunResult;
   };
-  type Phase1FillFrameResult = {
+  type AutofillRunFrameResult = {
     frameId: number;
     href: string;
     isTop: boolean;
-    result: Phase1RunResult;
+    result: UnifiedAutofillRunResult;
   };
   const [uploadDetectorResults, setUploadDetectorResults] = useState<Array<UploadDetectorFrameResult>>([]);
-  const [phase1FillResults, setPhase1FillResults] = useState<Array<Phase1FillFrameResult>>([]);
+  const [autofillRunResults, setAutofillRunResults] = useState<Array<AutofillRunFrameResult>>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [profileFromStorage, setProfileFromStorage] = useState<UserProfile | null>(null);
   const previousProgressRef = useRef<AutofillProgress | null>(null);
@@ -187,8 +185,17 @@ export default function AutoFillPage() {
     setUploadedSameAsProfileResume(autofillContext.uploadedSameAsProfileResume);
   }, [autofillProgress?.activeBlocker?.selector, autofillContext.uploadedSameAsProfileResume]);
 
+  useEffect(() => {
+    if (!autofillProgress) {
+      setStarted(false);
+      return;
+    }
+    setStarted(!autofillProgress.completed);
+  }, [autofillProgress]);
+
   const effectiveProfile = profile ?? profileFromStorage;
-  const canStartAutofill = hasRequiredProfile(effectiveProfile);
+  const canRunAutofill = !!effectiveProfile;
+  const hasCompleteProfile = hasRequiredProfile(effectiveProfile);
   const isDirectMode = autofillContext.mode === "direct";
 
   const appendTimeline = useCallback((message: string, level: TimelineLevel = "info") => {
@@ -234,6 +241,7 @@ export default function AutoFillPage() {
               : "Autofill stopped before completion",
             next.state === "complete" ? "info" : "warn"
           );
+          setStarted(false);
         }
         previousProgressRef.current = next;
         setAutofillProgress(next);
@@ -247,16 +255,6 @@ export default function AutoFillPage() {
             trace.level ?? "info"
           );
         }
-      } else if (message.type === MSG.AUTOFILL_START_RESULT) {
-        const result = message.data as { ok?: boolean; error?: string | null } | undefined;
-        if (result?.ok) {
-          appendTimeline("START_AUTOFILL accepted by content frame");
-          return;
-        }
-        const err = result?.error ?? "Failed to start auto-fill";
-        setError(err);
-        appendTimeline(err, "error");
-        setStarted(false);
       }
     };
     chrome.runtime.onMessage.addListener(listener);
@@ -306,164 +304,13 @@ export default function AutoFillPage() {
     [setAutofillProgress]
   );
 
-  const handleRunDetectorTest = useCallback(async () => {
-    setError(null);
-    setUploadDetectorResults([]);
-    setPhase1FillResults([]);
-    appendTimeline("Upload detector test started");
-    setIsRunningDetectorTest(true);
-    try {
-      const { id: tabId } = await getActiveTab();
-      await ensureDomRuntime(tabId);
-      const execResults = await chrome.scripting.executeScript({
-        target: { tabId, allFrames: true },
-        func: () => {
-          const engine = (window as Window & {
-            __AI_DOM_CONTROL_ENGINE__?: { scanUploadDetectors: () => UploadDetectorRunResult };
-          }).__AI_DOM_CONTROL_ENGINE__;
-          if (!engine) {
-            throw new Error("DOM runtime not available in page context");
-          }
-          return {
-            href: window.location.href,
-            isTop: window === window.top,
-            result: engine.scanUploadDetectors(),
-          };
-        },
-      });
-
-      const rows = execResults
-        .map((row) => {
-          const value = row.result as Omit<UploadDetectorFrameResult, "frameId"> | undefined;
-          if (!value) return null;
-          return {
-            frameId: row.frameId,
-            href: value.href,
-            isTop: value.isTop,
-            result: value.result,
-          } satisfies UploadDetectorFrameResult;
-        })
-        .filter((row): row is UploadDetectorFrameResult => row !== null)
-        .sort((a, b) => Number(b.isTop) - Number(a.isTop));
-
-      setUploadDetectorResults(rows);
-      const primary = getPrimaryFrame(
-        rows,
-        (row) =>
-          row.result.candidates.length * 100 +
-          row.result.visibleFileInputs.length * 10 +
-          row.result.hiddenFileInputs.length * 5 +
-          row.result.visibleUploadTriggers.length
-      );
-
-      const totals = rows.reduce(
-        (acc, row) => {
-          acc.visible += row.result.visibleFileInputs.length;
-          acc.hidden += row.result.hiddenFileInputs.length;
-          acc.triggers += row.result.visibleUploadTriggers.length;
-          acc.candidates += row.result.candidates.length;
-          return acc;
-        },
-        { visible: 0, hidden: 0, triggers: 0, candidates: 0 }
-      );
-
-      appendTimeline(
-        `Detector complete: visibleInputs=${totals.visible}, hiddenInputs=${totals.hidden}, triggers=${totals.triggers}, candidates=${totals.candidates}`
-      );
-      if (primary) {
-        appendTimeline(`Detector primary frame selected frameId=${primary.frameId}`);
-        appendTimeline(
-          `Primary frame counts: visibleInputs=${primary.result.visibleFileInputs.length}, hiddenInputs=${primary.result.hiddenFileInputs.length}, triggers=${primary.result.visibleUploadTriggers.length}, candidates=${primary.result.candidates.length}`
-        );
-        if (primary.result.candidates[0]) {
-          appendTimeline(
-            `Primary blocker candidate: ${primary.result.candidates[0].subType} via ${primary.result.candidates[0].source}`
-          );
-        }
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Upload detector test failed";
-      setError(msg);
-      appendTimeline(`Upload detector test failed: ${msg}`, "error");
-    } finally {
-      setIsRunningDetectorTest(false);
-    }
-  }, [appendTimeline, ensureDomRuntime, getActiveTab]);
-
-  const handleRunPhase1Fill = useCallback(async () => {
-    setError(null);
-    setPhase1FillResults([]);
-    appendTimeline("Phase 1 fill started");
-    setIsRunningPhase1Fill(true);
-    try {
-      if (!effectiveProfile) {
-        throw new Error("No user profile found in extension storage");
-      }
-      appendTimeline("Profile loaded");
-      const { id: tabId } = await getActiveTab();
-      await ensureDomRuntime(tabId);
-      const exec = await chrome.scripting.executeScript({
-        target: { tabId, allFrames: true },
-        args: [effectiveProfile],
-        func: (rawProfile) => {
-          const engine = (window as Window & {
-            __AI_DOM_CONTROL_ENGINE__?: {
-              runPhase1Fill: (profile: UserProfile) => Phase1RunResult;
-            };
-          }).__AI_DOM_CONTROL_ENGINE__;
-          if (!engine) {
-            throw new Error("DOM runtime not available in page context");
-          }
-          return {
-            href: window.location.href,
-            isTop: window === window.top,
-            result: engine.runPhase1Fill(rawProfile as UserProfile),
-          };
-        },
-      });
-
-      const frameResults = exec
-        .map((row) => {
-          const value = row.result as Omit<Phase1FillFrameResult, "frameId"> | undefined;
-          if (!value) return null;
-          return {
-            frameId: row.frameId,
-            href: value.href,
-            isTop: value.isTop,
-            result: value.result,
-          } satisfies Phase1FillFrameResult;
-        })
-        .filter((row): row is Phase1FillFrameResult => row !== null)
-        .sort((a, b) => Number(b.isTop) - Number(a.isTop));
-
-      setPhase1FillResults(frameResults);
-      const primary = getPrimaryFrame(frameResults, (row) => row.result.candidates.length);
-      if (primary) {
-        appendTimeline(`Phase 1 primary frame selected frameId=${primary.frameId}`);
-        appendTimeline(`Phase 1 candidate scan complete candidates=${primary.result.candidates.length}`);
-        const matched = primary.result.results.filter((item) => item.canonicalKey !== null).length;
-        appendTimeline(`Phase 1 matching complete matched=${matched}`);
-        const filled = primary.result.results.filter((item) => item.action === "filled").length;
-        const failed = primary.result.results.filter((item) => item.action === "failed_write" || item.action === "failed_verify").length;
-        appendTimeline(`Phase 1 fill attempts complete filled=${filled}, failed=${failed}`);
-        appendTimeline(
-          `Phase 1 summary generated filled=${filled}, skipped=${primary.result.results.length - filled - failed}, failed=${failed}`
-        );
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Phase 1 fill failed";
-      setError(msg);
-      appendTimeline(`Phase 1 fill failed: ${msg}`, "error");
-    } finally {
-      setIsRunningPhase1Fill(false);
-    }
-  }, [appendTimeline, effectiveProfile, ensureDomRuntime, getActiveTab]);
-
   const handleDoneAndStartNewApplication = useCallback(async () => {
     setError(null);
     appendTimeline("Finalizing application tracking");
+    const store = useAppStore.getState();
+    let trackingError: string | null = null;
+
     try {
-      const store = useAppStore.getState();
       const selectedResume =
         store.resumes.find((resume) => resume.id === (store.autofillContext.temporaryResumeId ?? store.selectedResumeId)) ?? null;
       const resumeText =
@@ -494,7 +341,12 @@ export default function AutoFillPage() {
         throw new Error(response?.error ?? "Failed to track application");
       }
       appendTimeline(`Application tracked id=${response.applicationId ?? "unknown"}`);
+    } catch (err) {
+      trackingError = err instanceof Error ? err.message : "Failed to finalize application";
+      appendTimeline(`Tracking skipped: ${trackingError}`, "warn");
+    }
 
+    try {
       if (store.autofillContext.temporaryResumeId) {
         try {
           await deleteResume(store.autofillContext.temporaryResumeId);
@@ -502,18 +354,19 @@ export default function AutoFillPage() {
           appendTimeline("Temporary resume cleanup failed", "warn");
         }
       }
-
+    } finally {
+      resetExecutionView();
       resetWorkflow();
       setStarted(false);
-      setAutofillProgress(null);
       setPage("job-description");
-      appendTimeline("Workflow reset for next application");
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Failed to finalize application";
-      setError(msg);
-      appendTimeline(msg, "error");
     }
-  }, [appendTimeline, resetWorkflow, setAutofillProgress, setPage]);
+
+    if (trackingError) {
+      setError(`Started a new application, but tracking failed: ${trackingError}`);
+    } else {
+      appendTimeline("Workflow reset for next application");
+    }
+  }, [appendTimeline, resetExecutionView, resetWorkflow, setPage]);
 
   const runDirectAutofillFlow = useCallback(async () => {
     if (!effectiveProfile) {
@@ -523,6 +376,54 @@ export default function AutoFillPage() {
     appendTimeline("Direct autofill flow started");
     const { id: tabId } = await getActiveTab();
     await ensureDomRuntime(tabId);
+
+    appendTimeline("Running full deterministic autofill pass");
+    const exec = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      args: [effectiveProfile],
+      func: async (rawProfile) => {
+        const engine = (window as Window & {
+          __AI_DOM_CONTROL_ENGINE__?: {
+            runUnifiedAutofill: (profile: UserProfile) => Promise<UnifiedAutofillRunResult>;
+          };
+        }).__AI_DOM_CONTROL_ENGINE__;
+        if (!engine) {
+          throw new Error("DOM runtime not available in page context");
+        }
+        return {
+          href: window.location.href,
+          isTop: window === window.top,
+          result: await engine.runUnifiedAutofill(rawProfile as UserProfile),
+        };
+      },
+    });
+
+    const frameResults = exec
+      .map((row) => {
+        const value = row.result as Omit<AutofillRunFrameResult, "frameId"> | undefined;
+        if (!value) return null;
+        return {
+          frameId: row.frameId,
+          href: value.href,
+          isTop: value.isTop,
+          result: value.result,
+        } satisfies AutofillRunFrameResult;
+      })
+      .filter((row): row is AutofillRunFrameResult => row !== null)
+      .sort((a, b) => Number(b.isTop) - Number(a.isTop));
+
+    setAutofillRunResults(frameResults);
+    const primary = getPrimaryFrame(frameResults, (row) => {
+      const filledCount = row.result.results.filter((item) => item.action === "filled").length;
+      const matchedCount = row.result.results.filter((item) => item.canonicalKey !== null).length;
+      return filledCount * 1000 + matchedCount * 100 + row.result.candidates.length * 10;
+    });
+    const total = primary?.result.results.length ?? 0;
+    const filled = primary?.result.results.filter((item) => item.action === "filled").length ?? 0;
+    const failed =
+      primary?.result.results.filter((item) => item.action === "failed_write" || item.action === "failed_verify").length ?? 0;
+    const skipped = primary?.result.results.filter((item) => item.action.startsWith("skipped")).length ?? 0;
+    appendTimeline(`Autofill pass finished: total=${total}, filled=${filled}, skipped=${skipped}, failed=${failed}`);
 
     const detectorExec = await chrome.scripting.executeScript({
       target: { tabId, allFrames: true },
@@ -552,8 +453,10 @@ export default function AutoFillPage() {
           result: value.result,
         } satisfies UploadDetectorFrameResult;
       })
-      .filter((row): row is UploadDetectorFrameResult => row !== null);
+      .filter((row): row is UploadDetectorFrameResult => row !== null)
+      .sort((a, b) => Number(b.isTop) - Number(a.isTop));
 
+    setUploadDetectorResults(detectorFrames);
     const primaryDetectorFrame = getPrimaryFrame(
       detectorFrames,
       (row) =>
@@ -565,17 +468,48 @@ export default function AutoFillPage() {
 
     const nextBlocker = primaryDetectorFrame?.result.candidates.find((candidate) => {
       const key = `${candidate.selector}::${candidate.subType ?? "generic"}`;
-      return !handledUploadBlockerKeysRef.current.has(key);
+      if (handledUploadBlockerKeysRef.current.has(key)) {
+        return false;
+      }
+
+      const allInputs = [
+        ...(primaryDetectorFrame?.result.visibleFileInputs ?? []),
+        ...(primaryDetectorFrame?.result.hiddenFileInputs ?? []),
+      ];
+      const inputBySelector = new Map(allInputs.map((input) => [input.selector, input]));
+      const directInput = inputBySelector.get(candidate.selector);
+      if (directInput?.hasFiles) {
+        return false;
+      }
+
+      // If any file input for this subtype already has files, treat the subtype as resolved.
+      if (
+        (candidate.subType === "resume" || candidate.subType === "cover_letter") &&
+        allInputs.some((input) => {
+          if (!input.hasFiles) return false;
+          const signals = [input.label, input.name ?? "", input.id ?? "", ...(input.signals ?? [])]
+            .join(" ")
+            .toLowerCase();
+          if (candidate.subType === "resume") {
+            return /resume|cv|curriculum/.test(signals);
+          }
+          return /cover.?letter/.test(signals);
+        })
+      ) {
+        return false;
+      }
+
+      return true;
     });
 
     if (nextBlocker) {
       appendTimeline(`Upload blocker detected: ${nextBlocker.subType} selector=${nextBlocker.selector}`, "warn");
       await persistAutofillProgress({
         state: "blocked",
-        total: 0,
-        filled: 0,
+        total,
+        filled,
         manual: 0,
-        skipped: 0,
+        skipped,
         currentField: null,
         currentAction: null,
         paused: true,
@@ -595,51 +529,30 @@ export default function AutoFillPage() {
       return;
     }
 
-    appendTimeline("No pending upload blocker found; running Phase 1 fill");
-    const exec = await chrome.scripting.executeScript({
-      target: { tabId, allFrames: true },
-      args: [effectiveProfile],
-      func: (rawProfile) => {
-        const engine = (window as Window & {
-          __AI_DOM_CONTROL_ENGINE__?: {
-            runPhase1Fill: (profile: UserProfile) => Phase1RunResult;
-          };
-        }).__AI_DOM_CONTROL_ENGINE__;
-        if (!engine) {
-          throw new Error("DOM runtime not available in page context");
-        }
-        return {
-          href: window.location.href,
-          isTop: window === window.top,
-          result: engine.runPhase1Fill(rawProfile as UserProfile),
-        };
-      },
-    });
+    if (total === 0) {
+      appendTimeline("No supported fields were detected on this step", "warn");
+      await persistAutofillProgress({
+        state: "complete",
+        total: 0,
+        filled: 0,
+        manual: 0,
+        skipped: 0,
+        currentField: null,
+        currentAction: null,
+        paused: false,
+        completed: true,
+        stepIndex: 0,
+        fields: [],
+        activeBlocker: null,
+        validationErrors: [],
+        lastFilledField: null,
+      });
+      return;
+    }
 
-    const frameResults = exec
-      .map((row) => {
-        const value = row.result as Omit<Phase1FillFrameResult, "frameId"> | undefined;
-        if (!value) return null;
-        return {
-          frameId: row.frameId,
-          href: value.href,
-          isTop: value.isTop,
-          result: value.result,
-        } satisfies Phase1FillFrameResult;
-      })
-      .filter((row): row is Phase1FillFrameResult => row !== null)
-      .sort((a, b) => Number(b.isTop) - Number(a.isTop));
-
-    setPhase1FillResults(frameResults);
-    const primary = getPrimaryFrame(frameResults, (row) => row.result.candidates.length);
-    const filled = primary?.result.results.filter((item) => item.action === "filled").length ?? 0;
-    const failed =
-      primary?.result.results.filter((item) => item.action === "failed_write" || item.action === "failed_verify").length ?? 0;
-    const skipped = primary?.result.results.filter((item) => item.action.startsWith("skipped")).length ?? 0;
-    appendTimeline(`Direct Phase 1 fill finished: filled=${filled}, skipped=${skipped}, failed=${failed}`);
     await persistAutofillProgress({
       state: "complete",
-      total: primary?.result.results.length ?? 0,
+      total,
       filled,
       manual: 0,
       skipped,
@@ -656,13 +569,13 @@ export default function AutoFillPage() {
   }, [appendTimeline, effectiveProfile, ensureDomRuntime, getActiveTab, persistAutofillProgress]);
 
   const handleStartAutofill = useCallback(async () => {
-    setStarted(true);
     setError(null);
     resetExecutionView();
     appendTimeline("Start requested");
 
     try {
       handledUploadBlockerKeysRef.current.clear();
+      setStarted(true);
       await runDirectAutofillFlow();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start auto-fill");
@@ -698,10 +611,13 @@ export default function AutoFillPage() {
   }, []);
 
   const handleFillAll = useCallback(() => {
-    void runDirectAutofillFlow().catch((err) => {
+    appendTimeline("Preview confirmed: Fill All");
+    setStarted(true);
+    runDirectAutofillFlow().catch((err) => {
       const msg = err instanceof Error ? err.message : "Failed to continue autofill";
       setError(msg);
       appendTimeline(msg, "error");
+      setStarted(false);
     });
   }, [appendTimeline, runDirectAutofillFlow]);
 
@@ -711,32 +627,33 @@ export default function AutoFillPage() {
       if (!blocker || blocker.type !== "file_upload") {
         throw new Error("No active upload blocker");
       }
-      const blockerKey = `${blocker.selector}::${blocker.subType ?? "generic"}`;
-      handledUploadBlockerKeysRef.current.add(blockerKey);
-      await persistAutofillProgress({
-        state: "intake",
-        total: 0,
-        filled: 0,
-        manual: 0,
-        skipped: decision === "skipped_by_user" ? 1 : 0,
-        currentField: null,
-        currentAction: null,
-        paused: false,
-        completed: false,
-        stepIndex: 0,
-        fields: [],
-        activeBlocker: null,
-        validationErrors: [],
-        lastFilledField: null,
-      });
+      const selectorKey = `${blocker.selector}::${blocker.subType ?? "generic"}`;
+      handledUploadBlockerKeysRef.current.add(selectorKey);
       appendTimeline(
         `Upload decision: ${decision} (${blocker.subType ?? "generic"})`,
         decision === "skipped_by_user" ? "warn" : "info"
       );
-      appendTimeline("Autofill resumed after upload blocker");
+      await persistAutofillProgress({
+        state: "apply",
+        total: autofillProgress?.total ?? 0,
+        filled: autofillProgress?.filled ?? 0,
+        manual: autofillProgress?.manual ?? 0,
+        skipped: autofillProgress?.skipped ?? 0,
+        currentField: null,
+        currentAction: null,
+        paused: false,
+        completed: false,
+        stepIndex: autofillProgress?.stepIndex ?? 0,
+        fields: autofillProgress?.fields ?? [],
+        activeBlocker: null,
+        validationErrors: [],
+        lastFilledField: autofillProgress?.lastFilledField ?? null,
+      });
+      setStarted(true);
       await runDirectAutofillFlow();
+      appendTimeline("Autofill resumed after upload blocker");
     },
-    [appendTimeline, persistAutofillProgress, runDirectAutofillFlow]
+    [appendTimeline, autofillProgress, persistAutofillProgress, runDirectAutofillFlow]
   );
 
   const handleMoveWithoutUpload = useCallback(async () => {
@@ -790,9 +707,11 @@ export default function AutoFillPage() {
       row.result.hiddenFileInputs.length * 5 +
       row.result.visibleUploadTriggers.length
   );
-  const primaryPhase1FillResult = getPrimaryFrame(
-    phase1FillResults,
-    (row) => row.result.candidates.length
+  const primaryAutofillResult = getPrimaryFrame(
+    autofillRunResults,
+    (row) =>
+      row.result.results.filter((item) => item.action === "filled").length * 100 +
+      row.result.results.length
   );
 
   return (
@@ -848,9 +767,14 @@ export default function AutoFillPage() {
             <p className="text-xs text-gray-500 mt-1">
               Make sure you&apos;re on the job application page,<br />then click the button below.
             </p>
-            {!canStartAutofill && (
+            {canRunAutofill && !hasCompleteProfile && (
               <p className="text-xs text-amber-600 mt-2">
-                Complete your profile first (name and email required). Go to Profile Setup or complete login.
+                Profile is partially complete. Auto-fill can run, but completion quality may be lower.
+              </p>
+            )}
+            {!canRunAutofill && (
+              <p className="text-xs text-amber-600 mt-2">
+                Sign in and load your profile before starting auto-fill.
               </p>
             )}
           </div>
@@ -1096,24 +1020,24 @@ export default function AutoFillPage() {
           </div>
         )}
 
-        {phase1FillResults.length > 0 && primaryPhase1FillResult && (
+        {autofillRunResults.length > 0 && primaryAutofillResult && (
           <div className="mt-4 bg-gray-50 border border-gray-200 rounded-lg p-3">
-            <p className="text-xs font-semibold text-gray-700 mb-2">Phase 1 Fill Results</p>
+            <p className="text-xs font-semibold text-gray-700 mb-2">Autofill Results</p>
             <div className="space-y-2 text-xs text-gray-700">
               <div>
                 <p>
                   <span className="font-semibold text-primary-700">
-                    Frame {primaryPhase1FillResult.frameId} {primaryPhase1FillResult.isTop ? "(top)" : "(iframe)"}
+                    Frame {primaryAutofillResult.frameId} {primaryAutofillResult.isTop ? "(top)" : "(iframe)"}
                   </span>
-                  {`: candidates=${primaryPhase1FillResult.result.candidates.length}, results=${primaryPhase1FillResult.result.results.length}`}
+                  {`: candidates=${primaryAutofillResult.result.candidates.length}, results=${primaryAutofillResult.result.results.length}`}
                 </p>
                 <p className="text-xs text-gray-500">
-                  summary: filled={primaryPhase1FillResult.result.results.filter((item) => item.action === "filled").length}, skipped={primaryPhase1FillResult.result.results.filter((item) => item.action.startsWith("skipped")).length}, failed={primaryPhase1FillResult.result.results.filter((item) => item.action === "failed_write" || item.action === "failed_verify").length}
+                  summary: filled={primaryAutofillResult.result.results.filter((item) => item.action === "filled").length}, skipped={primaryAutofillResult.result.results.filter((item) => item.action.startsWith("skipped")).length}, failed={primaryAutofillResult.result.results.filter((item) => item.action === "failed_write" || item.action === "failed_verify").length}
                 </p>
               </div>
-              {primaryPhase1FillResult.result.results.map((item: Phase1FillResult, idx: number) => (
+              {primaryAutofillResult.result.results.map((item: Phase1FillResult, idx: number) => (
                 <p
-                  key={`phase1-${primaryPhase1FillResult.frameId}-${idx}`}
+                  key={`autofill-${primaryAutofillResult.frameId}-${idx}`}
                   className={
                     item.action === "filled"
                       ? "text-green-700"
@@ -1167,20 +1091,6 @@ export default function AutoFillPage() {
           </button>
           {!isComplete ? (
             <>
-              <button
-                onClick={handleRunDetectorTest}
-                disabled={isRunningDetectorTest}
-                className="px-4 py-2 text-sm text-indigo-700 border border-indigo-300 rounded-lg hover:bg-indigo-50 disabled:opacity-50"
-              >
-                {isRunningDetectorTest ? "Running Detector..." : "Run Detector Test"}
-              </button>
-              <button
-                onClick={handleRunPhase1Fill}
-                disabled={isRunningPhase1Fill || !effectiveProfile}
-                className="px-4 py-2 text-sm text-primary-700 border border-primary-300 rounded-lg hover:bg-primary-50 disabled:opacity-50"
-              >
-                {isRunningPhase1Fill ? "Running Phase 1..." : "Run Phase 1 Fill"}
-              </button>
               {started && (
                 <>
                   <button
@@ -1207,7 +1117,7 @@ export default function AutoFillPage() {
               ) : (
                 <button
                   onClick={handleStartAutofill}
-                  disabled={(!canStartAutofill) || (started && !isComplete)}
+                  disabled={(!canRunAutofill) || (started && !isComplete)}
                   className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
                 >
                   {started ? (isPaused ? "Waiting..." : "Filling...") : "Start Auto-Fill"}

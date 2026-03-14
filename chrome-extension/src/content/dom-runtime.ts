@@ -4,6 +4,7 @@ import {
   testDropdownsByDescriptors,
   scanPhase1Candidates,
   runPhase1Fill,
+  runUnifiedAutofill,
   matchPhase1Field,
   fillPhase1Field,
   verifyPhase1Write,
@@ -21,6 +22,7 @@ type DomRuntimeApi = {
   verifyPhase1Write: typeof verifyPhase1Write;
   classifyPhase1SkipReason: typeof classifyPhase1SkipReason;
   runPhase1Fill: typeof runPhase1Fill;
+  runUnifiedAutofill: typeof runUnifiedAutofill;
   scanUploadDetectors: typeof scanUploadDetectors;
 };
 
@@ -40,5 +42,6 @@ window.__AI_DOM_CONTROL_ENGINE__ = {
   verifyPhase1Write,
   classifyPhase1SkipReason,
   runPhase1Fill,
+  runUnifiedAutofill,
   scanUploadDetectors,
 };

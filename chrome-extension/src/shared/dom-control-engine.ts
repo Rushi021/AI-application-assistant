@@ -138,7 +138,9 @@ export type Phase1CanonicalFieldKey =
   | "zip_code"
   | "country"
   | "linkedin_url"
-  | "portfolio_url";
+  | "portfolio_url"
+  | "work_authorization"
+  | "sponsorship_needed";
 
 export type Phase1FillAction =
   | "filled"
@@ -198,10 +200,19 @@ export interface Phase1RunResult {
   results: Phase1FillResult[];
 }
 
+export interface UnifiedAutofillRunResult {
+  candidates: Phase1FieldCandidate[];
+  results: Phase1FillResult[];
+  phase1Results: Phase1FillResult[];
+  radioResults: Phase1FillResult[];
+  checkboxResults: Phase1FillResult[];
+  dropdownResults: Phase1FillResult[];
+}
+
 const AGREEMENT_PATTERN = /agree|consent|acknowledge|accept|terms|privacy|authorized/i;
 const EEOC_PATTERN = /gender|race|ethnic|ethnicity|sexual|orientation|veteran|disability|eeo/i;
 const SENSITIVE_PHASE1_PATTERN =
-  /gender|race|ethnic|ethnicity|sexual|orientation|veteran|disability|eeo|work authorization|authorized to work|visa|sponsorship|self identify/i;
+  /gender|race|ethnic|ethnicity|sexual|orientation|veteran|disability|eeo|self identify/i;
 const DROPDOWN_SELECTOR = '[role="combobox"], [aria-haspopup="listbox"], .ant-select-selector, [class*="ant-select-selector"], [class*="MuiSelect-select"], [class*="MuiAutocomplete-inputRoot"], [class*="react-select__control"], [class*="select__control"]';
 const UPLOAD_TRIGGER_SELECTOR = 'button, [role="button"], label, a, span, div';
 const UPLOAD_TRIGGER_TEXT_PATTERN =
@@ -250,6 +261,8 @@ const PHASE1_FIELD_PATTERNS: Record<Phase1CanonicalFieldKey, RegExp[]> = {
   country: [/country/i, /nation/i],
   linkedin_url: [/linkedin/i, /linked.?in/i],
   portfolio_url: [/portfolio/i, /website/i, /personal.?site/i, /\bblog\b/i],
+  work_authorization: [/work.?auth/i, /authorized.?to.?work/i, /legally.?authorized/i, /eligible.?to.?work/i],
+  sponsorship_needed: [/sponsor/i, /visa.?sponsor/i, /require.?sponsor/i, /future.?sponsor/i],
 };
 
 const PHASE1_SOURCE_WEIGHTS: Record<string, number> = {
@@ -336,6 +349,8 @@ function resolvePhase1ProfileValue(
     country?: string | null;
     linkedin_url?: string | null;
     portfolio_url?: string | null;
+    work_authorization?: string | null;
+    sponsorship_needed?: boolean | null;
   }
 ): string | null {
   switch (key) {
@@ -367,6 +382,10 @@ function resolvePhase1ProfileValue(
       return profile.linkedin_url ?? null;
     case "portfolio_url":
       return profile.portfolio_url ?? null;
+    case "work_authorization":
+      return profile.work_authorization ?? null;
+    case "sponsorship_needed":
+      return profile.sponsorship_needed == null ? null : profile.sponsorship_needed ? "Yes" : "No";
     default:
       return null;
   }
@@ -589,6 +608,8 @@ export function matchPhase1Field(
     country?: string | null;
     linkedin_url?: string | null;
     portfolio_url?: string | null;
+    work_authorization?: string | null;
+    sponsorship_needed?: boolean | null;
   }
 ): Phase1FieldMatch {
   const skip = classifyPhase1SkipReason(candidate);
@@ -714,6 +735,236 @@ export function verifyPhase1Write(element: Phase1FillableElement, expectedValue:
   return normalizePhase1Value(current) === normalizePhase1Value(expectedValue);
 }
 
+type BinaryChoiceValue = "yes" | "no";
+
+const WORK_AUTH_QUESTION_PATTERN =
+  /authorized\s+to\s+work|legally\s+authorized|eligible\s+to\s+work|legal\s+right\s+to\s+work|work\s+in\s+the\s+u\.?s|work\s+in\s+u\.?s|work\s+in\s+canada|work\s+in\s+the\s+u\.?s\s+or\s+canada/i;
+const SPONSORSHIP_QUESTION_PATTERN =
+  /require\s+visa\s+sponsorship|visa\s+sponsorship|future\s+require\s+sponsorship|now\s+or\s+in\s+the\s+future\s+require\s+sponsorship|need\s+sponsorship/i;
+
+function toBinaryChoiceToken(text: string): BinaryChoiceValue | null {
+  const normalized = normalizePhase1Value(text);
+  if (!normalized) return null;
+  if (
+    /^(yes|y|true|authorized)$/i.test(normalized) ||
+    ((/\byes\b/i.test(normalized) || /\bauthorized\b|\beligible\b/i.test(normalized)) && !/\bno\b/i.test(normalized))
+  ) {
+    return "yes";
+  }
+  if (
+    /^(no|n|false|not authorized)$/i.test(normalized) ||
+    /\bno\b|\bnot authorized\b|\bnot eligible\b/i.test(normalized)
+  ) {
+    return "no";
+  }
+  return null;
+}
+
+function inferWorkAuthorizationChoice(value: string | null | undefined): BinaryChoiceValue | null {
+  const normalized = normalizePhase1Value(value);
+  if (!normalized) return null;
+  if (/^(yes|y|true)$/i.test(normalized)) return "yes";
+  if (/^(no|n|false)$/i.test(normalized)) return "no";
+  if (/not\s+authorized|not\s+eligible|cannot\s+work|unable\s+to\s+work/i.test(normalized)) return "no";
+  if (/authorized|eligible|citizen|permanent\s+resident|green\s*card|can\s+work/i.test(normalized)) return "yes";
+  return null;
+}
+
+function getRadioFromLabel(label: HTMLLabelElement): HTMLInputElement | null {
+  const htmlFor = label.getAttribute("for");
+  if (htmlFor) {
+    const byFor = document.getElementById(htmlFor);
+    if (byFor instanceof HTMLInputElement && byFor.type === "radio") return byFor;
+  }
+  const nested = label.querySelector('input[type="radio"]');
+  return nested instanceof HTMLInputElement ? nested : null;
+}
+
+function getBinaryControlText(el: Element): string {
+  if (el instanceof HTMLInputElement && el.type === "radio") {
+    return `${getInputChoiceLabel(el)} ${el.value ?? ""}`.trim();
+  }
+  if (el instanceof HTMLLabelElement) {
+    const linkedRadio = getRadioFromLabel(el);
+    return `${el.textContent ?? ""} ${linkedRadio?.value ?? ""}`.trim();
+  }
+  if (el instanceof HTMLElement) {
+    return `${el.getAttribute("aria-label") ?? ""} ${el.textContent ?? ""}`.trim();
+  }
+  return "";
+}
+
+function isBinaryControlSelected(el: Element): boolean {
+  if (el instanceof HTMLInputElement && el.type === "radio") return el.checked;
+  if (el instanceof HTMLLabelElement) return !!getRadioFromLabel(el)?.checked;
+  if (el instanceof HTMLElement) {
+    const ariaChecked = el.getAttribute("aria-checked");
+    if (ariaChecked) return ariaChecked === "true";
+    const ariaPressed = el.getAttribute("aria-pressed");
+    if (ariaPressed) return ariaPressed === "true";
+    const ariaCurrent = el.getAttribute("aria-current");
+    if (ariaCurrent && ariaCurrent !== "false") return true;
+    const dataState = el.getAttribute("data-state");
+    if (dataState && /^(on|checked|selected|active|true)$/i.test(dataState)) return true;
+    const className = el.className || "";
+    if (typeof className === "string" && /\b(selected|active|checked|is-selected)\b/i.test(className)) return true;
+  }
+  return false;
+}
+
+function dispatchSyntheticClick(el: HTMLElement): void {
+  el.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, cancelable: true }));
+  el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+  el.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+}
+
+function clickBinaryControl(el: Element): void {
+  if (el instanceof HTMLLabelElement) {
+    el.click();
+    dispatchSyntheticClick(el);
+    const linkedRadio = getRadioFromLabel(el);
+    if (linkedRadio) {
+      linkedRadio.dispatchEvent(new Event("input", { bubbles: true }));
+      linkedRadio.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    return;
+  }
+  if (el instanceof HTMLInputElement && el.type === "radio") {
+    const checkedSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "checked")?.set;
+    if (checkedSetter) checkedSetter.call(el, true);
+    else el.checked = true;
+    el.click();
+    dispatchSyntheticClick(el);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return;
+  }
+  if (el instanceof HTMLElement) {
+    el.click();
+    dispatchSyntheticClick(el);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+}
+
+function getBinarySelectionState(yesControl: Element | null, noControl: Element | null): string {
+  if (yesControl && isBinaryControlSelected(yesControl)) return "Yes";
+  if (noControl && isBinaryControlSelected(noControl)) return "No";
+  return "";
+}
+
+function fillKnownBinaryQuestion(
+  root: Document | ShadowRoot,
+  key: "work_authorization" | "sponsorship_needed",
+  pattern: RegExp,
+  expectedChoice: BinaryChoiceValue | null
+): Phase1FillResult | null {
+  const baseResult: Omit<Phase1FillResult, "action" | "after" | "verified" | "reason"> = {
+    selector: `__binary_${key}`,
+    fieldType: "binary_choice",
+    canonicalKey: key,
+    label: key,
+    signals: [],
+    before: "",
+    attemptedValue: expectedChoice === null ? null : expectedChoice === "yes" ? "Yes" : "No",
+  };
+
+  const questionNodes = Array.from(
+    root.querySelectorAll<HTMLElement>("legend, label, p, span, div, h1, h2, h3, h4")
+  ).filter((node) => {
+    if (!isVisibleElement(node)) return false;
+    const text = node.textContent?.replace(/\s+/g, " ").trim() ?? "";
+    return text.length >= 20 && text.length <= 220 && pattern.test(text);
+  });
+  if (questionNodes.length === 0) return null;
+
+  if (!expectedChoice) {
+    const firstQuestionText = questionNodes[0]?.textContent?.replace(/\s+/g, " ").trim() ?? key;
+    return {
+      ...baseResult,
+      label: firstQuestionText.slice(0, 200),
+      signals: [firstQuestionText],
+      action: "skipped_no_profile_value",
+      after: "",
+      verified: false,
+      reason: `Profile has no deterministic ${key} value`,
+    };
+  }
+
+  const controls = Array.from(
+    root.querySelectorAll<Element>('input[type="radio"], label, button, [role="radio"], [aria-pressed]')
+  ).filter((control) => {
+    if (!(control instanceof HTMLElement)) return false;
+    if (!isVisibleElement(control)) return false;
+    if (control instanceof HTMLInputElement && control.disabled) return false;
+    return true;
+  });
+
+  for (const questionNode of questionNodes) {
+    const questionText = questionNode.textContent?.replace(/\s+/g, " ").trim() ?? "";
+    const qRect = questionNode.getBoundingClientRect();
+    if (qRect.width === 0 || qRect.height === 0) continue;
+
+    let bestYes: { el: Element; score: number } | null = null;
+    let bestNo: { el: Element; score: number } | null = null;
+
+    for (const control of controls) {
+      const choice = toBinaryChoiceToken(getBinaryControlText(control));
+      if (!choice) continue;
+      const cRect = (control as HTMLElement).getBoundingClientRect();
+      const dy = cRect.top - qRect.bottom;
+      const dx = Math.abs(cRect.left - qRect.left);
+      if (dy < -40 || dy > 260 || dx > 500) continue;
+      const score = Math.abs(dy) + dx / 25;
+      if (choice === "yes" && (!bestYes || score < bestYes.score)) bestYes = { el: control, score };
+      if (choice === "no" && (!bestNo || score < bestNo.score)) bestNo = { el: control, score };
+    }
+
+    const target = expectedChoice === "yes" ? bestYes?.el ?? null : bestNo?.el ?? null;
+    if (!target) continue;
+
+    const before = getBinarySelectionState(bestYes?.el ?? null, bestNo?.el ?? null);
+    clickBinaryControl(target);
+    const fallbackMatchedRadio = Array.from(root.querySelectorAll<HTMLInputElement>('input[type="radio"]')).some((radio) => {
+      if (!radio.checked) return false;
+      const token = toBinaryChoiceToken(`${getInputChoiceLabel(radio)} ${radio.value ?? ""}`);
+      if (token !== expectedChoice) return false;
+      const rect = radio.getBoundingClientRect();
+      const dy = rect.top - qRect.bottom;
+      const dx = Math.abs(rect.left - qRect.left);
+      return dy >= -80 && dy <= 300 && dx <= 560;
+    });
+    const verified = isBinaryControlSelected(target) || fallbackMatchedRadio;
+    const afterState = getBinarySelectionState(bestYes?.el ?? null, bestNo?.el ?? null);
+    const after = afterState || (verified ? (expectedChoice === "yes" ? "Yes" : "No") : "");
+
+    return {
+      selector: getElementSelector(target),
+      fieldType: "binary_choice",
+      canonicalKey: key,
+      label: questionText.slice(0, 200),
+      signals: [questionText],
+      action: verified ? "filled" : "failed_write",
+      before,
+      attemptedValue: expectedChoice === "yes" ? "Yes" : "No",
+      after,
+      verified,
+      reason: verified ? `Clicked ${expectedChoice.toUpperCase()} option` : "Binary option click did not stick",
+    };
+  }
+
+  return {
+    ...baseResult,
+    label: (questionNodes[0]?.textContent?.replace(/\s+/g, " ").trim() ?? key).slice(0, 200),
+    signals: [questionNodes[0]?.textContent?.replace(/\s+/g, " ").trim() ?? key],
+    action: "skipped_unmatched",
+    after: "",
+    verified: false,
+    reason: "No matching binary question controls detected in this frame",
+  };
+}
+
 export function runPhase1Fill(
   profile: {
     full_name?: string | null;
@@ -727,6 +978,8 @@ export function runPhase1Fill(
     country?: string | null;
     linkedin_url?: string | null;
     portfolio_url?: string | null;
+    work_authorization?: string | null;
+    sponsorship_needed?: boolean | null;
   },
   root: Document | ShadowRoot = document
 ): Phase1RunResult {
@@ -817,7 +1070,597 @@ export function runPhase1Fill(
     };
   });
 
+  const workAuthorizationChoice = inferWorkAuthorizationChoice(profile.work_authorization);
+  const workAuthorizationResult = fillKnownBinaryQuestion(
+    root,
+    "work_authorization",
+    WORK_AUTH_QUESTION_PATTERN,
+    workAuthorizationChoice
+  );
+  if (workAuthorizationResult) results.push(workAuthorizationResult);
+
+  const sponsorshipChoice =
+    profile.sponsorship_needed == null ? null : profile.sponsorship_needed ? "yes" : "no";
+  const sponsorshipResult = fillKnownBinaryQuestion(
+    root,
+    "sponsorship_needed",
+    SPONSORSHIP_QUESTION_PATTERN,
+    sponsorshipChoice
+  );
+  if (sponsorshipResult) results.push(sponsorshipResult);
+
   return { candidates, results };
+}
+
+function getElementTextForMatching(el: Element): string {
+  const parts: string[] = [];
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    parts.push(el.value ?? "");
+    parts.push(el.placeholder ?? "");
+    parts.push(el.getAttribute("aria-label") ?? "");
+  }
+  parts.push(el.textContent ?? "");
+  if (el instanceof HTMLElement) {
+    const labelledBy = el.getAttribute("aria-labelledby");
+    if (labelledBy) {
+      labelledBy
+        .split(/\s+/)
+        .map((id) => document.getElementById(id)?.textContent ?? "")
+        .forEach((value) => parts.push(value));
+    }
+  }
+  return parts
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function detectCanonicalKeyFromText(text: string): Phase1CanonicalFieldKey | null {
+  const ranked = (Object.entries(PHASE1_FIELD_PATTERNS) as Array<[Phase1CanonicalFieldKey, RegExp[]]>)
+    .map(([key, patterns]) => ({
+      key,
+      score: patterns.reduce((acc, pattern) => (pattern.test(text) ? acc + 1 : acc), 0),
+    }))
+    .filter((row) => row.score > 0)
+    .sort((a, b) => b.score - a.score);
+  if (ranked.length === 0) return null;
+  if ((ranked[1]?.score ?? -1) === ranked[0].score) return null;
+  return ranked[0].key;
+}
+
+function resolveBinaryChoiceForKey(
+  key: "work_authorization" | "sponsorship_needed",
+  profile: {
+    work_authorization?: string | null;
+    sponsorship_needed?: boolean | null;
+  }
+): BinaryChoiceValue | null {
+  if (key === "work_authorization") {
+    return inferWorkAuthorizationChoice(profile.work_authorization);
+  }
+  return profile.sponsorship_needed == null ? null : profile.sponsorship_needed ? "yes" : "no";
+}
+
+function findNearestQuestionText(el: Element): string {
+  const parts: string[] = [];
+  const fieldset = el.closest("fieldset");
+  if (fieldset) {
+    const legend = fieldset.querySelector("legend")?.textContent?.trim();
+    if (legend) parts.push(legend);
+  }
+  const parent = el.parentElement;
+  if (parent) {
+    const local = parent.textContent?.replace(/\s+/g, " ").trim();
+    if (local && local.length <= 220) parts.push(local);
+  }
+  const nearby = getNearbyText(el);
+  if (nearby) parts.push(nearby);
+  return parts.join(" ").replace(/\s+/g, " ").trim();
+}
+
+function fillKnownRadioGroups(
+  profile: {
+    work_authorization?: string | null;
+    sponsorship_needed?: boolean | null;
+  },
+  root: Document | ShadowRoot,
+  handledBinaryKeys: Set<"work_authorization" | "sponsorship_needed">
+): Phase1FillResult[] {
+  const groups = scanRadioGroups(root);
+  const out: Phase1FillResult[] = [];
+  const checkedSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "checked")?.set;
+
+  for (const group of groups) {
+    const firstSelector = group.options[0]?.selector;
+    if (!firstSelector) continue;
+    let firstEl: HTMLInputElement | null = null;
+    try {
+      const found = root.querySelector(firstSelector);
+      firstEl = found instanceof HTMLInputElement && found.type === "radio" ? found : null;
+    } catch {
+      firstEl = null;
+    }
+    if (!firstEl) continue;
+
+    const groupText = `${group.name} ${findNearestQuestionText(firstEl)} ${group.options
+      .map((opt) => `${opt.label} ${opt.value}`)
+      .join(" ")}`.toLowerCase();
+
+    const key: "work_authorization" | "sponsorship_needed" | null = WORK_AUTH_QUESTION_PATTERN.test(groupText)
+      ? "work_authorization"
+      : SPONSORSHIP_QUESTION_PATTERN.test(groupText)
+        ? "sponsorship_needed"
+        : null;
+
+    if (!key || handledBinaryKeys.has(key)) continue;
+    const expected = resolveBinaryChoiceForKey(key, profile);
+    const label = findNearestQuestionText(firstEl) || group.name || key;
+    const beforeOption = group.options.find((opt) => opt.checked);
+    const before = beforeOption ? beforeOption.label : "";
+
+    if (!expected) {
+      out.push({
+        selector: firstSelector,
+        fieldType: "radio",
+        canonicalKey: key,
+        label,
+        signals: [groupText],
+        action: "skipped_no_profile_value",
+        before,
+        attemptedValue: null,
+        after: before,
+        verified: false,
+        reason: `Profile has no deterministic ${key} value`,
+      });
+      continue;
+    }
+
+    const target = group.options.find((opt) => {
+      const token = toBinaryChoiceToken(`${opt.label} ${opt.value}`);
+      return token === expected;
+    });
+
+    if (!target) {
+      out.push({
+        selector: firstSelector,
+        fieldType: "radio",
+        canonicalKey: key,
+        label,
+        signals: [groupText],
+        action: "skipped_unmatched",
+        before,
+        attemptedValue: expected === "yes" ? "Yes" : "No",
+        after: before,
+        verified: false,
+        reason: "No matching Yes/No option in radio group",
+      });
+      continue;
+    }
+
+    let targetEl: HTMLInputElement | null = null;
+    try {
+      const found = root.querySelector(target.selector);
+      targetEl = found instanceof HTMLInputElement && found.type === "radio" ? found : null;
+    } catch {
+      targetEl = null;
+    }
+    if (!targetEl) continue;
+
+    if (targetEl.disabled) {
+      out.push({
+        selector: target.selector,
+        fieldType: "radio",
+        canonicalKey: key,
+        label,
+        signals: [groupText],
+        action: "skipped_unsupported_type",
+        before,
+        attemptedValue: expected === "yes" ? "Yes" : "No",
+        after: before,
+        verified: false,
+        reason: "Target radio is disabled",
+      });
+      continue;
+    }
+
+    if (targetEl.checked) {
+      handledBinaryKeys.add(key);
+      out.push({
+        selector: target.selector,
+        fieldType: "radio",
+        canonicalKey: key,
+        label,
+        signals: [groupText],
+        action: "filled",
+        before,
+        attemptedValue: expected === "yes" ? "Yes" : "No",
+        after: target.label,
+        verified: true,
+        reason: "Correct option already selected",
+      });
+      continue;
+    }
+
+    if (checkedSetter) checkedSetter.call(targetEl, true);
+    else targetEl.checked = true;
+    targetEl.click();
+    targetEl.dispatchEvent(new Event("input", { bubbles: true }));
+    targetEl.dispatchEvent(new Event("change", { bubbles: true }));
+
+    const verified = targetEl.checked;
+    if (verified) handledBinaryKeys.add(key);
+    const afterOption = group.options.find((opt) => {
+      try {
+        const found = root.querySelector(opt.selector);
+        return found instanceof HTMLInputElement && found.type === "radio" && found.checked;
+      } catch {
+        return false;
+      }
+    });
+
+    out.push({
+      selector: target.selector,
+      fieldType: "radio",
+      canonicalKey: key,
+      label,
+      signals: [groupText],
+      action: verified ? "filled" : "failed_write",
+      before,
+      attemptedValue: expected === "yes" ? "Yes" : "No",
+      after: afterOption?.label ?? "",
+      verified,
+      reason: verified ? "Selected matched radio option" : "Radio click did not stick",
+    });
+  }
+
+  return out;
+}
+
+function fillKnownCheckboxes(
+  profile: {
+    work_authorization?: string | null;
+    sponsorship_needed?: boolean | null;
+  },
+  root: Document | ShadowRoot,
+  handledBinaryKeys: Set<"work_authorization" | "sponsorship_needed">
+): Phase1FillResult[] {
+  const out: Phase1FillResult[] = [];
+  const checkedSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "checked")?.set;
+  const checkboxes = scanCheckboxes(root);
+
+  for (const item of checkboxes) {
+    let el: HTMLInputElement | null = null;
+    try {
+      const found = root.querySelector(item.selector);
+      el = found instanceof HTMLInputElement && found.type === "checkbox" ? found : null;
+    } catch {
+      el = null;
+    }
+    if (!el) continue;
+
+    const context = `${item.label} ${findNearestQuestionText(el)}`.toLowerCase();
+    const binaryKey: "work_authorization" | "sponsorship_needed" | null = WORK_AUTH_QUESTION_PATTERN.test(context)
+      ? "work_authorization"
+      : SPONSORSHIP_QUESTION_PATTERN.test(context)
+        ? "sponsorship_needed"
+        : null;
+
+    let targetChecked: boolean | null = null;
+    let canonicalKey: Phase1CanonicalFieldKey | null = null;
+    let reason = "";
+    if (binaryKey && !handledBinaryKeys.has(binaryKey)) {
+      const expected = resolveBinaryChoiceForKey(binaryKey, profile);
+      if (!expected) {
+        out.push({
+          selector: item.selector,
+          fieldType: "checkbox",
+          canonicalKey: binaryKey,
+          label: item.label,
+          signals: [context],
+          action: "skipped_no_profile_value",
+          before: item.checked ? "checked" : "unchecked",
+          attemptedValue: null,
+          after: item.checked ? "checked" : "unchecked",
+          verified: false,
+          reason: `Profile has no deterministic ${binaryKey} value`,
+        });
+        continue;
+      }
+      targetChecked = expected === "yes";
+      canonicalKey = binaryKey;
+      reason = "Matched known binary checkbox";
+    } else if (item.classification === "agreement") {
+      targetChecked = true;
+      canonicalKey = null;
+      reason = "Agreement checkbox";
+    } else {
+      continue;
+    }
+
+    const before = el.checked ? "checked" : "unchecked";
+    if (el.disabled) {
+      out.push({
+        selector: item.selector,
+        fieldType: "checkbox",
+        canonicalKey,
+        label: item.label,
+        signals: [context],
+        action: "skipped_unsupported_type",
+        before,
+        attemptedValue: targetChecked ? "checked" : "unchecked",
+        after: before,
+        verified: false,
+        reason: "Checkbox is disabled",
+      });
+      continue;
+    }
+
+    if (el.checked !== targetChecked) {
+      if (checkedSetter) checkedSetter.call(el, targetChecked);
+      else el.checked = targetChecked;
+      el.click();
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    const verified = el.checked === targetChecked;
+    if (verified && binaryKey) handledBinaryKeys.add(binaryKey);
+    out.push({
+      selector: item.selector,
+      fieldType: "checkbox",
+      canonicalKey,
+      label: item.label,
+      signals: [context],
+      action: verified ? "filled" : "failed_write",
+      before,
+      attemptedValue: targetChecked ? "checked" : "unchecked",
+      after: el.checked ? "checked" : "unchecked",
+      verified,
+      reason: verified ? reason : "Checkbox value did not stick",
+    });
+  }
+
+  return out;
+}
+
+function getDropdownDisplayValue(el: HTMLElement): string {
+  if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+    return el.value?.trim() ?? "";
+  }
+  const ariaLabel = el.getAttribute("aria-label")?.trim();
+  if (ariaLabel && ariaLabel.length <= 120) return ariaLabel;
+  return (el.textContent ?? "").replace(/\s+/g, " ").trim();
+}
+
+function getDropdownOptionText(el: Element): string {
+  return getElementTextForMatching(el).replace(/\s+/g, " ").trim();
+}
+
+function findDropdownOptionElements(): HTMLElement[] {
+  const selectors = [
+    '[role="option"]',
+    '[role="listbox"] [aria-selected]',
+    ".ant-select-item-option",
+    ".MuiAutocomplete-option",
+    ".react-select__option",
+    '[id*="option"]',
+  ];
+  const nodes = selectors.flatMap((selector) =>
+    Array.from(document.querySelectorAll<HTMLElement>(selector))
+  );
+  const deduped = new Set<HTMLElement>();
+  for (const node of nodes) {
+    if (!isVisibleElement(node)) continue;
+    deduped.add(node);
+  }
+  return Array.from(deduped);
+}
+
+function findBestDropdownOption(options: HTMLElement[], value: string): HTMLElement | null {
+  const normalizedTarget = normalizePhase1Value(value);
+  if (!normalizedTarget) return null;
+
+  const withText = options
+    .map((opt) => ({ opt, text: normalizePhase1Value(getDropdownOptionText(opt)) }))
+    .filter((item) => item.text.length > 0);
+
+  const exact = withText.find((item) => item.text === normalizedTarget);
+  if (exact) return exact.opt;
+
+  const containing = withText.find(
+    (item) =>
+      item.text.includes(normalizedTarget) || normalizedTarget.includes(item.text)
+  );
+  if (containing) return containing.opt;
+  return null;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function fillCustomDropdowns(
+  profile: {
+    full_name?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    address_line1?: string | null;
+    address_line2?: string | null;
+    city?: string | null;
+    state?: string | null;
+    zip_code?: string | null;
+    country?: string | null;
+    linkedin_url?: string | null;
+    portfolio_url?: string | null;
+    work_authorization?: string | null;
+    sponsorship_needed?: boolean | null;
+  },
+  root: Document | ShadowRoot
+): Promise<Phase1FillResult[]> {
+  const dropdowns = scanDropdowns(root);
+  const out: Phase1FillResult[] = [];
+
+  for (const item of dropdowns) {
+    let trigger: HTMLElement | null = null;
+    try {
+      const found = root.querySelector(item.selector);
+      trigger = found instanceof HTMLElement ? found : null;
+    } catch {
+      trigger = null;
+    }
+    if (!trigger) continue;
+
+    const labelText = `${item.label} ${getElementTextForMatching(trigger)}`.toLowerCase();
+    const key = detectCanonicalKeyFromText(labelText);
+    if (!key) {
+      out.push({
+        selector: item.selector,
+        fieldType: "custom_dropdown",
+        canonicalKey: null,
+        label: item.label,
+        signals: [labelText],
+        action: "skipped_unmatched",
+        before: getDropdownDisplayValue(trigger),
+        attemptedValue: null,
+        after: getDropdownDisplayValue(trigger),
+        verified: false,
+        reason: "Could not match dropdown to a deterministic profile key",
+      });
+      continue;
+    }
+
+    const value = resolvePhase1ProfileValue(key, profile);
+    const before = getDropdownDisplayValue(trigger);
+    if (!value || normalizePhase1Value(value).length === 0) {
+      out.push({
+        selector: item.selector,
+        fieldType: "custom_dropdown",
+        canonicalKey: key,
+        label: item.label,
+        signals: [labelText],
+        action: "skipped_no_profile_value",
+        before,
+        attemptedValue: null,
+        after: before,
+        verified: false,
+        reason: `Profile has no value for ${key}`,
+      });
+      continue;
+    }
+
+    if (normalizePhase1Value(before) === normalizePhase1Value(value)) {
+      out.push({
+        selector: item.selector,
+        fieldType: "custom_dropdown",
+        canonicalKey: key,
+        label: item.label,
+        signals: [labelText],
+        action: "filled",
+        before,
+        attemptedValue: value,
+        after: before,
+        verified: true,
+        reason: "Dropdown already matched profile value",
+      });
+      continue;
+    }
+
+    trigger.click();
+    await sleep(120);
+    let targetOption: HTMLElement | null = null;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      const options = findDropdownOptionElements();
+      targetOption = findBestDropdownOption(options, value);
+      if (targetOption) break;
+      await sleep(120);
+    }
+
+    if (!targetOption) {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      out.push({
+        selector: item.selector,
+        fieldType: "custom_dropdown",
+        canonicalKey: key,
+        label: item.label,
+        signals: [labelText],
+        action: "skipped_select_no_match",
+        before,
+        attemptedValue: value,
+        after: getDropdownDisplayValue(trigger),
+        verified: false,
+        reason: "No dropdown option matched target value",
+      });
+      continue;
+    }
+
+    targetOption.click();
+    targetOption.dispatchEvent(new Event("input", { bubbles: true }));
+    targetOption.dispatchEvent(new Event("change", { bubbles: true }));
+    await sleep(120);
+    const after = getDropdownDisplayValue(trigger);
+    const verified = normalizePhase1Value(after).includes(normalizePhase1Value(value)) ||
+      normalizePhase1Value(getDropdownOptionText(targetOption)).includes(normalizePhase1Value(value));
+
+    out.push({
+      selector: item.selector,
+      fieldType: "custom_dropdown",
+      canonicalKey: key,
+      label: item.label,
+      signals: [labelText],
+      action: verified ? "filled" : "failed_verify",
+      before,
+      attemptedValue: value,
+      after,
+      verified,
+      reason: verified ? "Selected matching dropdown option" : "Dropdown selection could not be verified",
+    });
+  }
+
+  return out;
+}
+
+export async function runUnifiedAutofill(
+  profile: {
+    full_name?: string | null;
+    email?: string | null;
+    phone?: string | null;
+    address_line1?: string | null;
+    address_line2?: string | null;
+    city?: string | null;
+    state?: string | null;
+    zip_code?: string | null;
+    country?: string | null;
+    linkedin_url?: string | null;
+    portfolio_url?: string | null;
+    work_authorization?: string | null;
+    sponsorship_needed?: boolean | null;
+  },
+  root: Document | ShadowRoot = document
+): Promise<UnifiedAutofillRunResult> {
+  const phase1 = runPhase1Fill(profile, root);
+  const handledBinaryKeys = new Set<"work_authorization" | "sponsorship_needed">(
+    phase1.results
+      .filter(
+        (row) =>
+          row.action === "filled" &&
+          (row.canonicalKey === "work_authorization" || row.canonicalKey === "sponsorship_needed")
+      )
+      .map((row) => row.canonicalKey as "work_authorization" | "sponsorship_needed")
+  );
+
+  const radioResults = fillKnownRadioGroups(profile, root, handledBinaryKeys);
+  const checkboxResults = fillKnownCheckboxes(profile, root, handledBinaryKeys);
+  const dropdownResults = await fillCustomDropdowns(profile, root);
+  const results = [...phase1.results, ...radioResults, ...checkboxResults, ...dropdownResults];
+
+  return {
+    candidates: phase1.candidates,
+    results,
+    phase1Results: phase1.results,
+    radioResults,
+    checkboxResults,
+    dropdownResults,
+  };
 }
 
 function collectUploadSignals(

@@ -4,8 +4,12 @@ import io
 import json
 import logging
 import os
+import re
+from datetime import datetime
 
 from docx import Document
+from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Pt
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
 from sqlalchemy.exc import OperationalError
@@ -92,27 +96,160 @@ def _build_cover_letter_docx(
     header_para_end: int | None = None,
 ) -> bytes:
     """
-    Build a .docx with resume header at top, then cover letter body.
-    Uses header formatting from parsed_json when available.
+    Build a deterministic .docx cover letter:
+    - Centered resume-like header (name + contact) with title size 18
+    - Date line
+    - Salutation
+    - Body paragraphs
+    - Closing + signature
+
+    LLM output is sanitized into body paragraphs so formatting remains stable.
     """
+    def _normalize_whitespace(text: str) -> str:
+        return re.sub(r"\s+", " ", text or "").strip()
+
+    def _normalize_header(header: str) -> tuple[str, str]:
+        raw_lines = [ln.strip() for ln in (header or "").split("\n") if ln.strip()]
+        if not raw_lines:
+            return ("", "")
+        name_line = _normalize_whitespace(raw_lines[0])
+        contact_chunks: list[str] = []
+        for ln in raw_lines[1:]:
+            ln = ln.replace("\t", " | ")
+            for part in [p.strip() for p in ln.split("|") if p.strip()]:
+                contact_chunks.append(_normalize_whitespace(part))
+        # De-duplicate while preserving order.
+        seen: set[str] = set()
+        deduped = [c for c in contact_chunks if not (c in seen or seen.add(c))]
+        return (name_line, " | ".join(deduped))
+
+    def _looks_like_date_line(line: str) -> bool:
+        s = (line or "").strip()
+        return bool(
+            re.match(r"^date\s*:", s, flags=re.IGNORECASE)
+            or re.match(r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$", s)
+        )
+
+    def _format_signature_name(name: str) -> str:
+        n = _normalize_whitespace(name)
+        if not n:
+            return ""
+        # Resume headers are often uppercase; convert to proper-case for signature.
+        if n.upper() == n:
+            return " ".join(token.capitalize() for token in n.split())
+        return n
+
+    def _normalize_cover_letter_body(raw_text: str, fallback_name: str) -> tuple[str, list[str], str, str]:
+        """
+        Returns:
+        salutation, body_paragraphs, closing_line, signature_line
+        """
+        text = (raw_text or "").replace("\r\n", "\n").replace("\r", "\n").strip()
+        if not text:
+            return ("Dear Hiring Manager,", [], "Sincerely,", _format_signature_name(fallback_name))
+
+        lines = [ln.strip() for ln in text.split("\n")]
+        # Trim leading/trailing empty lines first.
+        while lines and not lines[0]:
+            lines.pop(0)
+        while lines and not lines[-1]:
+            lines.pop()
+
+        salutation = "Dear Hiring Manager,"
+        if lines and _looks_like_date_line(lines[0]):
+            lines.pop(0)
+            while lines and not lines[0]:
+                lines.pop(0)
+
+        if lines and re.match(r"^dear\b", lines[0], flags=re.IGNORECASE):
+            salutation = lines.pop(0).rstrip()
+            while lines and not lines[0]:
+                lines.pop(0)
+
+        closing_line = "Sincerely,"
+        signature_line = _format_signature_name(fallback_name)
+        closing_pattern = re.compile(
+            r"^(sincerely|best regards|regards|thank you|thanks)[,!\.]?$",
+            flags=re.IGNORECASE,
+        )
+
+        closing_idx = None
+        for i in range(len(lines) - 1, -1, -1):
+            if closing_pattern.match(lines[i] or ""):
+                closing_idx = i
+                break
+
+        if closing_idx is not None:
+            closing_line = lines[closing_idx].rstrip(",.!") + ","
+            if closing_idx + 1 < len(lines):
+                candidate_sig = _normalize_whitespace(lines[closing_idx + 1])
+                if candidate_sig:
+                    signature_line = candidate_sig
+            lines = lines[:closing_idx]
+
+        body_block = "\n".join(lines).strip()
+        body_paragraphs = [p.strip() for p in re.split(r"\n\s*\n", body_block) if p.strip()]
+
+        # Guard against malformed output still containing salutation/closing markers.
+        if body_paragraphs and re.match(r"^dear\b", body_paragraphs[0], flags=re.IGNORECASE):
+            body_paragraphs = body_paragraphs[1:]
+        while body_paragraphs and closing_pattern.match(body_paragraphs[-1]):
+            body_paragraphs.pop()
+
+        return (salutation, body_paragraphs, closing_line, signature_line)
+
     doc = Document()
-    para_fmt_lookup: dict[int, dict] = {}
-    if parsed_json:
-        for sec_json in parsed_json.get("sections", []):
-            for p in sec_json.get("paragraphs", []):
-                para_fmt_lookup[p["idx"]] = p.get("fmt", {})
 
-    header_lines = [ln.strip() for ln in header_text.split("\n") if ln.strip()]
-    for i, line in enumerate(header_lines):
+    # Base paragraph font for deterministic output.
+    normal_style = doc.styles["Normal"]
+    normal_style.font.name = "Times New Roman"
+    normal_style.font.size = Pt(12)
+
+    name_line, contact_line = _normalize_header(header_text)
+
+    if name_line:
         p = doc.add_paragraph()
-        run = p.add_run(line)
-        para_idx = (header_para_start + i) if header_para_start is not None and header_para_end is not None else None
-        if para_idx is not None and para_idx in para_fmt_lookup:
-            _apply_fmt_to_run(run, para_fmt_lookup[para_idx])
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run(name_line)
+        run.bold = True
+        run.font.name = "Times New Roman"
+        run.font.size = Pt(18)  # Requested cover letter title size.
 
-    body_lines = body_text.split("\n")
-    for line in body_lines:
-        doc.add_paragraph(line)
+    if contact_line:
+        p = doc.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = p.add_run(contact_line)
+        run.font.name = "Times New Roman"
+        run.font.size = Pt(12)
+
+    doc.add_paragraph("")
+
+    date_para = doc.add_paragraph()
+    d1 = date_para.add_run("Date:")
+    d1.bold = True
+    d1.font.name = "Times New Roman"
+    d1.font.size = Pt(12)
+    d2 = date_para.add_run(f" {datetime.now().strftime('%m/%d/%y')}")
+    d2.font.name = "Times New Roman"
+    d2.font.size = Pt(12)
+
+    doc.add_paragraph("")
+
+    salutation, body_paragraphs, closing_line, signature_line = _normalize_cover_letter_body(
+        body_text,
+        name_line,
+    )
+
+    doc.add_paragraph(salutation or "Dear Hiring Manager,")
+    doc.add_paragraph("")
+
+    for para_text in body_paragraphs:
+        doc.add_paragraph(para_text)
+        doc.add_paragraph("")
+
+    doc.add_paragraph(closing_line or "Sincerely,")
+    if signature_line:
+        doc.add_paragraph(signature_line)
 
     out = io.BytesIO()
     doc.save(out)

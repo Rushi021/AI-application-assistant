@@ -150,7 +150,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     })),
 
   // Reset workflow (keep auth)
-  resetWorkflow: () =>
+  resetWorkflow: () => {
+    chrome.storage.local
+      .remove([STORAGE_KEYS.AUTOFILL_PROGRESS, STORAGE_KEYS.AUTOFILL_TRACE_LOG])
+      .catch(() => {});
     set({
       jobDescription: "",
       jobId: null,
@@ -175,7 +178,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         uploadedSameAsProfileResume: false,
       },
       currentPage: "job-description",
-    }),
+    });
+  },
 }));
 
 /**

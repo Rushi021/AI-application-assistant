@@ -60,6 +60,7 @@ export default function TemporaryResumeUploadPage() {
       setAutofillContext({
         pendingCoverLetterGeneration: false,
         pendingCoverLetterBlockerSelector: null,
+        pendingUploadSubtype: null,
       });
       setPage("cover-letter");
     } catch (err) {
@@ -112,7 +113,14 @@ export default function TemporaryResumeUploadPage() {
         {error && <p className="text-xs text-red-600">{error}</p>}
         <div className="flex gap-2">
           <button
-            onClick={() => setPage("job-description")}
+            onClick={() => {
+              setAutofillContext({
+                pendingCoverLetterGeneration: false,
+                pendingCoverLetterBlockerSelector: null,
+                pendingUploadSubtype: null,
+              });
+              setPage("job-description");
+            }}
             className="px-4 py-2 text-sm text-gray-600 border rounded-lg hover:bg-gray-50"
           >
             Back

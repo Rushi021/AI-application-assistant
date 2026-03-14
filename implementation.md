@@ -1,4 +1,4 @@
-# AI Job Application Assistant - Implementation Guide
+﻿# AI Job Application Assistant - Implementation Guide
 
 This document explains what is implemented in the backend today, how the architecture is organized, how users interact with the system, and how data flows across components.
 
@@ -20,6 +20,13 @@ The system is built to preserve ownership boundaries by session and to keep arch
 ## 2. Tech Stack
 
 The stack is split by component so each layer can evolve independently.
+
+### 2.0 Runtime and language summary
+
+- `Python` is the backend language (`backend/`) and powers API, data, auth, and AI orchestration layers.
+- `JavaScript/TypeScript` is the extension frontend language (`chrome-extension/`) for UI, content scripts, and browser messaging.
+- `Node.js + npm` are used as the build/runtime toolchain for the extension (`vite`, `tsc`, dependency management).
+- `SQL` is used through SQLAlchemy models and migrations for relational data storage.
 
 ### 2.1 Backend API (`backend/`)
 
@@ -353,3 +360,4 @@ Still evolving:
 - provider abstraction expansion (beyond Gemini)
 - migration strategy for production DB
 - richer job/application intelligence and automation
+

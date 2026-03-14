@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useAppStore } from "../store";
 import { createDraft, generateCoverLetter, ingestJob, listResumes, runPipeline } from "../services/api";
-import { MSG } from "@/shared/constants";
+import { MSG, STORAGE_KEYS } from "@/shared/constants";
 
 export default function JobDescriptionPage() {
   const {
@@ -22,6 +22,13 @@ export default function JobDescriptionPage() {
   const [directLoading, setDirectLoading] = useState(false);
   const [showDirectPrompt, setShowDirectPrompt] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const clearAutofillArtifacts = async () => {
+    setAutofillProgress(null);
+    await chrome.storage.local
+      .remove([STORAGE_KEYS.AUTOFILL_PROGRESS, STORAGE_KEYS.AUTOFILL_TRACE_LOG])
+      .catch(() => {});
+  };
 
   // Listen for auto-detected JD from context menu
   useEffect(() => {
@@ -88,6 +95,7 @@ export default function JobDescriptionPage() {
     setError(null);
     try {
       const job = await ingestJob(text.trim());
+      await clearAutofillArtifacts();
       setJobDescription(text.trim());
       setJobId(job.id);
       if (autofillContext.pendingCoverLetterGeneration) {
@@ -135,9 +143,13 @@ export default function JobDescriptionPage() {
         mode: "standard",
         considerResume: true,
         suppressWorkAndSkills: false,
+        applicationResumeSource: null,
+        temporaryResumeId: null,
+        temporaryResumeFilename: null,
         pendingCoverLetterGeneration: false,
         pendingCoverLetterBlockerSelector: null,
         pendingUploadSubtype: null,
+        uploadedSameAsProfileResume: false,
       });
       setPage("resume-select");
     } catch (err) {
@@ -160,16 +172,20 @@ export default function JobDescriptionPage() {
       setDraft(null);
       setPipelineRun(null);
       setCoverLetter("");
-      setAutofillProgress(null);
+      await clearAutofillArtifacts();
       setSelectedResumeId(resumes[0]?.id ?? null);
       setAutofillContext({
         mode: "direct",
         considerResume,
         hasStoredResume,
         suppressWorkAndSkills: !considerResume,
+        applicationResumeSource: null,
+        temporaryResumeId: null,
+        temporaryResumeFilename: null,
         pendingCoverLetterGeneration: false,
         pendingCoverLetterBlockerSelector: null,
         pendingUploadSubtype: null,
+        uploadedSameAsProfileResume: false,
       });
       setPage("autofill");
     } catch (err) {

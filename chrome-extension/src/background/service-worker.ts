@@ -91,6 +91,40 @@ async function sendMessageToFrame<T>(
   });
 }
 
+async function broadcastToActiveTabFrames(
+  message: unknown,
+  timeoutMs = 2500
+): Promise<{ success: boolean; successCount: number; errors: string[] }> {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id) {
+    return { success: false, successCount: 0, errors: ["No active tab found"] };
+  }
+
+  const frameIds = await listFrameIds(tab.id);
+  let successCount = 0;
+  const errors: string[] = [];
+
+  for (const frameId of frameIds) {
+    try {
+      const response = await sendMessageToFrame<{ success?: boolean; error?: string }>(
+        tab.id,
+        message,
+        timeoutMs,
+        frameId
+      );
+      if (response?.error) {
+        errors.push(`frameId=${frameId}: ${response.error}`);
+      } else {
+        successCount += 1;
+      }
+    } catch (err) {
+      errors.push(`frameId=${frameId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  return { success: successCount > 0, successCount, errors };
+}
+
 // ---------------------------------------------------------------------------
 // Message handling
 // ---------------------------------------------------------------------------
@@ -134,53 +168,45 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === MSG.AUTOFILL_UNDO_ALL) {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]?.id) {
-        chrome.tabs.sendMessage(tabs[0].id, message, () => {
-          sendResponse({ success: true });
-        });
-      } else {
-        sendResponse({ success: true });
-      }
+    broadcastToActiveTabFrames(message).then((result) => {
+      sendResponse({
+        success: result.success,
+        relayedFrames: result.successCount,
+        error: result.success ? undefined : result.errors.join(" | "),
+      });
     });
     return true;
   }
 
   if (message.type === MSG.STOP_AUTOFILL) {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]?.id) {
-        chrome.tabs.sendMessage(tabs[0].id, message, () => {
-          sendResponse({ success: true });
-        });
-      } else {
-        sendResponse({ success: true });
-      }
+    broadcastToActiveTabFrames(message).then((result) => {
+      sendResponse({
+        success: result.success,
+        relayedFrames: result.successCount,
+        error: result.success ? undefined : result.errors.join(" | "),
+      });
     });
     return true;
   }
 
   if (message.type === MSG.AUTOFILL_RESUME) {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]?.id) {
-        chrome.tabs.sendMessage(tabs[0].id, message, () => {
-          sendResponse({ success: true });
-        });
-      } else {
-        sendResponse({ success: true });
-      }
+    broadcastToActiveTabFrames(message).then((result) => {
+      sendResponse({
+        success: result.success,
+        relayedFrames: result.successCount,
+        error: result.success ? undefined : result.errors.join(" | "),
+      });
     });
     return true;
   }
 
   if (message.type === MSG.AUTOFILL_UPLOAD_BLOCKER_DECISION) {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      if (tabs[0]?.id) {
-        chrome.tabs.sendMessage(tabs[0].id, message, () => {
-          sendResponse({ success: true });
-        });
-      } else {
-        sendResponse({ success: true });
-      }
+    broadcastToActiveTabFrames(message).then((result) => {
+      sendResponse({
+        success: result.success,
+        relayedFrames: result.successCount,
+        error: result.success ? undefined : result.errors.join(" | "),
+      });
     });
     return true;
   }
