@@ -255,7 +255,7 @@ const PHASE1_FIELD_PATTERNS: Record<Phase1CanonicalFieldKey, RegExp[]> = {
   phone: [/phone/i, /mobile/i, /cell/i, /tel/i, /contact.?number/i],
   address_line1: [/address.?line.?1/i, /street.?address/i, /^address$/i, /mailing.?address/i],
   address_line2: [/address.?line.?2/i, /\bapt\b/i, /\bsuite\b/i, /\bunit\b/i],
-  city: [/^city$/i, /city.?name/i, /town/i],
+  city: [/^city$/i, /city.?name/i, /town/i, /location.*city/i, /city.*location/i, /^location\s*\(city\)\s*$/i],
   state: [/^state$/i, /province/i, /region/i],
   zip_code: [/zip/i, /postal/i, /post.?code/i],
   country: [/country/i, /nation/i],
@@ -442,17 +442,82 @@ export function getElementSelector(el: Element): string {
   if (!(el instanceof HTMLElement)) return el.tagName.toLowerCase();
   if (el.id) return `#${safeCssEscape(el.id)}`;
   const tag = el.tagName.toLowerCase();
+  const isUnique = (selector: string): boolean => {
+    try {
+      return document.querySelectorAll(selector).length === 1;
+    } catch {
+      return false;
+    }
+  };
+
   const name = el.getAttribute("name");
-  if (name) return `${tag}[name="${safeCssEscape(name)}"]`;
+  if (name) {
+    const selector = `${tag}[name="${safeCssEscape(name)}"]`;
+    if (isUnique(selector)) return selector;
+  }
   const dataQa = el.getAttribute("data-qa");
-  if (dataQa) return `${tag}[data-qa="${safeCssEscape(dataQa)}"]`;
+  if (dataQa) {
+    const selector = `${tag}[data-qa="${safeCssEscape(dataQa)}"]`;
+    if (isUnique(selector)) return selector;
+  }
   const dataAutomationId = el.getAttribute("data-automation-id");
-  if (dataAutomationId) return `${tag}[data-automation-id="${safeCssEscape(dataAutomationId)}"]`;
-  const parent = el.parentElement;
-  if (!parent) return tag;
-  const siblings = Array.from(parent.querySelectorAll(`:scope > ${tag}`));
-  const index = siblings.indexOf(el);
-  return index >= 0 ? `${parent.tagName.toLowerCase()} > ${tag}:nth-of-type(${index + 1})` : tag;
+  if (dataAutomationId) {
+    const selector = `${tag}[data-automation-id="${safeCssEscape(dataAutomationId)}"]`;
+    if (isUnique(selector)) return selector;
+  }
+  const dataTestId = el.getAttribute("data-testid");
+  if (dataTestId) {
+    const selector = `${tag}[data-testid="${safeCssEscape(dataTestId)}"]`;
+    if (isUnique(selector)) return selector;
+  }
+
+  const parts: string[] = [];
+  let current: HTMLElement | null = el;
+  while (current) {
+    const currentTag = current.tagName.toLowerCase();
+    let part = currentTag;
+    const parent: HTMLElement | null = current.parentElement;
+
+    if (current.id) {
+      part = `${currentTag}#${safeCssEscape(current.id)}`;
+      parts.unshift(part);
+      const selector = parts.join(" > ");
+      if (isUnique(selector)) return selector;
+      return `#${safeCssEscape(current.id)}`;
+    }
+
+    if (parent) {
+      const sameTagSiblings = Array.from(parent.children).filter(
+        (child) => child instanceof HTMLElement && child.tagName.toLowerCase() === currentTag
+      );
+      if (sameTagSiblings.length > 1) {
+        const index = sameTagSiblings.indexOf(current) + 1;
+        part = `${currentTag}:nth-of-type(${index})`;
+      }
+    }
+
+    parts.unshift(part);
+    const selector = parts.join(" > ");
+    if (isUnique(selector)) return selector;
+    current = parent;
+  }
+
+  return parts.join(" > ") || tag;
+}
+
+function queryElementBySelectorDeep(root: Document | ShadowRoot, selector: string): Element | null {
+  try {
+    const direct = root.querySelector(selector);
+    if (direct) return direct;
+  } catch {
+    // ignore invalid selector and fallback to deep matching
+  }
+
+  const candidates = deepQueryAll(root, "input, textarea, select, [role='combobox'], [role='radio'], [aria-pressed], label, button");
+  for (const candidate of candidates) {
+    if (getElementSelector(candidate) === selector) return candidate;
+  }
+  return null;
 }
 
 export function getLabelTextForElement(el: HTMLElement): string {
@@ -553,10 +618,12 @@ export function isEeocLike(text: string): boolean {
 }
 
 export function scanPhase1Candidates(root: Document | ShadowRoot = document): Phase1FieldCandidate[] {
-  const elements = Array.from(
-    root.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>(
-      'input:not([type="hidden"]):not([type="file"]):not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="reset"]), textarea, select'
-    )
+  const elements = deepQueryAll(
+    root,
+    'input:not([type="hidden"]):not([type="file"]):not([type="checkbox"]):not([type="radio"]):not([type="submit"]):not([type="button"]):not([type="reset"]), textarea, select'
+  ).filter(
+    (el): el is HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement =>
+      el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement
   );
 
   return elements
@@ -741,6 +808,13 @@ const WORK_AUTH_QUESTION_PATTERN =
   /authorized\s+to\s+work|legally\s+authorized|eligible\s+to\s+work|legal\s+right\s+to\s+work|work\s+in\s+the\s+u\.?s|work\s+in\s+u\.?s|work\s+in\s+canada|work\s+in\s+the\s+u\.?s\s+or\s+canada/i;
 const SPONSORSHIP_QUESTION_PATTERN =
   /require\s+visa\s+sponsorship|visa\s+sponsorship|future\s+require\s+sponsorship|now\s+or\s+in\s+the\s+future\s+require\s+sponsorship|need\s+sponsorship/i;
+const MILITARY_QUESTION_PATTERN =
+  /served\s+in\s+the\s+military|military\s+service|veteran|protected\s+veteran|armed\s+forces|reservist|national\s+guard|uniformed\s+services|military\s+spouse|government\s+or\s+military|connected\s+to\s+government|related\s+to\s+the\s+government/i;
+const MILITARY_NEGATIVE_ANSWER_PATTERN =
+  /\bno\b|not\s+a?\s*(protected\s+)?veteran|not\s+served|never\s+served|none|not\s+affiliated|not\s+connected|i\s+do\s+not/i;
+const MILITARY_POSITIVE_ANSWER_PATTERN =
+  /\byes\b|served|veteran|protected\s+veteran|active\s+duty|military\s+spouse|reservist|national\s+guard|armed\s+forces/i;
+const MILITARY_SIGNAL_SOURCES = new Set(["label", "aria-label", "name", "id", "placeholder"]);
 
 function toBinaryChoiceToken(text: string): BinaryChoiceValue | null {
   const normalized = normalizePhase1Value(text);
@@ -768,6 +842,74 @@ function inferWorkAuthorizationChoice(value: string | null | undefined): BinaryC
   if (/not\s+authorized|not\s+eligible|cannot\s+work|unable\s+to\s+work/i.test(normalized)) return "no";
   if (/authorized|eligible|citizen|permanent\s+resident|green\s*card|can\s+work/i.test(normalized)) return "yes";
   return null;
+}
+
+function isMilitaryQuestionText(text: string | null | undefined): boolean {
+  const normalized = normalizePhase1Value(text);
+  if (!normalized) return false;
+  return MILITARY_QUESTION_PATTERN.test(normalized);
+}
+
+function toMilitaryChoiceToken(text: string): BinaryChoiceValue | null {
+  const normalized = normalizePhase1Value(text);
+  if (!normalized) return null;
+  if (MILITARY_NEGATIVE_ANSWER_PATTERN.test(normalized)) return "no";
+  if (MILITARY_POSITIVE_ANSWER_PATTERN.test(normalized)) {
+    if (/\bnot\b/.test(normalized) && !/\byes\b/.test(normalized)) return "no";
+    return "yes";
+  }
+  return null;
+}
+
+function getCandidatePolicyText(candidate: Phase1FieldCandidate): string {
+  const highSignal = candidate.signalsWithSource
+    .filter((item) => MILITARY_SIGNAL_SOURCES.has(item.source))
+    .map((item) => item.value);
+  const joined = [candidate.label, ...highSignal].join(" ");
+  return joined.replace(/\s+/g, " ").trim();
+}
+
+function findMilitaryNoSelectOption(select: HTMLSelectElement): HTMLOptionElement | null {
+  const options = Array.from(select.options).filter((option) => option.value || option.textContent?.trim());
+  const explicitNo = options.find((option) => normalizePhase1Value(option.value) === "no");
+  if (explicitNo) return explicitNo;
+  const explicitNoText = options.find((option) => normalizePhase1Value(option.textContent ?? "") === "no");
+  if (explicitNoText) return explicitNoText;
+  return (
+    options.find((option) => {
+      const text = normalizePhase1Value(`${option.textContent ?? ""} ${option.value ?? ""}`);
+      return toMilitaryChoiceToken(text) === "no";
+    }) ?? null
+  );
+}
+
+function fillMilitaryNoField(
+  element: Phase1FillableElement
+): { before: string; after: string; success: boolean; reason: string } {
+  const before =
+    element instanceof HTMLSelectElement ? element.value || element.selectedOptions[0]?.textContent?.trim() || "" : element.value ?? "";
+  if (element instanceof HTMLSelectElement) {
+    const option = findMilitaryNoSelectOption(element) ?? findSelectOption(element, "No");
+    if (!option) {
+      return { before, after: before, success: false, reason: "No deterministic military NO option found" };
+    }
+    element.focus();
+    element.value = option.value;
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+    element.dispatchEvent(new Event("blur", { bubbles: true }));
+    const after = element.value || element.selectedOptions[0]?.textContent?.trim() || "";
+    const verified = toMilitaryChoiceToken(after) === "no" || toMilitaryChoiceToken(option.textContent ?? "") === "no";
+    return { before, after, success: verified, reason: "Military policy applied with NO option" };
+  }
+
+  setTextLikeValue(element, "No");
+  const after = element.value ?? "";
+  return {
+    before,
+    after,
+    success: normalizePhase1Value(after) === "no",
+    reason: "Military policy applied as literal 'No'",
+  };
 }
 
 function getRadioFromLabel(label: HTMLLabelElement): HTMLInputElement | null {
@@ -856,14 +998,15 @@ function getBinarySelectionState(yesControl: Element | null, noControl: Element 
 
 function fillKnownBinaryQuestion(
   root: Document | ShadowRoot,
-  key: "work_authorization" | "sponsorship_needed",
+  key: "work_authorization" | "sponsorship_needed" | "military_status",
   pattern: RegExp,
   expectedChoice: BinaryChoiceValue | null
 ): Phase1FillResult | null {
+  const canonicalKey = key === "military_status" ? null : key;
   const baseResult: Omit<Phase1FillResult, "action" | "after" | "verified" | "reason"> = {
     selector: `__binary_${key}`,
     fieldType: "binary_choice",
-    canonicalKey: key,
+    canonicalKey,
     label: key,
     signals: [],
     before: "",
@@ -888,7 +1031,7 @@ function fillKnownBinaryQuestion(
       action: "skipped_no_profile_value",
       after: "",
       verified: false,
-      reason: `Profile has no deterministic ${key} value`,
+      reason: key === "military_status" ? "Military policy value unavailable" : `Profile has no deterministic ${key} value`,
     };
   }
 
@@ -942,7 +1085,7 @@ function fillKnownBinaryQuestion(
     return {
       selector: getElementSelector(target),
       fieldType: "binary_choice",
-      canonicalKey: key,
+      canonicalKey,
       label: questionText.slice(0, 200),
       signals: [questionText],
       action: verified ? "filled" : "failed_write",
@@ -950,7 +1093,11 @@ function fillKnownBinaryQuestion(
       attemptedValue: expectedChoice === "yes" ? "Yes" : "No",
       after,
       verified,
-      reason: verified ? `Clicked ${expectedChoice.toUpperCase()} option` : "Binary option click did not stick",
+      reason: verified
+        ? key === "military_status"
+          ? "Military policy: clicked NO option"
+          : `Clicked ${expectedChoice.toUpperCase()} option`
+        : "Binary option click did not stick",
     };
   }
 
@@ -985,16 +1132,51 @@ export function runPhase1Fill(
 ): Phase1RunResult {
   const candidates = scanPhase1Candidates(root);
   const results: Phase1FillResult[] = candidates.map((candidate) => {
-    const match = matchPhase1Field(candidate, profile);
     const baseResult: Omit<Phase1FillResult, "action" | "after" | "verified" | "reason"> = {
       selector: candidate.selector,
       fieldType: candidate.inputType,
-      canonicalKey: match.matchedKey,
+      canonicalKey: null,
       label: candidate.label,
       signals: candidate.signals,
       before: candidate.currentValue,
-      attemptedValue: match.profileValue,
+      attemptedValue: null,
     };
+
+    const militaryPolicyText = getCandidatePolicyText(candidate);
+    if (isMilitaryQuestionText(militaryPolicyText)) {
+      let element: Phase1FillableElement | null = null;
+      const found = queryElementBySelectorDeep(root, candidate.selector);
+      if (
+        found instanceof HTMLInputElement ||
+        found instanceof HTMLTextAreaElement ||
+        found instanceof HTMLSelectElement
+      ) {
+        element = found;
+      }
+      if (!element) {
+        return {
+          ...baseResult,
+          action: "failed_write",
+          after: candidate.currentValue,
+          verified: false,
+          attemptedValue: "No",
+          reason: "Military policy target element not found by selector",
+        };
+      }
+      const fillResult = fillMilitaryNoField(element);
+      return {
+        ...baseResult,
+        action: fillResult.success ? "filled" : "failed_write",
+        after: fillResult.after,
+        verified: fillResult.success,
+        attemptedValue: "No",
+        reason: fillResult.success ? "Military policy: always answer No" : fillResult.reason,
+      };
+    }
+
+    const match = matchPhase1Field(candidate, profile);
+    baseResult.canonicalKey = match.matchedKey;
+    baseResult.attemptedValue = match.profileValue;
 
     if (match.action !== "matched" || !match.matchedKey || !match.profileValue) {
       return {
@@ -1007,17 +1189,13 @@ export function runPhase1Fill(
     }
 
     let element: Phase1FillableElement | null = null;
-    try {
-      const found = root.querySelector(candidate.selector);
-      if (
-        found instanceof HTMLInputElement ||
-        found instanceof HTMLTextAreaElement ||
-        found instanceof HTMLSelectElement
-      ) {
-        element = found;
-      }
-    } catch {
-      element = null;
+    const found = queryElementBySelectorDeep(root, candidate.selector);
+    if (
+      found instanceof HTMLInputElement ||
+      found instanceof HTMLTextAreaElement ||
+      found instanceof HTMLSelectElement
+    ) {
+      element = found;
     }
 
     if (!element) {
@@ -1088,6 +1266,14 @@ export function runPhase1Fill(
     sponsorshipChoice
   );
   if (sponsorshipResult) results.push(sponsorshipResult);
+
+  const militaryResult = fillKnownBinaryQuestion(
+    root,
+    "military_status",
+    MILITARY_QUESTION_PATTERN,
+    "no"
+  );
+  if (militaryResult) results.push(militaryResult);
 
   return { candidates, results };
 }
@@ -1174,12 +1360,8 @@ function fillKnownRadioGroups(
     const firstSelector = group.options[0]?.selector;
     if (!firstSelector) continue;
     let firstEl: HTMLInputElement | null = null;
-    try {
-      const found = root.querySelector(firstSelector);
-      firstEl = found instanceof HTMLInputElement && found.type === "radio" ? found : null;
-    } catch {
-      firstEl = null;
-    }
+    const foundFirst = queryElementBySelectorDeep(root, firstSelector);
+    firstEl = foundFirst instanceof HTMLInputElement && foundFirst.type === "radio" ? foundFirst : null;
     if (!firstEl) continue;
 
     const groupText = `${group.name} ${findNearestQuestionText(firstEl)} ${group.options
@@ -1191,10 +1373,12 @@ function fillKnownRadioGroups(
       : SPONSORSHIP_QUESTION_PATTERN.test(groupText)
         ? "sponsorship_needed"
         : null;
+    const isMilitaryQuestion = isMilitaryQuestionText(groupText);
 
-    if (!key || handledBinaryKeys.has(key)) continue;
-    const expected = resolveBinaryChoiceForKey(key, profile);
-    const label = findNearestQuestionText(firstEl) || group.name || key;
+    if (!key && !isMilitaryQuestion) continue;
+    if (key && handledBinaryKeys.has(key)) continue;
+    const expected = isMilitaryQuestion ? "no" : resolveBinaryChoiceForKey(key!, profile);
+    const label = findNearestQuestionText(firstEl) || group.name || key || "military_status";
     const beforeOption = group.options.find((opt) => opt.checked);
     const before = beforeOption ? beforeOption.label : "";
 
@@ -1202,7 +1386,7 @@ function fillKnownRadioGroups(
       out.push({
         selector: firstSelector,
         fieldType: "radio",
-        canonicalKey: key,
+        canonicalKey: isMilitaryQuestion ? null : key,
         label,
         signals: [groupText],
         action: "skipped_no_profile_value",
@@ -1216,7 +1400,9 @@ function fillKnownRadioGroups(
     }
 
     const target = group.options.find((opt) => {
-      const token = toBinaryChoiceToken(`${opt.label} ${opt.value}`);
+      const token = isMilitaryQuestion
+        ? toMilitaryChoiceToken(`${opt.label} ${opt.value}`)
+        : toBinaryChoiceToken(`${opt.label} ${opt.value}`);
       return token === expected;
     });
 
@@ -1224,7 +1410,7 @@ function fillKnownRadioGroups(
       out.push({
         selector: firstSelector,
         fieldType: "radio",
-        canonicalKey: key,
+        canonicalKey: isMilitaryQuestion ? null : key,
         label,
         signals: [groupText],
         action: "skipped_unmatched",
@@ -1232,25 +1418,23 @@ function fillKnownRadioGroups(
         attemptedValue: expected === "yes" ? "Yes" : "No",
         after: before,
         verified: false,
-        reason: "No matching Yes/No option in radio group",
+        reason: isMilitaryQuestion
+          ? "No matching military NO option in radio group"
+          : "No matching Yes/No option in radio group",
       });
       continue;
     }
 
     let targetEl: HTMLInputElement | null = null;
-    try {
-      const found = root.querySelector(target.selector);
-      targetEl = found instanceof HTMLInputElement && found.type === "radio" ? found : null;
-    } catch {
-      targetEl = null;
-    }
+    const foundTarget = queryElementBySelectorDeep(root, target.selector);
+    targetEl = foundTarget instanceof HTMLInputElement && foundTarget.type === "radio" ? foundTarget : null;
     if (!targetEl) continue;
 
     if (targetEl.disabled) {
       out.push({
         selector: target.selector,
         fieldType: "radio",
-        canonicalKey: key,
+        canonicalKey: isMilitaryQuestion ? null : key,
         label,
         signals: [groupText],
         action: "skipped_unsupported_type",
@@ -1264,11 +1448,11 @@ function fillKnownRadioGroups(
     }
 
     if (targetEl.checked) {
-      handledBinaryKeys.add(key);
+      if (key) handledBinaryKeys.add(key);
       out.push({
         selector: target.selector,
         fieldType: "radio",
-        canonicalKey: key,
+        canonicalKey: isMilitaryQuestion ? null : key,
         label,
         signals: [groupText],
         action: "filled",
@@ -1276,7 +1460,7 @@ function fillKnownRadioGroups(
         attemptedValue: expected === "yes" ? "Yes" : "No",
         after: target.label,
         verified: true,
-        reason: "Correct option already selected",
+        reason: isMilitaryQuestion ? "Military policy: NO option already selected" : "Correct option already selected",
       });
       continue;
     }
@@ -1288,20 +1472,16 @@ function fillKnownRadioGroups(
     targetEl.dispatchEvent(new Event("change", { bubbles: true }));
 
     const verified = targetEl.checked;
-    if (verified) handledBinaryKeys.add(key);
+    if (verified && key) handledBinaryKeys.add(key);
     const afterOption = group.options.find((opt) => {
-      try {
-        const found = root.querySelector(opt.selector);
-        return found instanceof HTMLInputElement && found.type === "radio" && found.checked;
-      } catch {
-        return false;
-      }
+      const found = queryElementBySelectorDeep(root, opt.selector);
+      return found instanceof HTMLInputElement && found.type === "radio" && found.checked;
     });
 
     out.push({
       selector: target.selector,
       fieldType: "radio",
-      canonicalKey: key,
+      canonicalKey: isMilitaryQuestion ? null : key,
       label,
       signals: [groupText],
       action: verified ? "filled" : "failed_write",
@@ -1309,7 +1489,11 @@ function fillKnownRadioGroups(
       attemptedValue: expected === "yes" ? "Yes" : "No",
       after: afterOption?.label ?? "",
       verified,
-      reason: verified ? "Selected matched radio option" : "Radio click did not stick",
+      reason: verified
+        ? isMilitaryQuestion
+          ? "Military policy: selected NO option"
+          : "Selected matched radio option"
+        : "Radio click did not stick",
     });
   }
 
@@ -1330,12 +1514,8 @@ function fillKnownCheckboxes(
 
   for (const item of checkboxes) {
     let el: HTMLInputElement | null = null;
-    try {
-      const found = root.querySelector(item.selector);
-      el = found instanceof HTMLInputElement && found.type === "checkbox" ? found : null;
-    } catch {
-      el = null;
-    }
+    const found = queryElementBySelectorDeep(root, item.selector);
+    el = found instanceof HTMLInputElement && found.type === "checkbox" ? found : null;
     if (!el) continue;
 
     const context = `${item.label} ${findNearestQuestionText(el)}`.toLowerCase();
@@ -1344,6 +1524,7 @@ function fillKnownCheckboxes(
       : SPONSORSHIP_QUESTION_PATTERN.test(context)
         ? "sponsorship_needed"
         : null;
+    const isMilitaryQuestion = isMilitaryQuestionText(context);
 
     let targetChecked: boolean | null = null;
     let canonicalKey: Phase1CanonicalFieldKey | null = null;
@@ -1369,6 +1550,10 @@ function fillKnownCheckboxes(
       targetChecked = expected === "yes";
       canonicalKey = binaryKey;
       reason = "Matched known binary checkbox";
+    } else if (isMilitaryQuestion) {
+      targetChecked = toMilitaryChoiceToken(context) === "no";
+      canonicalKey = null;
+      reason = "Military policy checkbox";
     } else if (item.classification === "agreement") {
       targetChecked = true;
       canonicalKey = null;
@@ -1456,7 +1641,11 @@ function findDropdownOptionElements(): HTMLElement[] {
   return Array.from(deduped);
 }
 
-function findBestDropdownOption(options: HTMLElement[], value: string): HTMLElement | null {
+function findBestDropdownOption(
+  options: HTMLElement[],
+  value: string,
+  preferMilitaryNo = false
+): HTMLElement | null {
   const normalizedTarget = normalizePhase1Value(value);
   if (!normalizedTarget) return null;
 
@@ -1472,6 +1661,10 @@ function findBestDropdownOption(options: HTMLElement[], value: string): HTMLElem
       item.text.includes(normalizedTarget) || normalizedTarget.includes(item.text)
   );
   if (containing) return containing.opt;
+  if (preferMilitaryNo) {
+    const militaryNo = withText.find((item) => toMilitaryChoiceToken(item.text) === "no");
+    if (militaryNo) return militaryNo.opt;
+  }
   return null;
 }
 
@@ -1502,17 +1695,14 @@ async function fillCustomDropdowns(
 
   for (const item of dropdowns) {
     let trigger: HTMLElement | null = null;
-    try {
-      const found = root.querySelector(item.selector);
-      trigger = found instanceof HTMLElement ? found : null;
-    } catch {
-      trigger = null;
-    }
+    const found = queryElementBySelectorDeep(root, item.selector);
+    trigger = found instanceof HTMLElement ? found : null;
     if (!trigger) continue;
 
     const labelText = `${item.label} ${getElementTextForMatching(trigger)}`.toLowerCase();
-    const key = detectCanonicalKeyFromText(labelText);
-    if (!key) {
+    const militaryQuestion = isMilitaryQuestionText(labelText);
+    const key = militaryQuestion ? null : detectCanonicalKeyFromText(labelText);
+    if (!key && !militaryQuestion) {
       out.push({
         selector: item.selector,
         fieldType: "custom_dropdown",
@@ -1529,7 +1719,7 @@ async function fillCustomDropdowns(
       continue;
     }
 
-    const value = resolvePhase1ProfileValue(key, profile);
+    const value = militaryQuestion ? "No" : resolvePhase1ProfileValue(key!, profile);
     const before = getDropdownDisplayValue(trigger);
     if (!value || normalizePhase1Value(value).length === 0) {
       out.push({
@@ -1543,7 +1733,7 @@ async function fillCustomDropdowns(
         attemptedValue: null,
         after: before,
         verified: false,
-        reason: `Profile has no value for ${key}`,
+        reason: militaryQuestion ? "No deterministic military policy value" : `Profile has no value for ${key}`,
       });
       continue;
     }
@@ -1560,7 +1750,9 @@ async function fillCustomDropdowns(
         attemptedValue: value,
         after: before,
         verified: true,
-        reason: "Dropdown already matched profile value",
+        reason: militaryQuestion
+          ? "Military policy: dropdown already set to NO"
+          : "Dropdown already matched profile value",
       });
       continue;
     }
@@ -1570,7 +1762,7 @@ async function fillCustomDropdowns(
     let targetOption: HTMLElement | null = null;
     for (let attempt = 0; attempt < 6; attempt += 1) {
       const options = findDropdownOptionElements();
-      targetOption = findBestDropdownOption(options, value);
+      targetOption = findBestDropdownOption(options, value, militaryQuestion);
       if (targetOption) break;
       await sleep(120);
     }
@@ -1588,7 +1780,9 @@ async function fillCustomDropdowns(
         attemptedValue: value,
         after: getDropdownDisplayValue(trigger),
         verified: false,
-        reason: "No dropdown option matched target value",
+        reason: militaryQuestion
+          ? "No military NO option matched in dropdown"
+          : "No dropdown option matched target value",
       });
       continue;
     }
@@ -1612,7 +1806,11 @@ async function fillCustomDropdowns(
       attemptedValue: value,
       after,
       verified,
-      reason: verified ? "Selected matching dropdown option" : "Dropdown selection could not be verified",
+      reason: verified
+        ? militaryQuestion
+          ? "Military policy: selected NO dropdown option"
+          : "Selected matching dropdown option"
+        : "Dropdown selection could not be verified",
     });
   }
 
@@ -1812,7 +2010,9 @@ export function deepQueryAll(root: Document | ShadowRoot, selector: string): Ele
 
 export function scanRadioGroups(root: Document | ShadowRoot = document): ScannedRadioGroup[] {
   const radioGroupsMap = new Map<string, ScannedRadioOption[]>();
-  const radios = Array.from(root.querySelectorAll<HTMLInputElement>('input[type="radio"]')).filter((el) => isVisibleElement(el));
+  const radios = deepQueryAll(root, 'input[type="radio"]')
+    .filter((el): el is HTMLInputElement => el instanceof HTMLInputElement)
+    .filter((el) => isVisibleElement(el));
   radios.forEach((radio, idx) => {
     const key = radio.name?.trim() || `__unnamed_${idx}`;
     const current = radioGroupsMap.get(key) ?? [];
@@ -1831,7 +2031,8 @@ export function scanRadioGroups(root: Document | ShadowRoot = document): Scanned
 }
 
 export function scanCheckboxes(root: Document | ShadowRoot = document): ScannedCheckbox[] {
-  return Array.from(root.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
+  return deepQueryAll(root, 'input[type="checkbox"]')
+    .filter((el): el is HTMLInputElement => el instanceof HTMLInputElement)
     .filter((el) => isVisibleElement(el))
     .map((checkbox) => {
       const label = getInputChoiceLabel(checkbox);
@@ -1849,7 +2050,9 @@ export function scanCheckboxes(root: Document | ShadowRoot = document): ScannedC
 
 export function scanDropdowns(root: Document | ShadowRoot = document): ScannedDropdown[] {
   const deduped = new Map<string, ScannedDropdown>();
-  const candidates = Array.from(root.querySelectorAll<HTMLElement>(DROPDOWN_SELECTOR)).filter((el) => isVisibleElement(el));
+  const candidates = deepQueryAll(root, DROPDOWN_SELECTOR)
+    .filter((el): el is HTMLElement => el instanceof HTMLElement)
+    .filter((el) => isVisibleElement(el));
   candidates.forEach((el) => {
     const selector = getElementSelector(el);
     if (deduped.has(selector)) return;
