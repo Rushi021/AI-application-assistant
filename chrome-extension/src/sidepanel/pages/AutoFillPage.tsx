@@ -2,12 +2,13 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useAppStore } from "../store";
 import { deleteResume } from "../services/api";
 import { MSG, STORAGE_KEYS } from "@/shared/constants";
-import type { AutofillProgress, FileUploadBlockerDecision, FormBlocker, UserProfile } from "@/shared/types";
+import type { AutofillProgress, AutofillSession, FileUploadBlockerDecision, FormBlocker, UserProfile } from "@/shared/types";
 import type {
   Phase1FillResult,
   UnifiedAutofillRunResult,
   UploadDetectorRunResult,
 } from "@/shared/dom-control-engine";
+import WorkflowLayout from "../components/WorkflowLayout";
 
 const STATE_LABELS: Record<string, string> = {
   intake: "Reading form...",
@@ -86,6 +87,23 @@ function getPrimaryFrame<T extends { isTop: boolean }>(
   }, null);
 }
 
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    promise
+      .then((value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((err) => {
+        window.clearTimeout(timer);
+        reject(err);
+      });
+  });
+}
+
 export default function AutoFillPage() {
   const {
     autofillProgress,
@@ -118,6 +136,7 @@ export default function AutoFillPage() {
   const [autofillRunResults, setAutofillRunResults] = useState<Array<AutofillRunFrameResult>>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [profileFromStorage, setProfileFromStorage] = useState<UserProfile | null>(null);
+  const [sessionActive, setSessionActive] = useState(false);
   const previousProgressRef = useRef<AutofillProgress | null>(null);
   const handledUploadBlockerKeysRef = useRef<Set<string>>(new Set());
 
@@ -181,6 +200,22 @@ export default function AutoFillPage() {
   }, [setAutofillProgress]);
 
   useEffect(() => {
+    chrome.storage.session.get([STORAGE_KEYS.AUTOFILL_SESSION]).then((result) => {
+      const session = result[STORAGE_KEYS.AUTOFILL_SESSION] as AutofillSession | undefined;
+      setSessionActive(!!session?.active);
+    }).catch(() => setSessionActive(false));
+
+    const sessionListener = (changes: Record<string, chrome.storage.StorageChange>, areaName: string) => {
+      if (areaName === "session" && changes[STORAGE_KEYS.AUTOFILL_SESSION]) {
+        const newVal = changes[STORAGE_KEYS.AUTOFILL_SESSION].newValue as AutofillSession | undefined;
+        setSessionActive(!!newVal?.active);
+      }
+    };
+    chrome.storage.onChanged.addListener(sessionListener);
+    return () => chrome.storage.onChanged.removeListener(sessionListener);
+  }, []);
+
+  useEffect(() => {
     setShowUploadCompleteConfirm(false);
     setUploadedSameAsProfileResume(autofillContext.uploadedSameAsProfileResume);
   }, [autofillProgress?.activeBlocker?.selector, autofillContext.uploadedSameAsProfileResume]);
@@ -212,7 +247,7 @@ export default function AutoFillPage() {
   }, [setAutofillProgress]);
 
   useEffect(() => {
-    const listener = (message: { type: string; data?: AutofillProgress | { step?: string; detail?: string; level?: TimelineLevel; source?: string; frameId?: number } | { ok?: boolean; error?: string | null; ts?: number } }) => {
+    const listener = (message: { type: string; data?: AutofillProgress | { step?: string; detail?: string; level?: TimelineLevel; source?: string; frameId?: number; reason?: string } | { ok?: boolean; error?: string | null; ts?: number } }) => {
       if (message.type === MSG.AUTOFILL_PROGRESS) {
         const next = message.data as AutofillProgress;
         const prev = previousProgressRef.current;
@@ -243,8 +278,38 @@ export default function AutoFillPage() {
           );
           setStarted(false);
         }
+        if ((prev?.completed ?? false) && !next.completed) {
+          setStarted(true);
+        }
         previousProgressRef.current = next;
         setAutofillProgress(next);
+      } else if (message.type === MSG.AUTOFILL_SESSION_CANCEL) {
+        const reason = (message.data as { reason?: string } | undefined)?.reason;
+        if (reason === "success_page" || reason === "success_url") {
+          const prev = previousProgressRef.current;
+          const next: AutofillProgress = {
+            state: "complete",
+            total: prev?.total ?? 0,
+            filled: prev?.filled ?? 0,
+            manual: prev?.manual ?? 0,
+            skipped: prev?.skipped ?? 0,
+            currentField: null,
+            currentAction: null,
+            paused: false,
+            completed: true,
+            sessionComplete: true,
+            stepIndex: prev?.stepIndex ?? 0,
+            fields: prev?.fields ?? [],
+            activeBlocker: null,
+            validationErrors: prev?.validationErrors ?? [],
+            lastFilledField: prev?.lastFilledField ?? null,
+          };
+          previousProgressRef.current = next;
+          setAutofillProgress(next);
+          chrome.storage.local.set({ [STORAGE_KEYS.AUTOFILL_PROGRESS]: next }).catch(() => {});
+          setStarted(false);
+          appendTimeline("Success page detected — session completed");
+        }
       } else if (message.type === MSG.AUTOFILL_DIAG_TRACE) {
         const trace = message.data as { step?: string; detail?: string; level?: TimelineLevel; source?: string; frameId?: number } | undefined;
         if (trace) {
@@ -306,6 +371,18 @@ export default function AutoFillPage() {
 
   const handleDoneAndStartNewApplication = useCallback(async () => {
     setError(null);
+    chrome.runtime.sendMessage({ type: MSG.AUTOFILL_SESSION_CANCEL, data: { reason: "application_done" } }).catch(() => {});
+    if (autofillProgress) {
+      await persistAutofillProgress({
+        ...autofillProgress,
+        completed: true,
+        sessionComplete: true,
+        paused: false,
+        currentField: null,
+        currentAction: null,
+        activeBlocker: null,
+      });
+    }
     appendTimeline("Finalizing application tracking");
     const store = useAppStore.getState();
     let trackingError: string | null = null;
@@ -366,7 +443,7 @@ export default function AutoFillPage() {
     } else {
       appendTimeline("Workflow reset for next application");
     }
-  }, [appendTimeline, resetExecutionView, resetWorkflow, setPage]);
+  }, [appendTimeline, autofillProgress, persistAutofillProgress, resetExecutionView, resetWorkflow, setPage]);
 
   const runDirectAutofillFlow = useCallback(async () => {
     if (!effectiveProfile) {
@@ -374,29 +451,33 @@ export default function AutoFillPage() {
     }
 
     appendTimeline("Direct autofill flow started");
-    const { id: tabId } = await getActiveTab();
-    await ensureDomRuntime(tabId);
+    const { id: tabId } = await withTimeout(getActiveTab(), 5000, "Resolve active tab");
+    await withTimeout(ensureDomRuntime(tabId), 10000, "Inject DOM runtime");
 
     appendTimeline("Running full deterministic autofill pass");
-    const exec = await chrome.scripting.executeScript({
-      target: { tabId, allFrames: true },
-      args: [effectiveProfile],
-      func: async (rawProfile) => {
-        const engine = (window as Window & {
-          __AI_DOM_CONTROL_ENGINE__?: {
-            runUnifiedAutofill: (profile: UserProfile) => Promise<UnifiedAutofillRunResult>;
+    const exec = await withTimeout(
+      chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        args: [effectiveProfile],
+        func: async (rawProfile) => {
+          const engine = (window as Window & {
+            __AI_DOM_CONTROL_ENGINE__?: {
+              runUnifiedAutofill: (profile: UserProfile) => Promise<UnifiedAutofillRunResult>;
+            };
+          }).__AI_DOM_CONTROL_ENGINE__;
+          if (!engine) {
+            throw new Error("DOM runtime not available in page context");
+          }
+          return {
+            href: window.location.href,
+            isTop: window === window.top,
+            result: await engine.runUnifiedAutofill(rawProfile as UserProfile),
           };
-        }).__AI_DOM_CONTROL_ENGINE__;
-        if (!engine) {
-          throw new Error("DOM runtime not available in page context");
-        }
-        return {
-          href: window.location.href,
-          isTop: window === window.top,
-          result: await engine.runUnifiedAutofill(rawProfile as UserProfile),
-        };
-      },
-    });
+        },
+      }),
+      25000,
+      "Autofill execution"
+    );
 
     const frameResults = exec
       .map((row) => {
@@ -411,6 +492,9 @@ export default function AutoFillPage() {
       })
       .filter((row): row is AutofillRunFrameResult => row !== null)
       .sort((a, b) => Number(b.isTop) - Number(a.isTop));
+    if (frameResults.length === 0) {
+      throw new Error("No frame returned autofill results");
+    }
 
     setAutofillRunResults(frameResults);
     const primary = getPrimaryFrame(frameResults, (row) => {
@@ -425,22 +509,38 @@ export default function AutoFillPage() {
     const skipped = primary?.result.results.filter((item) => item.action.startsWith("skipped")).length ?? 0;
     appendTimeline(`Autofill pass finished: total=${total}, filled=${filled}, skipped=${skipped}, failed=${failed}`);
 
-    const detectorExec = await chrome.scripting.executeScript({
-      target: { tabId, allFrames: true },
-      func: () => {
-        const engine = (window as Window & {
-          __AI_DOM_CONTROL_ENGINE__?: { scanUploadDetectors: () => UploadDetectorRunResult };
-        }).__AI_DOM_CONTROL_ENGINE__;
-        if (!engine) {
-          throw new Error("DOM runtime not available in page context");
-        }
-        return {
-          href: window.location.href,
-          isTop: window === window.top,
-          result: engine.scanUploadDetectors(),
-        };
-      },
-    });
+    const filledCanonicalKeys = primary?.result.results
+      .filter((r) => r.action === "filled" && r.canonicalKey)
+      .map((r) => r.canonicalKey!) ?? [];
+    if (filledCanonicalKeys.length > 0) {
+      chrome.runtime
+        .sendMessage({
+          type: MSG.AUTOFILL_SESSION_UPDATE,
+          data: { newFilledFieldTypes: filledCanonicalKeys, filled, skipped },
+        })
+        .catch(() => {});
+    }
+
+    const detectorExec = await withTimeout(
+      chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        func: () => {
+          const engine = (window as Window & {
+            __AI_DOM_CONTROL_ENGINE__?: { scanUploadDetectors: () => UploadDetectorRunResult };
+          }).__AI_DOM_CONTROL_ENGINE__;
+          if (!engine) {
+            throw new Error("DOM runtime not available in page context");
+          }
+          return {
+            href: window.location.href,
+            isTop: window === window.top,
+            result: engine.scanUploadDetectors(),
+          };
+        },
+      }),
+      10000,
+      "Upload detector scan"
+    );
 
     const detectorFrames = detectorExec
       .map((row) => {
@@ -514,6 +614,7 @@ export default function AutoFillPage() {
         currentAction: null,
         paused: true,
         completed: false,
+        sessionComplete: false,
         stepIndex: 0,
         fields: [],
         activeBlocker: {
@@ -541,6 +642,7 @@ export default function AutoFillPage() {
         currentAction: null,
         paused: false,
         completed: true,
+        sessionComplete: false,
         stepIndex: 0,
         fields: [],
         activeBlocker: null,
@@ -560,6 +662,7 @@ export default function AutoFillPage() {
       currentAction: null,
       paused: false,
       completed: true,
+      sessionComplete: false,
       stepIndex: 0,
       fields: [],
       activeBlocker: null,
@@ -576,16 +679,44 @@ export default function AutoFillPage() {
     try {
       handledUploadBlockerKeysRef.current.clear();
       setStarted(true);
+
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab?.id) {
+        void withTimeout(
+          chrome.runtime.sendMessage({
+            type: MSG.AUTOFILL_SESSION_STARTED,
+            data: {
+              tabId: tab.id,
+              url: tab.url ?? "",
+              suppressWorkAndSkills: autofillContext.suppressWorkAndSkills,
+            },
+          }),
+          3000,
+          "Session creation handshake"
+        )
+          .then((resp) => {
+            if ((resp as { success?: boolean })?.success === false) {
+              appendTimeline("Session create failed, continuing one-page autofill", "warn");
+              return;
+            }
+            appendTimeline("Multi-page session created");
+          })
+          .catch(() => {
+            appendTimeline("Session create timed out, continuing one-page autofill", "warn");
+          });
+      }
+
       await runDirectAutofillFlow();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start auto-fill");
       appendTimeline(err instanceof Error ? err.message : "Failed to start auto-fill", "error");
       setStarted(false);
     }
-  }, [appendTimeline, resetExecutionView, runDirectAutofillFlow]);
+  }, [appendTimeline, autofillContext.suppressWorkAndSkills, resetExecutionView, runDirectAutofillFlow]);
 
   const handleStopAutofill = useCallback(() => {
     appendTimeline("Stop requested", "warn");
+    chrome.runtime.sendMessage({ type: MSG.AUTOFILL_SESSION_CANCEL, data: { reason: "user_stop" } }).catch(() => {});
     handledUploadBlockerKeysRef.current.clear();
     void persistAutofillProgress({
       state: "stopped",
@@ -597,6 +728,7 @@ export default function AutoFillPage() {
       currentAction: null,
       paused: false,
       completed: true,
+      sessionComplete: true,
       stepIndex: autofillProgress?.stepIndex ?? 0,
       fields: autofillProgress?.fields ?? [],
       activeBlocker: null,
@@ -643,6 +775,7 @@ export default function AutoFillPage() {
         currentAction: null,
         paused: false,
         completed: false,
+        sessionComplete: false,
         stepIndex: autofillProgress?.stepIndex ?? 0,
         fields: autofillProgress?.fields ?? [],
         activeBlocker: null,
@@ -694,6 +827,7 @@ export default function AutoFillPage() {
 
   const progress = autofillProgress;
   const isComplete = progress?.completed ?? false;
+  const isSessionComplete = progress?.sessionComplete === true;
   const isPaused = progress?.paused ?? false;
   const state = progress?.state ?? "intake";
   const activeBlocker = progress?.activeBlocker ?? null;
@@ -715,26 +849,19 @@ export default function AutoFillPage() {
   );
 
   return (
-    <div className="flex flex-col h-screen">
-      {/* Header */}
-      <div className="px-4 pt-4 pb-2">
-        <div className="flex justify-between items-center">
-          <h1 className="text-lg font-bold text-gray-900">Auto-Fill Application</h1>
-          <span className="text-xs text-gray-400 font-medium">Step 5/5</span>
-        </div>
-        <p className="text-xs text-gray-500 mt-1">
-          Auto-fill the job application form using your profile data.
-        </p>
-      </div>
-
+    <WorkflowLayout
+      title="Auto-fill application"
+      subtitle="Run on the employer's application page using your profile and saved materials."
+    >
+      <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
       {/* Summary */}
-      <div className="px-4 py-2 space-y-2">
-        <div className="bg-gray-50 rounded-lg p-3 space-y-1">
+      <div className="px-4 py-2 space-y-2 shrink-0">
+        <div className="bg-wf-surface border border-wf-border rounded-xl p-3 space-y-1">
           <div className="flex items-center gap-2">
             <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <span className="text-xs text-gray-700">
+            <span className="text-xs text-wf-text">
               Resume: {isDirectMode ? (autofillContext.considerResume ? "Considered" : "Not considered") : draft ? "Ready" : "Not set"}
             </span>
           </div>
@@ -742,12 +869,12 @@ export default function AutoFillPage() {
             <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
             </svg>
-            <span className="text-xs text-gray-700">
+            <span className="text-xs text-wf-text">
               Cover Letter: {isDirectMode ? "Not generated (no job description)" : coverLetter ? "Ready" : "Not set"}
             </span>
           </div>
           {isDirectMode && !autofillContext.hasStoredResume && (
-            <p className="text-xs text-amber-700">
+            <p className="text-xs text-amber-400/90">
               No resume uploaded, please upload it on the application form.
             </p>
           )}
@@ -755,25 +882,23 @@ export default function AutoFillPage() {
       </div>
 
       {/* Progress */}
-      <div className="flex-1 px-4 py-2 overflow-auto">
+      <div className="flex-1 px-4 py-2 overflow-auto min-h-0">
         {!started && !progress && (
           <div className="text-center py-8">
-            <div className="w-16 h-16 mx-auto mb-4 bg-primary-100 rounded-full flex items-center justify-center">
-              <svg className="w-8 h-8 text-primary-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-              </svg>
+            <div className="w-16 h-16 mx-auto mb-4 bg-[#1c1208] border-2 border-primary-900/50 rounded-full flex items-center justify-center text-2xl" aria-hidden>
+              ⚡
             </div>
-            <p className="text-sm font-medium text-gray-900">Ready to auto-fill</p>
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-sm font-medium text-wf-text">Ready to auto-fill</p>
+            <p className="text-xs text-wf-muted mt-1">
               Make sure you&apos;re on the job application page,<br />then click the button below.
             </p>
             {canRunAutofill && !hasCompleteProfile && (
-              <p className="text-xs text-amber-600 mt-2">
+              <p className="text-xs text-amber-400/90 mt-2">
                 Profile is partially complete. Auto-fill can run, but completion quality may be lower.
               </p>
             )}
             {!canRunAutofill && (
-              <p className="text-xs text-amber-600 mt-2">
+              <p className="text-xs text-amber-400/90 mt-2">
                 Sign in and load your profile before starting auto-fill.
               </p>
             )}
@@ -783,19 +908,19 @@ export default function AutoFillPage() {
         {progress && (
           <div className="space-y-4">
             {/* State indicator */}
-            <div className="text-xs font-medium text-gray-600">
+            <div className="text-xs font-medium text-wf-muted">
               {STATE_LABELS[state] ?? state}
             </div>
 
             {/* Progress bar */}
             <div>
-              <div className="flex justify-between text-xs text-gray-500 mb-1">
+              <div className="flex justify-between text-xs text-wf-muted mb-1">
                 <span>Progress</span>
                 <span>
                   {progress.filled + progress.manual + progress.skipped}/{progress.total > 0 ? progress.total : "—"}
                 </span>
               </div>
-              <div className="w-full h-2 bg-gray-200 rounded-full overflow-hidden">
+              <div className="w-full h-2 bg-wf-border rounded-full overflow-hidden">
                 <div
                   className={`h-full rounded-full transition-all ${
                     isComplete ? "bg-green-500" : isPaused ? "bg-yellow-500" : "bg-primary-500"
@@ -813,63 +938,68 @@ export default function AutoFillPage() {
 
             {/* Active blocker */}
             {activeBlocker && (
-              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+              <div className="bg-amber-950/35 border border-amber-900/50 rounded-xl p-3">
                 <div className="flex items-center gap-2">
-                  <svg className="w-4 h-4 text-amber-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-4 h-4 text-amber-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
                   </svg>
-                  <span className="text-xs font-medium text-amber-800">
+                  <span className="text-xs font-medium text-amber-200">
                     {activeBlocker.type === "file_upload" ? getUploadHeading(activeBlocker) : getBlockerMessage(activeBlocker)}
                   </span>
                 </div>
-                <p className="text-xs text-amber-700 mt-1">{getBlockerMessage(activeBlocker)}</p>
+                <p className="text-xs text-amber-200/90 mt-1">{getBlockerMessage(activeBlocker)}</p>
                 {activeBlocker.type === "file_upload" ? (
                   <div className="mt-3 space-y-2">
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <button
+                        type="button"
                         onClick={() => setShowUploadCompleteConfirm(true)}
-                        className="px-3 py-1.5 text-xs font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
+                        className="px-3 py-1.5 text-xs font-semibold text-white bg-primary-500 rounded-lg hover:bg-primary-600 transition-colors"
                       >
-                        Upload Completed
+                        Upload completed
                       </button>
                       <button
+                        type="button"
                         onClick={handleMoveWithoutUpload}
-                        className="px-3 py-1.5 text-xs font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                        className="px-3 py-1.5 text-xs font-medium text-wf-text border border-wf-border rounded-lg hover:bg-wf-surfaceHover transition-colors"
                       >
-                        Move Without Upload
+                        Move without upload
                       </button>
                       {activeBlocker.subType === "cover_letter" && (
                         <button
+                          type="button"
                           onClick={handleGenerateCoverLetterForBlocker}
-                          className="px-3 py-1.5 text-xs font-medium text-primary-700 border border-primary-300 rounded-lg hover:bg-primary-50 transition-colors"
+                          className="px-3 py-1.5 text-xs font-medium text-primary-400 border border-primary-800/50 rounded-lg hover:bg-primary-950/40 transition-colors"
                         >
-                          Generate Cover Letter
+                          Generate cover letter
                         </button>
                       )}
                     </div>
                     {showUploadCompleteConfirm && (
-                      <div className="rounded-lg border border-amber-200 bg-white p-2 space-y-2">
+                      <div className="rounded-lg border border-wf-border bg-wf-surface p-2 space-y-2">
                         {activeBlocker.subType === "resume" && (
-                          <label className="flex items-center gap-2 text-xs text-gray-700">
+                          <label className="flex items-center gap-2 text-xs text-wf-text">
                             <input
                               type="checkbox"
                               checked={uploadedSameAsProfileResume}
                               onChange={(e) => setUploadedSameAsProfileResume(e.target.checked)}
-                              className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                              className="rounded border-wf-border bg-wf-bg text-primary-500 focus:ring-primary-500/40"
                             />
                             I uploaded the same resume as my profile resume
                           </label>
                         )}
                         <div className="flex gap-2">
                           <button
+                            type="button"
                             onClick={handleConfirmUploadCompleted}
-                            className="px-3 py-1.5 text-xs font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
+                            className="px-3 py-1.5 text-xs font-semibold text-white bg-primary-500 rounded-lg hover:bg-primary-600 transition-colors"
                           >
                             Continue
                           </button>
                           <button
+                            type="button"
                             onClick={() => setShowUploadCompleteConfirm(false)}
-                            className="px-3 py-1.5 text-xs font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                            className="px-3 py-1.5 text-xs font-medium text-wf-text border border-wf-border rounded-lg hover:bg-wf-surfaceHover transition-colors"
                           >
                             Cancel
                           </button>
@@ -878,7 +1008,7 @@ export default function AutoFillPage() {
                     )}
                   </div>
                 ) : (
-                  <p className="text-xs text-amber-700 mt-1">
+                  <p className="text-xs text-amber-200/80 mt-1">
                     Complete the action on the application page, then continue in the overlay.
                   </p>
                 )}
@@ -887,14 +1017,14 @@ export default function AutoFillPage() {
 
             {/* Validation errors */}
             {validationErrors.length > 0 && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+              <div className="bg-red-950/40 border border-red-900/50 rounded-xl p-3">
                 <div className="flex items-center gap-2">
-                  <svg className="w-4 h-4 text-red-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-4 h-4 text-red-400 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  <span className="text-xs font-medium text-red-800">Validation errors</span>
+                  <span className="text-xs font-medium text-red-200">Validation errors</span>
                 </div>
-                <div className="text-xs text-red-700 mt-1 space-y-1">
+                <div className="text-xs text-red-200/90 mt-1 space-y-1">
                   {validationErrors.map((err, i) => (
                     <p key={i}>
                       {err.fieldLabel || err.fieldSelector ? (
@@ -910,66 +1040,119 @@ export default function AutoFillPage() {
 
             {/* Pre-fill preview */}
             {state === "preview" && progress.previewSummary && (
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                <p className="text-xs font-medium text-blue-800">
+              <div className="bg-blue-950/40 border border-blue-900/50 rounded-xl p-3">
+                <p className="text-xs font-medium text-blue-200">
                   Found {progress.previewSummary.total} fields. Will fill: {progress.previewSummary.willFill.slice(0, 6).join(", ")}
                   {progress.previewSummary.willFill.length > 6 ? "…" : ""}
                 </p>
-                <p className="text-xs text-blue-700 mt-1">
-                  Unknown: {progress.previewSummary.unknownCount} fields. Click &quot;Fill All&quot; to proceed.
+                <p className="text-xs text-blue-200/80 mt-1">
+                  Unknown: {progress.previewSummary.unknownCount} fields. Click Fill all to proceed.
                 </p>
               </div>
             )}
 
             {/* Paused - field manual */}
             {isPaused && !activeBlocker && state !== "preview" && (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+              <div className="bg-yellow-950/30 border border-yellow-900/40 rounded-xl p-3">
                 <div className="flex items-center gap-2">
-                  <svg className="w-4 h-4 text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg className="w-4 h-4 text-yellow-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L3.732 16.5c-.77.833.192 2.5 1.732 2.5z" />
                   </svg>
-                  <span className="text-xs font-medium text-yellow-800">Paused — Check the application page</span>
+                  <span className="text-xs font-medium text-yellow-200">Paused — check the application page</span>
                 </div>
-                <p className="text-xs text-yellow-700 mt-1">
-                  A field needs your attention. Fill it manually and check the box to continue.
+                <p className="text-xs text-yellow-200/80 mt-1">
+                  A field needs your attention. Fill it manually and use the page overlay to continue.
                 </p>
               </div>
             )}
 
             {/* Complete */}
             {isComplete && (
-              <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+              <div
+                className={`border rounded-xl p-3 ${
+                  !isSessionComplete && sessionActive
+                    ? "bg-blue-950/35 border-blue-900/50"
+                    : "bg-wf-tagGreen border-green-800/50"
+                }`}
+              >
                 <div className="flex items-center gap-2">
-                  <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  <span className="text-xs font-medium text-green-800">Auto-fill complete!</span>
+                  {!isSessionComplete && sessionActive ? (
+                    <>
+                      <span className="relative flex h-2 w-2">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
+                      </span>
+                      <span className="text-xs font-medium text-blue-200">Page complete — watching for next page</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      <span className="text-xs font-medium text-green-300">Auto-fill complete</span>
+                    </>
+                  )}
                 </div>
+                {!isSessionComplete && sessionActive && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <p className="text-xs text-blue-200/90 flex-1">
+                      Navigate to the next page and auto-fill will continue automatically.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        chrome.runtime.sendMessage({ type: MSG.AUTOFILL_SESSION_CANCEL, data: { reason: "user_cancel_panel" } }).catch(() => {});
+                        await persistAutofillProgress({
+                          state: "stopped",
+                          total: progress?.total ?? 0,
+                          filled: progress?.filled ?? 0,
+                          manual: progress?.manual ?? 0,
+                          skipped: progress?.skipped ?? 0,
+                          currentField: null,
+                          currentAction: null,
+                          paused: false,
+                          completed: true,
+                          sessionComplete: true,
+                          stepIndex: progress?.stepIndex ?? 0,
+                          fields: progress?.fields ?? [],
+                          activeBlocker: null,
+                          validationErrors: progress?.validationErrors ?? [],
+                          lastFilledField: progress?.lastFilledField ?? null,
+                        });
+                        setStarted(false);
+                        appendTimeline("Multi-page session cancelled", "warn");
+                      }}
+                      className="px-2 py-1 text-[10px] font-medium text-red-400 border border-red-900/50 rounded-lg hover:bg-red-950/40 whitespace-nowrap"
+                    >
+                      End session
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
             {/* Stats */}
             <div className="grid grid-cols-3 gap-2">
-              <StatCard label="Filled" value={progress.filled} color="text-green-600" bg="bg-green-50" />
-              <StatCard label="Manual" value={progress.manual} color="text-yellow-600" bg="bg-yellow-50" />
-              <StatCard label="Skipped" value={progress.skipped} color="text-gray-600" bg="bg-gray-50" />
+              <StatCard label="Filled" value={progress.filled} color="text-green-400" bg="bg-wf-tagGreen" />
+              <StatCard label="Manual" value={progress.manual} color="text-amber-400" bg="bg-amber-950/30" />
+              <StatCard label="Skipped" value={progress.skipped} color="text-wf-muted" bg="bg-wf-surface" />
             </div>
 
             {/* Current field / action */}
             {progress.currentField && !isPaused && (
-              <p className="text-xs text-gray-500">
-                Filling: <span className="font-medium">{progress.currentField}</span>
+              <p className="text-xs text-wf-muted">
+                Filling: <span className="font-medium text-wf-text">{progress.currentField}</span>
               </p>
             )}
             {progress.currentAction && !isPaused && (
-              <p className="text-xs text-gray-500">
-                Action: <span className="font-medium">{progress.currentAction}</span>
+              <p className="text-xs text-wf-muted">
+                Action: <span className="font-medium text-wf-text">{progress.currentAction}</span>
               </p>
             )}
 
             {/* Last filled (for undo hint) */}
             {lastFilledField && !isComplete && (
-              <p className="text-xs text-gray-500">
+              <p className="text-xs text-wf-muted">
                 Last filled: {lastFilledField.label} — use overlay to undo if needed
               </p>
             )}
@@ -977,9 +1160,9 @@ export default function AutoFillPage() {
         )}
 
         {uploadDetectorResults.length > 0 && primaryUploadDetectorResult && (
-          <div className="mt-4 bg-gray-50 border border-gray-200 rounded-lg p-3">
-            <p className="text-xs font-semibold text-gray-700 mb-2">Upload Detector Results</p>
-            <div className="space-y-2 text-xs text-gray-700">
+          <div className="mt-4 bg-wf-surface border border-wf-border rounded-xl p-3">
+            <p className="text-xs font-semibold text-wf-text mb-2">Upload detector (debug)</p>
+            <div className="space-y-2 text-xs text-wf-muted">
               <div key={`${primaryUploadDetectorResult.frameId}-${primaryUploadDetectorResult.href}`}>
                 <p>
                   <span className="font-semibold text-indigo-700">
@@ -990,19 +1173,19 @@ export default function AutoFillPage() {
               </div>
 
               {primaryUploadDetectorResult.result.visibleFileInputs.slice(0, 5).map((item, idx) => (
-                <p key={`ud-visible-${idx}`} className="text-gray-600">
+                <p key={`ud-visible-${idx}`} className="text-wf-muted">
                   VISIBLE_FILE `{item.label}` selector=`{item.selector}` accept=`{item.accept ?? ""}` hasFiles={String(item.hasFiles)}
                 </p>
               ))}
 
               {primaryUploadDetectorResult.result.hiddenFileInputs.slice(0, 5).map((item, idx) => (
-                <p key={`ud-hidden-${idx}`} className="text-gray-600">
+                <p key={`ud-hidden-${idx}`} className="text-wf-muted">
                   HIDDEN_FILE `{item.label}` selector=`{item.selector}` accept=`{item.accept ?? ""}` signals={item.signals.slice(0, 3).join(" | ")}
                 </p>
               ))}
 
               {primaryUploadDetectorResult.result.visibleUploadTriggers.slice(0, 6).map((item, idx) => (
-                <p key={`ud-trigger-${idx}`} className="text-gray-600">
+                <p key={`ud-trigger-${idx}`} className="text-wf-muted">
                   TRIGGER [{item.tag}] `{item.text}` selector=`{item.selector}`
                 </p>
               ))}
@@ -1021,9 +1204,9 @@ export default function AutoFillPage() {
         )}
 
         {autofillRunResults.length > 0 && primaryAutofillResult && (
-          <div className="mt-4 bg-gray-50 border border-gray-200 rounded-lg p-3">
-            <p className="text-xs font-semibold text-gray-700 mb-2">Autofill Results</p>
-            <div className="space-y-2 text-xs text-gray-700">
+          <div className="mt-4 bg-wf-surface border border-wf-border rounded-xl p-3">
+            <p className="text-xs font-semibold text-wf-text mb-2">Autofill results (debug)</p>
+            <div className="space-y-2 text-xs text-wf-muted">
               <div>
                 <p>
                   <span className="font-semibold text-primary-700">
@@ -1031,7 +1214,7 @@ export default function AutoFillPage() {
                   </span>
                   {`: candidates=${primaryAutofillResult.result.candidates.length}, results=${primaryAutofillResult.result.results.length}`}
                 </p>
-                <p className="text-xs text-gray-500">
+                <p className="text-xs text-wf-dim">
                   summary: filled={primaryAutofillResult.result.results.filter((item) => item.action === "filled").length}, skipped={primaryAutofillResult.result.results.filter((item) => item.action.startsWith("skipped")).length}, failed={primaryAutofillResult.result.results.filter((item) => item.action === "failed_write" || item.action === "failed_verify").length}
                 </p>
               </div>
@@ -1054,12 +1237,12 @@ export default function AutoFillPage() {
         )}
 
         {timeline.length > 0 && (
-          <div className="mt-4 bg-gray-50 border border-gray-200 rounded-lg p-3">
-            <p className="text-xs font-semibold text-gray-700 mb-2">Execution Timeline</p>
+          <div className="mt-4 bg-wf-surface border border-wf-border rounded-xl p-3">
+            <p className="text-xs font-semibold text-wf-text mb-2">Execution timeline</p>
             <div className="space-y-1">
               {timeline.map((evt, idx) => (
-                <p key={`${evt.ts}-${idx}`} className="text-xs text-gray-700">
-                  <span className="text-gray-400">[{formatTimelineTime(evt.ts)}]</span>{" "}
+                <p key={`${evt.ts}-${idx}`} className="text-xs text-wf-muted">
+                  <span className="text-wf-dim">[{formatTimelineTime(evt.ts)}]</span>{" "}
                   <span
                     className={
                       evt.level === "error"
@@ -1080,28 +1263,77 @@ export default function AutoFillPage() {
       </div>
 
       {/* Footer */}
-      <div className="px-4 py-3 border-t bg-white space-y-2">
-        {error && <p className="text-xs text-red-600">{error}</p>}
+      <div className="px-4 py-3 border-t border-wf-border bg-wf-bg space-y-2 shrink-0">
+        {error && <p className="text-xs text-red-400">{error}</p>}
         <div className="flex gap-2">
           <button
+            type="button"
             onClick={() => setPage(isDirectMode ? "job-description" : "cover-letter")}
-            className="px-4 py-2 text-sm text-gray-600 border rounded-lg hover:bg-gray-50"
+            className="px-4 py-2.5 text-sm font-medium text-wf-text border border-wf-border rounded-[10px] hover:bg-wf-surfaceHover shrink-0"
           >
-            Back
+            ← Back
           </button>
-          {!isComplete ? (
+          {isSessionComplete ? (
+            <button
+              type="button"
+              onClick={handleDoneAndStartNewApplication}
+              className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-green-600 rounded-[10px] hover:bg-green-700 transition-colors"
+            >
+              Done — track application ✓
+            </button>
+          ) : isComplete && sessionActive ? (
+            <>
+              <button
+                type="button"
+                onClick={async () => {
+                  chrome.runtime.sendMessage({ type: MSG.AUTOFILL_SESSION_CANCEL, data: { reason: "user_cancel_panel" } }).catch(() => {});
+                  await persistAutofillProgress({
+                    state: "stopped",
+                    total: progress?.total ?? 0,
+                    filled: progress?.filled ?? 0,
+                    manual: progress?.manual ?? 0,
+                    skipped: progress?.skipped ?? 0,
+                    currentField: null,
+                    currentAction: null,
+                    paused: false,
+                    completed: true,
+                    sessionComplete: true,
+                    stepIndex: progress?.stepIndex ?? 0,
+                    fields: progress?.fields ?? [],
+                    activeBlocker: null,
+                    validationErrors: progress?.validationErrors ?? [],
+                    lastFilledField: progress?.lastFilledField ?? null,
+                  });
+                  setStarted(false);
+                  appendTimeline("Multi-page session cancelled", "warn");
+                }}
+                className="px-4 py-2.5 text-sm text-red-400 border border-red-900/50 rounded-[10px] hover:bg-red-950/40"
+              >
+                End session
+              </button>
+              <button
+                type="button"
+                disabled
+                className="flex-1 px-4 py-2.5 text-sm font-medium text-wf-dim bg-wf-surface border border-wf-border rounded-[10px] cursor-not-allowed"
+              >
+                Waiting for next step…
+              </button>
+            </>
+          ) : (
             <>
               {started && (
                 <>
                   <button
+                    type="button"
                     onClick={handleUndoAll}
-                    className="px-4 py-2 text-sm text-amber-600 border border-amber-300 rounded-lg hover:bg-amber-50"
+                    className="px-4 py-2.5 text-sm text-amber-400 border border-amber-900/40 rounded-[10px] hover:bg-amber-950/30"
                   >
-                    Undo All
+                    Undo all
                   </button>
                   <button
+                    type="button"
                     onClick={handleStopAutofill}
-                    className="px-4 py-2 text-sm text-red-600 border border-red-300 rounded-lg hover:bg-red-50"
+                    className="px-4 py-2.5 text-sm text-red-400 border border-red-900/50 rounded-[10px] hover:bg-red-950/40"
                   >
                     Stop
                   </button>
@@ -1109,31 +1341,28 @@ export default function AutoFillPage() {
               )}
               {state === "preview" && isPaused ? (
                 <button
+                  type="button"
                   onClick={handleFillAll}
-                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
+                  className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-primary-500 rounded-[10px] hover:bg-primary-600 transition-colors"
                 >
-                  Fill All
+                  Fill all
                 </button>
               ) : (
                 <button
+                  type="button"
                   onClick={handleStartAutofill}
                   disabled={(!canRunAutofill) || (started && !isComplete)}
-                  className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
+                  className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-primary-500 rounded-[10px] hover:bg-primary-600 disabled:opacity-50 transition-colors"
                 >
-                  {started ? (isPaused ? "Waiting..." : "Filling...") : "Start Auto-Fill"}
+                  {started ? (isPaused ? "Waiting…" : "Filling…") : "Start auto-fill ⚡"}
                 </button>
               )}
             </>
-          ) : (            <button
-              onClick={handleDoneAndStartNewApplication}
-              className="flex-1 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
-            >
-              Done — Start New Application
-            </button>
           )}
         </div>
       </div>
     </div>
+    </WorkflowLayout>
   );
 }
 
@@ -1149,9 +1378,9 @@ function StatCard({
   bg: string;
 }) {
   return (
-    <div className={`${bg} rounded-lg p-2 text-center`}>
+    <div className={`${bg} border border-wf-border/80 rounded-lg p-2 text-center`}>
       <p className={`text-lg font-bold ${color}`}>{value}</p>
-      <p className="text-[10px] text-gray-500">{label}</p>
+      <p className="text-[10px] text-wf-muted">{label}</p>
     </div>
   );
 }

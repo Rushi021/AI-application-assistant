@@ -24,21 +24,19 @@ export default function ChatInterface({
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Load chat history on mount
   useEffect(() => {
     (async () => {
       try {
         const history = await getSectionHistory(draftId, sectionId);
         setMessages(history);
       } catch {
-        // Ignore - fresh chat
+        // fresh chat
       } finally {
         setHistoryLoaded(true);
       }
     })();
   }, [draftId, sectionId]);
 
-  // Auto-scroll to bottom
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
@@ -52,12 +50,9 @@ export default function ChatInterface({
 
     try {
       const result = await chatSection(draftId, sectionId, userMsg);
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant", content: result.proposed_text },
-      ]);
+      setMessages((prev) => [...prev, { role: "assistant", content: result.proposed_text }]);
       onProposedText(result.proposed_text);
-    } catch (err) {
+    } catch {
       setMessages((prev) => [
         ...prev,
         { role: "assistant", content: "Error: Failed to get response. Please try again." },
@@ -70,51 +65,48 @@ export default function ChatInterface({
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      void handleSend();
     }
   };
 
   return (
-    <div className="flex flex-col h-full bg-gray-50 border-l">
-      {/* Chat header */}
-      <div className="px-3 py-2 border-b bg-white flex items-center justify-between">
+    <div className="flex flex-col h-full bg-wf-bg border-l border-wf-border">
+      <div className="px-3 py-2.5 border-b border-wf-border bg-wf-surface flex items-center justify-between shrink-0">
         <div className="min-w-0">
-          <p className="text-xs font-semibold text-gray-900 truncate">Chat: {sectionTitle}</p>
-          <p className="text-[10px] text-gray-500">Ask the AI to refine this section</p>
+          <p className="text-xs font-semibold text-wf-text truncate">Refine: {sectionTitle}</p>
+          <p className="text-[10px] text-wf-muted">Ask the AI to adjust this section</p>
         </div>
-        <button onClick={onClose} className="p-1 hover:bg-gray-100 rounded">
-          <svg className="w-4 h-4 text-gray-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <button
+          type="button"
+          onClick={onClose}
+          className="p-1.5 hover:bg-wf-surfaceHover rounded-lg text-wf-muted hover:text-wf-text"
+          aria-label="Close chat"
+        >
+          <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
       </div>
 
-      {/* Messages */}
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-2 space-y-2">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-3 py-2 space-y-2 min-h-0">
         {!historyLoaded ? (
           <div className="flex justify-center py-4">
-            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary-600" />
+            <div className="animate-spin rounded-full h-5 w-5 border-2 border-wf-border border-t-primary-500" />
           </div>
         ) : messages.length === 0 ? (
-          <p className="text-xs text-gray-400 text-center py-4">
-            Send a message to start refining this section.
-          </p>
+          <p className="text-xs text-wf-muted text-center py-4">Send a message to refine this section.</p>
         ) : (
           messages.map((msg, i) => (
             <div
               key={i}
               className={`rounded-lg px-3 py-2 text-xs leading-relaxed max-w-[90%] ${
                 msg.role === "user"
-                  ? "bg-primary-600 text-white ml-auto"
-                  : "bg-white border text-gray-800"
+                  ? "bg-primary-500 text-white ml-auto"
+                  : "bg-wf-surface border border-wf-border text-wf-text"
               }`}
             >
               {msg.role === "assistant" ? (
-                <SectionContentBlock
-                  text={msg.content}
-                  headerLabel="Header"
-                  contentLabel="Content"
-                />
+                <SectionContentBlock text={msg.content} headerLabel="Header" contentLabel="Content" />
               ) : (
                 <pre className="whitespace-pre-wrap font-sans">{msg.content}</pre>
               )}
@@ -122,36 +114,49 @@ export default function ChatInterface({
           ))
         )}
         {loading && (
-          <div className="bg-white border rounded-lg px-3 py-2 max-w-[90%]">
+          <div className="bg-wf-surface border border-wf-border rounded-lg px-3 py-2 max-w-[90%]">
             <div className="flex gap-1">
-              <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" />
-              <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0.1s]" />
-              <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce [animation-delay:0.2s]" />
+              <span className="w-1.5 h-1.5 bg-wf-muted rounded-full animate-bounce" />
+              <span className="w-1.5 h-1.5 bg-wf-muted rounded-full animate-bounce [animation-delay:0.1s]" />
+              <span className="w-1.5 h-1.5 bg-wf-muted rounded-full animate-bounce [animation-delay:0.2s]" />
             </div>
           </div>
         )}
       </div>
 
-      {/* Input */}
-      <div className="px-3 py-2 border-t bg-white">
+      <div className="px-3 py-2 border-t border-wf-border bg-wf-surface shrink-0">
         <div className="flex gap-2">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="e.g. Make the bullet points more quantitative..."
+            placeholder="e.g. Add metrics, match JD keywords…"
             rows={2}
-            className="flex-1 rounded-lg border border-gray-300 px-2 py-1.5 text-xs resize-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
+            className="flex-1 rounded-[10px] border border-wf-border bg-wf-bg px-2.5 py-2 text-xs text-wf-text placeholder:text-wf-dim resize-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/30 outline-none"
           />
           <button
-            onClick={handleSend}
+            type="button"
+            onClick={() => void handleSend()}
             disabled={!input.trim() || loading}
-            className="self-end p-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
+            className="self-end p-2.5 bg-primary-500 text-white rounded-[10px] hover:bg-primary-600 disabled:opacity-50 transition-colors shrink-0"
+            aria-label="Send"
           >
             <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
             </svg>
           </button>
+        </div>
+        <div className="flex flex-wrap gap-1.5 mt-2">
+          {["More concise", "Add metrics", "Match JD keywords"].map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setInput(s)}
+              className="text-[10px] text-wf-muted bg-wf-bg border border-wf-border px-2 py-1 rounded-md hover:border-wf-borderBright"
+            >
+              {s}
+            </button>
+          ))}
         </div>
       </div>
     </div>

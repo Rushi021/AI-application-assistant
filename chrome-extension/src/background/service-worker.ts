@@ -4,6 +4,7 @@
  */
 
 import { MSG, STORAGE_KEYS, API_BASE_URL } from "@/shared/constants";
+import type { AutofillSession } from "@/shared/types";
 
 // Open side panel when the extension action (icon) is clicked
 chrome.sidePanel
@@ -41,6 +42,201 @@ function relayToExtensionViews(message: unknown): void {
     __relayFromBackground: true,
   }).catch(() => {});
 }
+
+// ---------------------------------------------------------------------------
+// Multi-page autofill session management (chrome.storage.session)
+// ---------------------------------------------------------------------------
+
+const SESSION_SUCCESS_URL_PATTERNS = [
+  /[/](?:success|thank[\s_-]?you|confirmation|submitted|application[\s_-]?received|completed?)(?:[/?#]|$)/i,
+];
+
+function isSuccessUrl(url: string): boolean {
+  return SESSION_SUCCESS_URL_PATTERNS.some((p) => p.test(url));
+}
+
+async function getAutofillSession(): Promise<AutofillSession | null> {
+  const result = await chrome.storage.session.get([STORAGE_KEYS.AUTOFILL_SESSION]);
+  return (result[STORAGE_KEYS.AUTOFILL_SESSION] as AutofillSession) ?? null;
+}
+
+async function setAutofillSession(session: AutofillSession): Promise<void> {
+  await chrome.storage.session.set({ [STORAGE_KEYS.AUTOFILL_SESSION]: session });
+}
+
+async function clearAutofillSession(reason?: string): Promise<void> {
+  const session = await getAutofillSession();
+  if (session?.tabId) {
+    try {
+      await chrome.tabs.sendMessage(session.tabId, { type: MSG.STOP_AUTOFILL });
+    } catch {
+      // Tab may already be closed
+    }
+  }
+  await chrome.storage.session.remove([STORAGE_KEYS.AUTOFILL_SESSION]);
+  relayToExtensionViews({
+    type: MSG.AUTOFILL_SESSION_CANCEL,
+    data: { reason: reason ?? "unknown" },
+  });
+  emitDiagTrace("Session", `Session cleared: ${reason ?? "unknown"}`);
+}
+
+type SessionRelayFrameResult = {
+  href: string;
+  isTop: boolean;
+  result: {
+    candidates: unknown[];
+    results: Array<{
+      action: string;
+      canonicalKey: string | null;
+    }>;
+  };
+};
+
+async function runSessionAutofillRelay(
+  tabId: number,
+  profile: Record<string, unknown>
+): Promise<{
+  total: number;
+  filled: number;
+  skipped: number;
+  newFilledKeys: string[];
+}> {
+  let runtimeExistsInPrimaryFrame = false;
+  try {
+    const runtimeCheck = await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [0] },
+      func: () => Boolean((window as Window & { __AI_DOM_CONTROL_ENGINE__?: unknown }).__AI_DOM_CONTROL_ENGINE__),
+    });
+    runtimeExistsInPrimaryFrame = Boolean(runtimeCheck[0]?.result);
+  } catch {
+    // If check fails (restricted frame timing/context), proceed with injection.
+    runtimeExistsInPrimaryFrame = false;
+  }
+
+  if (!runtimeExistsInPrimaryFrame) {
+    await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      files: ["content/dom-runtime.js"],
+    });
+  }
+
+  const exec = await chrome.scripting.executeScript({
+    target: { tabId, allFrames: false },
+    args: [profile],
+    func: async (rawProfile) => {
+      const engine = (window as Window & {
+        __AI_DOM_CONTROL_ENGINE__?: {
+          runUnifiedAutofill: (input: unknown) => Promise<{
+            candidates: unknown[];
+            results: Array<{ action: string; canonicalKey: string | null }>;
+          }>;
+        };
+      }).__AI_DOM_CONTROL_ENGINE__;
+      if (!engine) {
+        throw new Error("DOM runtime not available in page context");
+      }
+      return {
+        href: window.location.href,
+        isTop: window === window.top,
+        result: await engine.runUnifiedAutofill(rawProfile),
+      };
+    },
+  });
+
+  const frameResults = exec
+    .map((row) => {
+      const value = row.result as SessionRelayFrameResult | undefined;
+      if (!value) return null;
+      return {
+        frameId: row.frameId,
+        href: value.href,
+        isTop: value.isTop,
+        result: value.result,
+      };
+    })
+    .filter(
+      (
+        row
+      ): row is {
+        frameId: number;
+        href: string;
+        isTop: boolean;
+        result: SessionRelayFrameResult["result"];
+      } => row !== null
+    );
+
+  if (frameResults.length === 0) {
+    throw new Error("No frame returned session autofill results");
+  }
+
+  const primary = frameResults.reduce<typeof frameResults[number] | null>((best, row) => {
+    if (!best) return row;
+    const bestFilled = best.result.results.filter((item) => item.action === "filled").length;
+    const rowFilled = row.result.results.filter((item) => item.action === "filled").length;
+    const bestMatched = best.result.results.filter((item) => item.canonicalKey !== null).length;
+    const rowMatched = row.result.results.filter((item) => item.canonicalKey !== null).length;
+    const bestScore = bestFilled * 1000 + bestMatched * 100 + best.result.candidates.length * 10;
+    const rowScore = rowFilled * 1000 + rowMatched * 100 + row.result.candidates.length * 10;
+    if (rowScore !== bestScore) return rowScore > bestScore ? row : best;
+    return row.isTop && !best.isTop ? row : best;
+  }, null);
+
+  if (!primary) {
+    throw new Error("No primary frame selected for session autofill");
+  }
+
+  const total = primary.result.results.length;
+  const filled = primary.result.results.filter((item) => item.action === "filled").length;
+  const skipped = primary.result.results.filter((item) => item.action.startsWith("skipped")).length;
+  const newFilledKeys = Array.from(
+    new Set(
+      primary.result.results
+        .filter((item) => item.action === "filled" && typeof item.canonicalKey === "string")
+        .map((item) => item.canonicalKey as string)
+    )
+  );
+
+  return { total, filled, skipped, newFilledKeys };
+}
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status !== "complete") return;
+  getAutofillSession().then(async (session) => {
+    if (!session?.active || session.tabId !== tabId) return;
+
+    const url = tab.url ?? "";
+    if (isSuccessUrl(url)) {
+      emitDiagTrace("Session", `Success page detected by URL, ending session: ${url}`);
+      await clearAutofillSession("success_url");
+      return;
+    }
+
+    const updated: AutofillSession = {
+      ...session,
+      pagesVisited: [...session.pagesVisited, url],
+    };
+    await setAutofillSession(updated);
+
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        files: ["content/content.js"],
+      });
+    } catch {
+      // Page may not support injection (e.g. restricted protocol)
+    }
+  }).catch(() => {});
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  getAutofillSession().then(async (session) => {
+    if (session?.tabId === tabId) {
+      await chrome.storage.session.remove([STORAGE_KEYS.AUTOFILL_SESSION]);
+      emitDiagTrace("Session", `Tab closed, session cleared for tabId=${tabId}`);
+    }
+  }).catch(() => {});
+});
 
 async function listFrameIds(tabId: number): Promise<number[]> {
   try {
@@ -146,6 +342,148 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  // Multi-page session messages
+  if (message.type === MSG.AUTOFILL_SESSION_STARTED) {
+    (async () => {
+      try {
+        const tabId = message.data?.tabId as number | undefined;
+        if (typeof tabId !== "number") {
+          sendResponse({ success: false, error: "Missing tabId" });
+          return;
+        }
+        const existing = await getAutofillSession();
+        if (existing?.active && existing.tabId !== tabId) {
+          await clearAutofillSession("replaced_by_new_session");
+        }
+        const session: AutofillSession = {
+          active: true,
+          tabId,
+          startedAt: Date.now(),
+          filledFieldTypes: [],
+          pagesVisited: [message.data?.url ?? ""],
+          suppressWorkAndSkills: !!message.data?.suppressWorkAndSkills,
+          totalFilledAcrossPages: 0,
+          totalSkippedAcrossPages: 0,
+          totalManualAcrossPages: 0,
+        };
+        await setAutofillSession(session);
+        emitDiagTrace("Session", `Session created for tabId=${tabId}`);
+        try {
+          await chrome.tabs.sendMessage(tabId, { type: MSG.AUTOFILL_SESSION_STARTED });
+        } catch {
+          // Content script may not be ready yet
+        }
+        sendResponse({ success: true });
+      } catch (err) {
+        sendResponse({
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })();
+    return true;
+  }
+
+  if (message.type === MSG.AUTOFILL_SESSION_CHECK) {
+    getAutofillSession().then((session) => {
+      if (session?.active && sender.tab?.id === session.tabId) {
+        sendResponse({ active: true, session });
+      } else {
+        sendResponse({ active: false });
+      }
+    }).catch(() => sendResponse({ active: false }));
+    return true;
+  }
+
+  if (message.type === MSG.AUTOFILL_SESSION_UPDATE) {
+    getAutofillSession().then(async (session) => {
+      if (!session?.active) {
+        sendResponse({ success: false });
+        return;
+      }
+      const data = message.data ?? {};
+      const newTypes = Array.isArray(data.newFilledFieldTypes) ? data.newFilledFieldTypes as string[] : [];
+      const merged = new Set([...session.filledFieldTypes, ...newTypes]);
+      const updated: AutofillSession = {
+        ...session,
+        filledFieldTypes: Array.from(merged),
+        totalFilledAcrossPages: session.totalFilledAcrossPages + (data.filled ?? 0),
+        totalSkippedAcrossPages: session.totalSkippedAcrossPages + (data.skipped ?? 0),
+        totalManualAcrossPages: session.totalManualAcrossPages + (data.manual ?? 0),
+      };
+      await setAutofillSession(updated);
+      sendResponse({ success: true });
+    }).catch(() => sendResponse({ success: false }));
+    return true;
+  }
+
+  if (message.type === MSG.AUTOFILL_SESSION_CANCEL) {
+    clearAutofillSession(message.data?.reason ?? "user_cancelled").then(() => {
+      sendResponse({ success: true });
+    }).catch(() => sendResponse({ success: false }));
+    return true;
+  }
+
+  if (message.type === MSG.RUN_SESSION_AUTOFILL) {
+    (async () => {
+      try {
+        const tabId = (sender.tab?.id as number | undefined) ?? (message.data?.tabId as number | undefined);
+        if (typeof tabId !== "number") {
+          sendResponse({ success: false, error: "Missing tabId" });
+          return;
+        }
+
+        const session = await getAutofillSession();
+        if (!session?.active || session.tabId !== tabId) {
+          sendResponse({ success: false, error: "No active session for this tab" });
+          return;
+        }
+
+        const profile = message.data?.profile as Record<string, unknown> | undefined;
+        if (!profile || typeof profile !== "object") {
+          sendResponse({ success: false, error: "Missing profile" });
+          return;
+        }
+
+        const alreadyFilled = new Set(
+          Array.isArray(message.data?.sessionFilledFieldTypes)
+            ? (message.data.sessionFilledFieldTypes as string[])
+            : session.filledFieldTypes
+        );
+
+        const relayResult = await runSessionAutofillRelay(tabId, profile);
+        const dedupedNewFilledKeys = relayResult.newFilledKeys.filter((key) => !alreadyFilled.has(key));
+
+        const mergedFilledTypes = new Set([...session.filledFieldTypes, ...dedupedNewFilledKeys]);
+        const updated: AutofillSession = {
+          ...session,
+          filledFieldTypes: Array.from(mergedFilledTypes),
+          totalFilledAcrossPages: session.totalFilledAcrossPages + relayResult.filled,
+          totalSkippedAcrossPages: session.totalSkippedAcrossPages + relayResult.skipped,
+        };
+        await setAutofillSession(updated);
+
+        emitDiagTrace(
+          "Session",
+          `Relay pass finished tabId=${tabId} total=${relayResult.total} filled=${relayResult.filled} skipped=${relayResult.skipped} newKeys=${dedupedNewFilledKeys.length}`
+        );
+        sendResponse({
+          success: true,
+          total: relayResult.total,
+          filled: relayResult.filled,
+          skipped: relayResult.skipped,
+          newFilledKeys: dedupedNewFilledKeys,
+        });
+      } catch (err) {
+        sendResponse({
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })();
+    return true;
+  }
+
   if (message.type === MSG.START_AUTOFILL) {
     sendResponse({ accepted: true });
     handleStartAutofill(!!message.data?.suppressWorkAndSkills).catch((err) => {
@@ -179,6 +517,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === MSG.STOP_AUTOFILL) {
+    clearAutofillSession("user_stopped").catch(() => {});
     broadcastToActiveTabFrames(message).then((result) => {
       sendResponse({
         success: result.success,
@@ -456,16 +795,73 @@ async function trackApplication(data?: {
   resume_text?: string | null;
   cover_letter?: string | null;
   company_from_title?: string | null;
-}): Promise<{ success: boolean; applicationId?: number; error?: string }> {
+}): Promise<{
+  success: boolean;
+  applicationId?: number;
+  error?: string;
+  reason?: "auth_expired";
+  eventsPartialFailure?: boolean;
+}> {
   try {
     const stored = await chrome.storage.local.get([
       STORAGE_KEYS.ACCESS_TOKEN,
       STORAGE_KEYS.SESSION_ID,
     ]);
 
-    const accessToken = stored[STORAGE_KEYS.ACCESS_TOKEN];
+    let accessToken = stored[STORAGE_KEYS.ACCESS_TOKEN];
     const sessionId = stored[STORAGE_KEYS.SESSION_ID];
     if (!accessToken || !sessionId) return { success: false };
+
+    const tryRefreshAccessToken = async (): Promise<string | null> => {
+      const refreshData = await chrome.storage.local.get([STORAGE_KEYS.REFRESH_TOKEN]);
+      const refreshToken = refreshData[STORAGE_KEYS.REFRESH_TOKEN];
+      if (!refreshToken) return null;
+
+      try {
+        const refreshResp = await fetch(`${API_BASE_URL}/auth/refresh`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: refreshToken }),
+        });
+        if (!refreshResp.ok) return null;
+        const refreshJson = await refreshResp.json();
+        const nextAccessToken =
+          refreshJson && typeof refreshJson === "object" && "access_token" in refreshJson
+            ? String((refreshJson as { access_token: unknown }).access_token ?? "")
+            : "";
+        if (!nextAccessToken) return null;
+        await chrome.storage.local.set({ [STORAGE_KEYS.ACCESS_TOKEN]: nextAccessToken });
+        accessToken = nextAccessToken;
+        return nextAccessToken;
+      } catch {
+        return null;
+      }
+    };
+
+    const fetchWithAuthRetry = async (
+      url: string,
+      options: RequestInit
+    ): Promise<{ response: Response | null; authExpired: boolean }> => {
+      const firstResp = await fetch(url, options);
+      if (firstResp.status !== 401) {
+        return { response: firstResp, authExpired: false };
+      }
+
+      const refreshedAccessToken = await tryRefreshAccessToken();
+      if (!refreshedAccessToken) {
+        return { response: null, authExpired: true };
+      }
+
+      const retryHeaders = {
+        ...(options.headers as Record<string, string>),
+        Authorization: `Bearer ${refreshedAccessToken}`,
+      };
+      const retryResp = await fetch(url, { ...options, headers: retryHeaders });
+      if (retryResp.status === 401) {
+        return { response: null, authExpired: true };
+      }
+      return { response: retryResp, authExpired: false };
+    };
 
     // Get the current tab URL as the portal URL
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -481,14 +877,16 @@ async function trackApplication(data?: {
       extractCompanyFromUrl(portalUrl);
     const status = data?.status?.trim() || "applied";
 
+    const buildAuthHeaders = (): Record<string, string> => ({
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`,
+      "X-Session-Id": sessionId,
+    });
+
     // Create application record
-    const resp = await fetch(`${API_BASE_URL}/applications`, {
+    const createResult = await fetchWithAuthRetry(`${API_BASE_URL}/applications`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${accessToken}`,
-        "X-Session-Id": sessionId,
-      },
+      headers: buildAuthHeaders(),
       body: JSON.stringify({
         company_name: derivedCompanyName,
         role_title: derivedRoleTitle,
@@ -497,8 +895,17 @@ async function trackApplication(data?: {
         job_id: data?.job_id ?? null,
         resume_id: data?.resume_id ?? null,
         status,
+        job_description: data?.job_description ?? null,
+        salary: data?.salary ?? null,
+        resume_filename: data?.resume_filename ?? null,
+        resume_source: data?.resume_source ?? null,
+        cover_letter: data?.cover_letter ?? null,
       }),
     });
+    if (createResult.authExpired || !createResult.response) {
+      return { success: false, reason: "auth_expired" };
+    }
+    const resp = createResult.response;
 
     if (!resp.ok) return { success: false, error: `Create application failed: HTTP ${resp.status}` };
     const application = await resp.json();
@@ -531,31 +938,61 @@ async function trackApplication(data?: {
       captured_tab_title: tabTitle || null,
     };
 
-    const eventHeaders = {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      "X-Session-Id": sessionId,
-    };
+    let eventsPartialFailure = false;
 
-    await fetch(`${API_BASE_URL}/applications/${application.id}/events`, {
-      method: "POST",
-      headers: eventHeaders,
-      body: JSON.stringify({
-        event_type: "autofill_complete",
-        detail: `Auto-filled from Chrome extension at ${snapshot.applied_at}`,
-      }),
-    });
+    try {
+      const autofillEventResult = await fetchWithAuthRetry(`${API_BASE_URL}/applications/${application.id}/events`, {
+        method: "POST",
+        headers: buildAuthHeaders(),
+        body: JSON.stringify({
+          event_type: "autofill_complete",
+          detail: `Auto-filled from Chrome extension at ${snapshot.applied_at}`,
+        }),
+      });
+      if (autofillEventResult.authExpired || !autofillEventResult.response) {
+        return { success: false, reason: "auth_expired" };
+      }
+      const autofillEventResp = autofillEventResult.response;
+      if (!autofillEventResp.ok) {
+        eventsPartialFailure = true;
+        console.error(
+          `[TRACK_APPLICATION] Event write failed event_type=autofill_complete application_id=${application.id} status=${autofillEventResp.status}`
+        );
+      }
+    } catch (err) {
+      eventsPartialFailure = true;
+      console.error(
+        `[TRACK_APPLICATION] Event write failed event_type=autofill_complete application_id=${application.id} error=${err instanceof Error ? err.message : String(err)}`
+      );
+    }
 
-    await fetch(`${API_BASE_URL}/applications/${application.id}/events`, {
-      method: "POST",
-      headers: eventHeaders,
-      body: JSON.stringify({
-        event_type: "application_snapshot",
-        detail: JSON.stringify(snapshot),
-      }),
-    });
+    try {
+      const snapshotEventResult = await fetchWithAuthRetry(`${API_BASE_URL}/applications/${application.id}/events`, {
+        method: "POST",
+        headers: buildAuthHeaders(),
+        body: JSON.stringify({
+          event_type: "application_snapshot",
+          detail: JSON.stringify(snapshot),
+        }),
+      });
+      if (snapshotEventResult.authExpired || !snapshotEventResult.response) {
+        return { success: false, reason: "auth_expired" };
+      }
+      const snapshotEventResp = snapshotEventResult.response;
+      if (!snapshotEventResp.ok) {
+        eventsPartialFailure = true;
+        console.error(
+          `[TRACK_APPLICATION] Event write failed event_type=application_snapshot application_id=${application.id} status=${snapshotEventResp.status}`
+        );
+      }
+    } catch (err) {
+      eventsPartialFailure = true;
+      console.error(
+        `[TRACK_APPLICATION] Event write failed event_type=application_snapshot application_id=${application.id} error=${err instanceof Error ? err.message : String(err)}`
+      );
+    }
 
-    return { success: true, applicationId: application.id };
+    return { success: true, applicationId: application.id, ...(eventsPartialFailure ? { eventsPartialFailure: true } : {}) };
   } catch (err) {
     return { success: false, error: err instanceof Error ? err.message : String(err) };
   }

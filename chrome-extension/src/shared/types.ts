@@ -53,6 +53,27 @@ export interface UserProfile {
   custom_fields: Record<string, unknown> | null;
 }
 
+/** One education block; stored in custom_fields.education_history for multi-school GPA support. */
+export interface EducationHistoryEntry {
+  university: string;
+  degree: string;
+  field_of_study: string;
+  graduation_year: number | null;
+  gpa: number | null;
+}
+
+/** One work experience block; stored in custom_fields.work_experience. */
+export interface WorkExperienceEntry {
+  job_title: string;
+  company: string;
+  location: string;
+  start_month: string;
+  start_year: string;
+  end_month: string;
+  end_year: string;
+  description: string;
+}
+
 export interface AuthTokens {
   access_token: string;
   refresh_token?: string;
@@ -253,6 +274,7 @@ export interface AutofillProgress {
   currentAction: string | null;
   paused: boolean;
   completed: boolean;
+  sessionComplete: boolean;
   /** Current step index for multi-step forms */
   stepIndex: number;
   /** Detected fields with confidence (for UI preview) */
@@ -294,6 +316,24 @@ export interface AutofillContext {
   pendingCoverLetterBlockerSelector: string | null;
   pendingUploadSubtype: FileUploadBlockerSubType | null;
   uploadedSameAsProfileResume: boolean;
+}
+
+// ---------------------------------------------------------------------------
+// Autofill - Multi-page Session
+// ---------------------------------------------------------------------------
+
+export interface AutofillSession {
+  active: boolean;
+  tabId: number;
+  startedAt: number;
+  /** Field types (canonical keys) already filled across all pages in this session. */
+  filledFieldTypes: string[];
+  /** URLs of pages visited during this session. */
+  pagesVisited: string[];
+  suppressWorkAndSkills: boolean;
+  totalFilledAcrossPages: number;
+  totalSkippedAcrossPages: number;
+  totalManualAcrossPages: number;
 }
 
 // ---------------------------------------------------------------------------

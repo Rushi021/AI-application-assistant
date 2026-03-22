@@ -34,117 +34,113 @@ export default function SectionCard({
   };
 
   return (
-    <div className={`rounded-lg border ${chatOpen ? "border-primary-300 ring-1 ring-primary-200" : "border-gray-200"} bg-white overflow-hidden`}>
-      {/* Header */}
+    <div
+      className={`rounded-xl border overflow-hidden ${
+        chatOpen ? "border-primary-500 ring-1 ring-primary-500/25 bg-[#141414]" : "border-wf-border bg-wf-surface"
+      }`}
+    >
       <button
+        type="button"
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between px-3 py-2 hover:bg-gray-50 transition-colors"
+        className="w-full flex items-center justify-between px-3 py-2.5 hover:bg-wf-surfaceHover/80 transition-colors text-left"
       >
         <div className="flex items-center gap-2 min-w-0">
-          <svg
-            className={`w-4 h-4 text-gray-400 transition-transform ${expanded ? "rotate-90" : ""}`}
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-          </svg>
-          <span className="text-sm font-medium text-gray-900 truncate">{section.section_title}</span>
+          <span className="text-wf-dim text-xs">{expanded ? "▾" : "▸"}</span>
+          <span className="text-sm font-semibold text-wf-text truncate">{section.section_title}</span>
+          {section.proposed_text && (
+            <span className="text-[10px] text-primary-400 bg-primary-950/50 border border-primary-800/40 px-1.5 py-0.5 rounded-full shrink-0">
+              AI draft
+            </span>
+          )}
         </div>
         {!section.editable && (
-          <span className="text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">header</span>
-        )}
-        {section.proposed_text && (
-          <span className="text-[10px] text-primary-600 bg-primary-50 px-1.5 py-0.5 rounded ml-1">
-            proposed
-          </span>
+          <span className="text-[10px] text-wf-dim bg-wf-bg px-1.5 py-0.5 rounded shrink-0">Header</span>
         )}
       </button>
 
-      {/* Content */}
       {expanded && (
         <div className="px-3 pb-3 space-y-2">
-          {/* Proposed text banner */}
           {section.proposed_text && !editing && (
-            <div className="bg-primary-50 border border-primary-200 rounded-lg p-2">
-              <p className="text-[10px] font-medium text-primary-700 mb-1">AI Proposed Changes:</p>
+            <div className="bg-[#1c1208] border border-primary-900/40 rounded-xl p-2.5">
+              <p className="text-[10px] font-semibold text-primary-400 mb-1.5 uppercase tracking-wide">Proposed changes</p>
               <SectionContentBlock
                 text={section.proposed_text}
                 headerLabel="Header"
                 contentLabel="Content"
-                className="bg-white rounded-md p-2"
+                className="bg-wf-bg rounded-lg p-2 border border-wf-border"
               />
               <div className="flex gap-2 mt-2">
                 <button
+                  type="button"
                   onClick={onAcceptProposed}
-                  className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-green-700 bg-green-50 rounded hover:bg-green-100"
+                  className="flex items-center gap-1 px-2.5 py-1 text-[10px] font-semibold text-green-400 bg-wf-tagGreen border border-green-800/50 rounded-lg hover:opacity-90"
                 >
-                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
                   Accept
                 </button>
                 <button
+                  type="button"
                   onClick={onRejectProposed}
-                  className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-red-700 bg-red-50 rounded hover:bg-red-100"
+                  className="flex items-center gap-1 px-2.5 py-1 text-[10px] font-medium text-red-400 bg-wf-tagRed border border-red-900/40 rounded-lg hover:opacity-90"
                 >
-                  <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                  </svg>
                   Reject
                 </button>
               </div>
             </div>
           )}
 
-          {/* Current text */}
           {editing ? (
             <div>
               <textarea
                 value={editText}
                 onChange={(e) => setEditText(e.target.value)}
                 rows={6}
-                className="w-full rounded-lg border border-gray-300 px-2 py-1.5 text-xs resize-y focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none font-mono"
+                className="w-full rounded-[10px] border border-wf-border bg-wf-bg px-2.5 py-2 text-xs text-wf-text resize-y focus:border-primary-500 focus:ring-1 focus:ring-primary-500/30 outline-none font-mono leading-relaxed"
               />
-              <div className="flex gap-2 mt-1">
-                <button onClick={handleSaveEdit} className="px-2 py-1 text-[10px] font-medium text-white bg-primary-600 rounded hover:bg-primary-700">
+              <div className="flex gap-2 mt-2">
+                <button
+                  type="button"
+                  onClick={handleSaveEdit}
+                  className="px-3 py-1.5 text-[10px] font-semibold text-white bg-primary-500 rounded-lg hover:bg-primary-600"
+                >
                   Save
                 </button>
-                <button onClick={handleCancelEdit} className="px-2 py-1 text-[10px] text-gray-600 hover:text-gray-800">
+                <button
+                  type="button"
+                  onClick={handleCancelEdit}
+                  className="px-3 py-1.5 text-[10px] text-wf-muted hover:text-wf-text"
+                >
                   Cancel
                 </button>
               </div>
             </div>
           ) : (
-            <div className="bg-gray-50 rounded-lg p-2">
+            <div className="bg-wf-bg rounded-[10px] p-2.5 border border-wf-border">
               <SectionContentBlock text={section.current_text} />
             </div>
           )}
 
-          {/* Actions */}
           {section.editable && !editing && (
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap">
               <button
-                onClick={() => { setEditText(section.current_text); setEditing(true); }}
-                className="flex items-center gap-1 px-2 py-1 text-[10px] font-medium text-gray-600 border rounded hover:bg-gray-50"
+                type="button"
+                onClick={() => {
+                  setEditText(section.current_text);
+                  setEditing(true);
+                }}
+                className="flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-medium text-wf-text border border-wf-border rounded-lg hover:bg-wf-surfaceHover"
               >
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                </svg>
                 Edit
               </button>
               <button
+                type="button"
                 onClick={onOpenChat}
-                className={`flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded transition-colors ${
+                className={`flex items-center gap-1 px-2.5 py-1.5 text-[10px] font-semibold rounded-lg transition-colors ${
                   chatOpen
-                    ? "text-primary-700 bg-primary-100"
-                    : "text-primary-600 border border-primary-300 hover:bg-primary-50"
+                    ? "text-primary-400 bg-primary-950/50 border border-primary-800/50"
+                    : "text-primary-400 border border-wf-border hover:bg-wf-surfaceHover"
                 }`}
               >
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                </svg>
-                Chat for refinement
+                <span aria-hidden>✦</span> Refine with AI
               </button>
             </div>
           )}

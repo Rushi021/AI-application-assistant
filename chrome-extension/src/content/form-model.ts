@@ -211,6 +211,12 @@ function detectBlockers(): FormBlocker[] {
 
   const uploadDetection = scanUploadDetectors(document);
   uploadDetection.candidates.forEach((candidate) => {
+    // Only pause the user for actionable application uploads.
+    // Generic upload triggers are too noisy and can appear on unrelated pages.
+    if (candidate.subType !== "resume" && candidate.subType !== "cover_letter") {
+      return;
+    }
+
     let resolved = false;
     const matchedElement = document.querySelector(candidate.selector);
     if (matchedElement instanceof HTMLInputElement && matchedElement.type === "file") {

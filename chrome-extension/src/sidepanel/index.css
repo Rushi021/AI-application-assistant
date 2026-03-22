@@ -10,11 +10,16 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #d1d5db;
+  background: #3a3a3a;
   border-radius: 3px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #9ca3af;
+  background: #555555;
+}
+
+#root {
+  min-height: 100vh;
+  background: #0f0f0f;
 }
 
 /* Smooth transitions for page changes */

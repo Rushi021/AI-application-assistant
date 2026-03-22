@@ -1,12 +1,12 @@
 /**
  * Content script: State-machine autofill for job application forms.
  *
- * State A: Page Intake — Build form model (fields, actions, blockers)
- * State B: Field → Profile Matching — Confidence-driven mapping
- * State C: Apply — Fill inputs (focus, set value, events)
- * State D: Validation — Check for inline errors
- * State E: Navigation — Click Next/Continue, loop
- * State F: Blockers — Pause for upload/CAPTCHA/OTP/agreement/submit
+ * State A: Page Intake ? Build form model (fields, actions, blockers)
+ * State B: Field ? Profile Matching ? Confidence-driven mapping
+ * State C: Apply ? Fill inputs (focus, set value, events)
+ * State D: Validation ? Check for inline errors
+ * State E: Navigation ? Click Next/Continue, loop
+ * State F: Blockers ? Pause for upload/CAPTCHA/OTP/agreement/submit
  */
 
 import { API_BASE_URL, MSG, STORAGE_KEYS } from "@/shared/constants";
@@ -14,6 +14,7 @@ import { runPhase1Fill } from "@/shared/dom-control-engine";
 import type {
   UserProfile,
   AutofillProgress,
+  AutofillSession,
   ValidationErrorItem,
   FormModel,
   FormField,
@@ -69,6 +70,74 @@ const SELECT_ABBREVIATIONS: Record<string, string[]> = {
   Florida: ["FL"],
   GA: ["Georgia"],
   Georgia: ["GA"],
+  NJ: ["New Jersey"],
+  "New Jersey": ["NJ"],
+  IL: ["Illinois"],
+  Illinois: ["IL"],
+  VA: ["Virginia"],
+  Virginia: ["VA"],
+  WA: ["Washington"],
+  Washington: ["WA"],
+  NC: ["North Carolina"],
+  "North Carolina": ["NC"],
+  SC: ["South Carolina"],
+  "South Carolina": ["SC"],
+  DC: ["District of Columbia", "Washington DC", "Washington D.C."],
+  "District of Columbia": ["DC", "Washington DC", "Washington D.C."],
+};
+
+const US_STATE_ABBR_TO_NAME: Record<string, string> = {
+  AL: "Alabama",
+  AK: "Alaska",
+  AZ: "Arizona",
+  AR: "Arkansas",
+  CA: "California",
+  CO: "Colorado",
+  CT: "Connecticut",
+  DE: "Delaware",
+  FL: "Florida",
+  GA: "Georgia",
+  HI: "Hawaii",
+  ID: "Idaho",
+  IL: "Illinois",
+  IN: "Indiana",
+  IA: "Iowa",
+  KS: "Kansas",
+  KY: "Kentucky",
+  LA: "Louisiana",
+  ME: "Maine",
+  MD: "Maryland",
+  MA: "Massachusetts",
+  MI: "Michigan",
+  MN: "Minnesota",
+  MS: "Mississippi",
+  MO: "Missouri",
+  MT: "Montana",
+  NE: "Nebraska",
+  NV: "Nevada",
+  NH: "New Hampshire",
+  NJ: "New Jersey",
+  NM: "New Mexico",
+  NY: "New York",
+  NC: "North Carolina",
+  ND: "North Dakota",
+  OH: "Ohio",
+  OK: "Oklahoma",
+  OR: "Oregon",
+  PA: "Pennsylvania",
+  RI: "Rhode Island",
+  SC: "South Carolina",
+  SD: "South Dakota",
+  TN: "Tennessee",
+  TX: "Texas",
+  UT: "Utah",
+  VT: "Vermont",
+  VA: "Virginia",
+  WA: "Washington",
+  WV: "West Virginia",
+  WI: "Wisconsin",
+  WY: "Wyoming",
+  DC: "District of Columbia",
 };
 
 function isValueEffectivelyEmpty(value: string | null | undefined): boolean {
@@ -80,6 +149,37 @@ function isValueEffectivelyEmpty(value: string | null | undefined): boolean {
 
 function valuesMatch(a: string, b: string): boolean {
   return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+function valuesExactlyMatch(a: string, b: string): boolean {
+  return a.trim() === b.trim();
+}
+
+const FORMAT_PREFERENCE_FIELD_TYPES = new Set([
+  "first_name",
+  "last_name",
+  "full_name",
+  "address_line1",
+  "address_line2",
+  "city",
+  "state",
+  "country",
+  "current_title",
+  "current_company",
+]);
+
+function shouldRewriteForFormatting(
+  currentValue: string,
+  profileValue: string,
+  fieldType: string,
+  fieldKind: FormField["fieldKind"] | undefined,
+  el: Element
+): boolean {
+  if (!valuesMatch(currentValue, profileValue)) return false;
+  if (valuesExactlyMatch(currentValue, profileValue)) return false;
+  if (fieldKind === "custom_select") return false;
+  if (el instanceof HTMLSelectElement) return false;
+  return FORMAT_PREFERENCE_FIELD_TYPES.has(fieldType);
 }
 
 /**
@@ -114,7 +214,12 @@ function findBestSelectOption(
 
   if (includes.length === 0) {
     // 4. Abbreviation lookup
-    const expanded = SELECT_ABBREVIATIONS[value.trim()] ?? [];
+    const upper = value.trim().toUpperCase();
+    const expanded = [
+      ...(SELECT_ABBREVIATIONS[value.trim()] ?? []),
+      ...(SELECT_ABBREVIATIONS[upper] ?? []),
+      ...(US_STATE_ABBR_TO_NAME[upper] ? [US_STATE_ABBR_TO_NAME[upper]] : []),
+    ];
     for (const exp of expanded) {
       const found = options.find(
         (o) =>
@@ -165,14 +270,30 @@ let resolvePreviewPromise: (() => void) | null = null;
 let resolveUploadBlockerDecision: ((decision: FileUploadBlockerDecision) => void) | null = null;
 let iframeObserverInitialized = false;
 let autofillRunInProgress = false;
+let sessionWatcherStarted = false;
+let sessionWatcherCleanup: (() => void) | null = null;
+let requestSessionWatcherActivation: ((runInitialPass: boolean) => void) | null = null;
 const handledUploadBlockers = new Map<string, FileUploadBlockerDecision>();
+
+type SessionAutofillRelayResponse = {
+  success?: boolean;
+  total?: number;
+  filled?: number;
+  skipped?: number;
+  newFilledKeys?: string[];
+  error?: string;
+};
 
 interface AutofillRunOptions {
   suppressWorkAndSkills: boolean;
+  isSessionContinuation?: boolean;
+  sessionFilledFieldTypes?: Set<string>;
 }
 
 const DEFAULT_AUTOFILL_OPTIONS: AutofillRunOptions = {
   suppressWorkAndSkills: false,
+  isSessionContinuation: false,
+  sessionFilledFieldTypes: new Set(),
 };
 
 const SUPPRESSED_WORK_SKILL_FIELD_TYPES = new Set([
@@ -245,7 +366,7 @@ function emitDiagTrace(
 }
 
 // ---------------------------------------------------------------------------
-// DOM value setter (State C: Apply — triggers React/Angular/Vue)
+// DOM value setter (State C: Apply ? triggers React/Angular/Vue)
 // ---------------------------------------------------------------------------
 
 function setFieldValueSync(
@@ -357,7 +478,7 @@ async function fillCustomDropdown(
 }
 
 // ---------------------------------------------------------------------------
-// File upload — programmatic fill when resume/cover letter URL is available
+// File upload ? programmatic fill when resume/cover letter URL is available
 // ---------------------------------------------------------------------------
 
 async function tryFillFileBlocker(blocker: FormBlocker): Promise<boolean> {
@@ -390,7 +511,7 @@ async function tryFillFileBlocker(blocker: FormBlocker): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
-// State D: Validation — detect inline errors
+// State D: Validation ? detect inline errors
 // ---------------------------------------------------------------------------
 
 function stableSelectorForElement(el: Element): string {
@@ -465,7 +586,7 @@ function highlightValidationFields(errors: ValidationErrorItem[]): void {
 }
 
 // ---------------------------------------------------------------------------
-// Overlay (Shadow DOM) — pause, blocker, field manual
+// Overlay (Shadow DOM) ? pause, blocker, field manual
 // ---------------------------------------------------------------------------
 
 let overlayHost: HTMLDivElement | null = null;
@@ -632,6 +753,111 @@ function removeUndoButton(): void {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Session badge ? persistent floating indicator for multi-page sessions
+// ---------------------------------------------------------------------------
+
+let sessionBadgeHost: HTMLDivElement | null = null;
+
+function showSessionBadge(): void {
+  if (sessionBadgeHost) return;
+  sessionBadgeHost = document.createElement("div");
+  sessionBadgeHost.id = "ai-assistant-session-badge";
+  document.body.appendChild(sessionBadgeHost);
+  const shadow = sessionBadgeHost.attachShadow({ mode: "closed" });
+
+  const style = document.createElement("style");
+  style.textContent = `
+    .session-badge {
+      position: fixed; top: 12px; right: 12px; z-index: 2147483645;
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 14px; border-radius: 24px;
+      background: linear-gradient(135deg, #F97316, #EA580C);
+      color: white;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      font-size: 12px; font-weight: 500;
+      box-shadow: 0 4px 12px rgba(249,115,22,0.35);
+      cursor: default; user-select: none;
+      animation: badge-in 0.3s ease-out;
+    }
+    @keyframes badge-in {
+      from { transform: translateY(-20px); opacity: 0; }
+      to { transform: translateY(0); opacity: 1; }
+    }
+    .pulse-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: #4ADE80;
+      animation: dot-pulse 1.5s ease-in-out infinite;
+    }
+    @keyframes dot-pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.6; transform: scale(0.8); }
+    }
+    .cancel-btn {
+      display: flex; align-items: center; justify-content: center;
+      width: 20px; height: 20px; border: none;
+      background: rgba(255,255,255,0.25); color: white;
+      border-radius: 50%; cursor: pointer; font-size: 12px;
+      line-height: 1; padding: 0; transition: background 0.15s;
+    }
+    .cancel-btn:hover { background: rgba(255,255,255,0.45); }
+  `;
+
+  const badge = document.createElement("div");
+  badge.className = "session-badge";
+  badge.innerHTML = `
+    <div class="pulse-dot"></div>
+    <span>Auto-fill active</span>
+    <button class="cancel-btn" title="Cancel auto-fill session">\u2715</button>
+  `;
+
+  shadow.appendChild(style);
+  shadow.appendChild(badge);
+
+  badge.querySelector(".cancel-btn")!.addEventListener("click", () => {
+    chrome.runtime
+      .sendMessage({ type: MSG.AUTOFILL_SESSION_CANCEL, data: { reason: "user_badge" } })
+      .catch(() => {});
+    removeSessionBadge();
+    stopped = true;
+  });
+}
+
+function removeSessionBadge(): void {
+  if (sessionBadgeHost) {
+    sessionBadgeHost.remove();
+    sessionBadgeHost = null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Success page detection ? terminates multi-page session
+// ---------------------------------------------------------------------------
+
+const SUCCESS_DOM_PATTERNS = [
+  /application\s+(?:has\s+been\s+)?submitted/i,
+  /thank\s+you\s+for\s+(?:applying|your\s+application)/i,
+  /we\s+(?:have\s+)?received\s+your\s+application/i,
+  /application\s+(?:is\s+)?complete/i,
+  /successfully\s+submitted/i,
+  /you(?:'ve|\s+have)\s+applied/i,
+];
+
+const SUCCESS_URL_PATTERNS = [
+  /[/](?:success|thank[\s_-]?you|confirmation|submitted|application[\s_-]?received|completed?)(?:[/?#]|$)/i,
+];
+
+function isSuccessPage(): boolean {
+  if (SUCCESS_URL_PATTERNS.some((p) => p.test(location.href))) return true;
+  const headings = Array.from(
+    document.querySelectorAll('h1, h2, h3, [role="heading"]')
+  )
+    .map((el) => el.textContent?.trim() ?? "")
+    .join(" ");
+  const bodySnippet = document.body?.innerText?.slice(0, 2000) ?? "";
+  const combined = `${headings} ${bodySnippet}`;
+  return SUCCESS_DOM_PATTERNS.some((p) => p.test(combined));
+}
+
 function escapeHtml(s: string): string {
   const div = document.createElement("div");
   div.textContent = s;
@@ -643,24 +869,28 @@ function escapeHtml(s: string): string {
 // ---------------------------------------------------------------------------
 
 function sendProgress(progress: AutofillProgress): void {
+  const payload: AutofillProgress = {
+    ...progress,
+    sessionComplete: progress.sessionComplete ?? false,
+  };
   chrome.storage.local
     .set({
       [STORAGE_KEYS.AUTOFILL_PROGRESS]: {
-        ...progress,
+        ...payload,
         _ts: Date.now(),
       },
     })
     .catch(() => {});
   chrome.runtime
     .sendMessage({
-    type: MSG.AUTOFILL_PROGRESS,
-    data: { ...progress },
+      type: MSG.AUTOFILL_PROGRESS,
+      data: payload,
     })
     .catch((err) => {
       // Keep this loud in console so "stuck at Filling..." has a concrete cause.
       console.error("AUTOFILL: failed to send progress message", {
-        state: progress.state,
-        currentField: progress.currentField,
+        state: payload.state,
+        currentField: payload.currentField,
         error: err instanceof Error ? err.message : String(err),
       });
     });
@@ -693,6 +923,21 @@ function initIframeReloadObserver(): void {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+    promise
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
 }
 
 function shouldSuppressWorkAndSkillsField(field: FormField): boolean {
@@ -819,7 +1064,7 @@ function getEffectiveActions(formModel: FormModel): {
 async function runAutofill(
   profile: UserProfile,
   options: AutofillRunOptions = DEFAULT_AUTOFILL_OPTIONS
-): Promise<void> {
+): Promise<string[]> {
   stopped = false;
   handledUploadBlockers.clear();
   resolveUploadBlockerDecision = null;
@@ -833,7 +1078,7 @@ async function runAutofill(
     // Route change - rescan will happen at next loop iteration
   });
   try {
-    await runAutofillLoop(profile, loopStartTime, navCount, options);
+    return await runAutofillLoop(profile, loopStartTime, navCount, options);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     sendProgress({
@@ -846,6 +1091,7 @@ async function runAutofill(
       currentAction: "runtime_error",
       paused: true,
       completed: false,
+      sessionComplete: false,
       stepIndex: 0,
       fields: [],
       activeBlocker: null,
@@ -864,7 +1110,8 @@ async function runAutofillLoop(
   loopStartTime: number,
   navCount: { value: number },
   options: AutofillRunOptions
-): Promise<void> {
+): Promise<string[]> {
+  const filledFieldTypesThisRun: string[] = [];
   const createProgress = (overrides: Partial<AutofillProgress> = {}): AutofillProgress => ({
     state: "intake",
     total: 0,
@@ -875,6 +1122,7 @@ async function runAutofillLoop(
     currentAction: null,
     paused: false,
     completed: false,
+    sessionComplete: false,
     stepIndex: 0,
     fields: [],
     activeBlocker: null,
@@ -886,7 +1134,7 @@ async function runAutofillLoop(
   let progress = createProgress();
   sendProgress(progress);
 
-  // Main loop: intake → match → (blockers) → apply → validate → navigate
+  // Main loop: intake ? match ? (blockers) ? apply ? validate ? navigate
   while (!stopped) {
     if (Date.now() - loopStartTime >= MAX_LOOP_TIME_MS) {
       progress.state = "blocked";
@@ -911,7 +1159,7 @@ async function runAutofillLoop(
       progress.state = "stopped";
       progress.completed = true;
       sendProgress(progress);
-      return;
+      return filledFieldTypesThisRun;
     }
 
     // State A: Page Intake
@@ -920,12 +1168,21 @@ async function runAutofillLoop(
     progress.currentAction = null;
     sendProgress(progress);
 
-    const formModel: FormModel = buildFormModel();
+    let formModel: FormModel = buildFormModel();
+
+    if (options.isSessionContinuation && formModel.fields.length === 0) {
+      for (let retry = 0; retry < 5; retry++) {
+        await sleep(500);
+        formModel = buildFormModel();
+        if (formModel.fields.length > 0) break;
+      }
+    }
+
     const fillableCandidates = formModel.fields.filter(
       (f) => !f.filled && !f.fieldType.includes("upload") && f.enabled
     );
 
-    // State F: Blockers � check unresolved blockers before preview/fill.
+    // State F: Blockers ? check unresolved blockers before preview/fill.
     const unresolvedBlockers = formModel.blockers.filter((b) => !b.resolved && !isHandledUploadBlocker(b));
 
     if (unresolvedBlockers.length > 0) {
@@ -983,29 +1240,37 @@ async function runAutofillLoop(
     const matchedFields = applyMatchedFieldSuppressions(matchedFromProfile, options);
     let fillableFields = fillableCandidates.filter((field) => {
       const matched = matchedFields.find((mf) => mf.selector === field.selector);
-      return matched?.matchReason !== "suppressed:work_and_skills";
+      if (matched?.matchReason === "suppressed:work_and_skills") return false;
+      if (options.sessionFilledFieldTypes?.size && matched?.fieldType) {
+        if (options.sessionFilledFieldTypes.has(matched.fieldType)) return false;
+      }
+      return true;
     });
 
     progress.fields = matchedFields;
     progress.total = fillableFields.length;
     sendProgress(progress);
 
-    // Pre-fill preview: show summary and wait for "Fill All"
-    const willFill = fillableFields
-      .map((f) => {
-        const m = matchedFields.find((mf) => mf.selector === f.selector);
-        return m?.confidenceTier === "A" || m?.confidenceTier === "B" ? f.label : null;
-      })
-      .filter(Boolean) as string[];
-    const unknownCount = fillableFields.length - willFill.length;
-    progress.state = "preview";
-    progress.paused = true;
-    progress.previewSummary = { total: fillableFields.length, willFill, unknownCount };
-    sendProgress(progress);
-    await new Promise<void>((resolve) => {
-      resolvePreviewPromise = resolve;
-    });
-    resolvePreviewPromise = null;
+    // Pre-fill preview: show summary and wait for "Fill All" (skip in session continuation)
+    if (options.isSessionContinuation) {
+      emitDiagTrace("SessionContinue", "Skipping preview, auto-filling Tier A fields");
+    } else {
+      const willFill = fillableFields
+        .map((f) => {
+          const m = matchedFields.find((mf) => mf.selector === f.selector);
+          return m?.confidenceTier === "A" || m?.confidenceTier === "B" ? f.label : null;
+        })
+        .filter(Boolean) as string[];
+      const unknownCount = fillableFields.length - willFill.length;
+      progress.state = "preview";
+      progress.paused = true;
+      progress.previewSummary = { total: fillableFields.length, willFill, unknownCount };
+      sendProgress(progress);
+      await new Promise<void>((resolve) => {
+        resolvePreviewPromise = resolve;
+      });
+      resolvePreviewPromise = null;
+    }
     progress.paused = false;
     progress.state = "apply";
     progress.previewSummary = undefined;
@@ -1053,7 +1318,7 @@ async function runAutofillLoop(
     progress.currentAction = null;
     sendProgress(progress);
 
-    // No fillable fields — try navigation or complete
+    // No fillable fields ? try navigation or complete
     if (fillableFields.length === 0) {
       const { nextAction, submitAction } = getEffectiveActions(formModel);
 
@@ -1081,7 +1346,7 @@ async function runAutofillLoop(
           progress.state = "stopped";
           progress.completed = true;
           sendProgress(progress);
-          return;
+          return filledFieldTypesThisRun;
         }
         progress.state = "navigate";
         progress.currentAction = nextAction.label;
@@ -1150,7 +1415,7 @@ async function runAutofillLoop(
             progress.state = "stopped";
             progress.completed = true;
             sendProgress(progress);
-            return;
+            return filledFieldTypesThisRun;
           }
         }
       }
@@ -1202,10 +1467,10 @@ async function runAutofillLoop(
       progress.state = "complete";
       progress.completed = true;
       sendProgress(progress);
-      return;
+      return filledFieldTypesThisRun;
     }
 
-    // State C: Apply — fill fields
+    // State C: Apply ? fill fields
     progress.state = "apply";
 
     undoSnapshot = [];
@@ -1229,7 +1494,7 @@ async function runAutofillLoop(
     }
 
     for (const field of fillableFields) {
-      if (stopped) return;
+      if (stopped) return filledFieldTypesThisRun;
 
       const matchedField = matchedFields.find((f) => f.selector === field.selector);
       if (!matchedField) continue;
@@ -1256,8 +1521,25 @@ async function runAutofillLoop(
 
         if (!isValueEffectivelyEmpty(String(currentValue).trim())) {
           if (valuesMatch(currentValue, profileValue)) {
-            matchedField.filled = true;
-            progress.filled++;
+            if (
+              !shouldRewriteForFormatting(
+                currentValue,
+                profileValue,
+                matchedField.fieldType,
+                field.fieldKind,
+                el
+              )
+            ) {
+              matchedField.filled = true;
+              progress.filled++;
+              filledFieldTypesThisRun.push(matchedField.fieldType);
+              sendProgress(progress);
+              await sleep(getInterFieldDelayMs());
+              continue;
+            }
+          }
+          if (options.isSessionContinuation) {
+            progress.skipped++;
             sendProgress(progress);
             await sleep(getInterFieldDelayMs());
             continue;
@@ -1320,6 +1602,7 @@ async function runAutofillLoop(
         }
         matchedField.filled = true;
         progress.filled++;
+        filledFieldTypesThisRun.push(matchedField.fieldType);
         progress.lastFilledField = { selector: field.selector, label: field.label };
         sendProgress(progress);
         showUndoButton();
@@ -1373,6 +1656,11 @@ async function runAutofillLoop(
           removeOverlay();
         }
       } else if (matchedField.confidenceTier === "B" && matchedField.profileValue) {
+        if (options.isSessionContinuation) {
+          progress.skipped++;
+          sendProgress(progress);
+          continue;
+        }
         // Tier B: suggest value, user confirms Fill or Skip
         progress.paused = true;
         progress.state = "blocked";
@@ -1418,13 +1706,19 @@ async function runAutofillLoop(
           }
           matchedField.filled = true;
           progress.filled++;
+          filledFieldTypesThisRun.push(matchedField.fieldType);
         } else {
           progress.skipped++;
         }
         sendProgress(progress);
         await sleep(getInterFieldDelayMs());
       } else {
-        // Tier C / unknown — pause for manual
+        // Tier C / unknown ? pause for manual
+        if (options.isSessionContinuation) {
+          progress.skipped++;
+          sendProgress(progress);
+          continue;
+        }
         progress.paused = true;
         progress.state = "blocked";
         sendProgress(progress);
@@ -1486,7 +1780,7 @@ async function runAutofillLoop(
         progress.state = "stopped";
         progress.completed = true;
         sendProgress(progress);
-        return;
+        return filledFieldTypesThisRun;
       }
       progress.state = "navigate";
       progress.currentAction = nextAction.label;
@@ -1551,7 +1845,7 @@ async function runAutofillLoop(
           progress.state = "stopped";
           progress.completed = true;
           sendProgress(progress);
-          return;
+          return filledFieldTypesThisRun;
         }
       }
     }
@@ -1560,6 +1854,7 @@ async function runAutofillLoop(
   progress.state = "stopped";
   progress.completed = true;
   sendProgress(progress);
+  return filledFieldTypesThisRun;
 }
 
 function getBlockerOverlayConfig(blocker: FormBlocker): OverlayConfig {
@@ -1567,7 +1862,7 @@ function getBlockerOverlayConfig(blocker: FormBlocker): OverlayConfig {
     case "file_upload":
       return {
         title: "Upload Required",
-        message: `${blocker.label} — Please upload the file. Browsers restrict programmatic file selection.`,
+        message: `${blocker.label} ? Please upload the file. Browsers restrict programmatic file selection.`,
         showCheckbox: true,
         checkboxLabel: "I have uploaded the file",
         primaryLabel: "Continue",
@@ -1597,7 +1892,7 @@ function getBlockerOverlayConfig(blocker: FormBlocker): OverlayConfig {
     case "agreement":
       return {
         title: "Agreement Required",
-        message: `${blocker.label} — Please check the box to agree.`,
+        message: `${blocker.label} ? Please check the box to agree.`,
         showCheckbox: true,
         checkboxLabel: "I have checked the agreement",
         primaryLabel: "Continue",
@@ -1834,6 +2129,16 @@ function onAutofillMessage(
 
       autofillRunInProgress = true;
       runAutofill(profile, runOptions)
+        .then((filledTypes) => {
+          if (filledTypes.length > 0) {
+            chrome.runtime
+              .sendMessage({
+                type: MSG.AUTOFILL_SESSION_UPDATE,
+                data: { newFilledFieldTypes: filledTypes },
+              })
+              .catch(() => {});
+          }
+        })
         .catch((err) => {
           const msg = err instanceof Error ? err.message : String(err);
           console.error("AUTOFILL: runAutofill error", err);
@@ -1877,11 +2182,14 @@ function onAutofillMessage(
 
   if (message.type === MSG.STOP_AUTOFILL) {
     stopped = true;
+    autofillRunInProgress = false;
+    sessionWatcherCleanup?.();
     if (resolveUploadBlockerDecision) {
       resolveUploadBlockerDecision("skipped_by_user");
       resolveUploadBlockerDecision = null;
     }
     removeOverlay();
+    removeSessionBadge();
     sendResponse({ success: true });
     return false;
   }
@@ -1916,6 +2224,22 @@ function onAutofillMessage(
     return false;
   }
 
+  if (message.type === MSG.AUTOFILL_SESSION_STARTED) {
+    showSessionBadge();
+    requestSessionWatcherActivation?.(false);
+    sendResponse({ success: true });
+    return false;
+  }
+
+  if (message.type === MSG.AUTOFILL_SESSION_CANCEL) {
+    sessionWatcherCleanup?.();
+    removeSessionBadge();
+    stopped = true;
+    autofillRunInProgress = false;
+    sendResponse({ success: true });
+    return false;
+  }
+
   if (message.type === MSG.DETECT_JOB_DESCRIPTION) {
     const selectors = [
       '[data-testid="jobDescription"]',
@@ -1946,5 +2270,189 @@ if (!autofillWindow.__aiAutofillMessageListenerRegistered) {
   console.log("AUTOFILL: message listener already registered, skipping duplicate registration");
 }
 
+// ---------------------------------------------------------------------------
+// Multi-page session: persistent watcher + direct relay continuation
+// ---------------------------------------------------------------------------
 
+async function getActiveSession(): Promise<AutofillSession | null> {
+  try {
+    const response: { active?: boolean; session?: AutofillSession } =
+      await chrome.runtime.sendMessage({ type: MSG.AUTOFILL_SESSION_CHECK });
+    if (!response?.active || !response.session) return null;
+    return response.session;
+  } catch {
+    return null;
+  }
+}
+
+async function runSessionFillPass(session: AutofillSession): Promise<number> {
+  const result = await chrome.storage.local.get([STORAGE_KEYS.USER_PROFILE]);
+  const profile = result[STORAGE_KEYS.USER_PROFILE] as UserProfile | undefined;
+  if (!profile) {
+    emitDiagTrace("Session", "No profile found for session continuation", "error");
+    return 0;
+  }
+
+  sendProgress({
+    state: "apply",
+    total: 0,
+    filled: 0,
+    manual: 0,
+    skipped: 0,
+    currentField: null,
+    currentAction: "session_continuation",
+    paused: false,
+    completed: false,
+    sessionComplete: false,
+    stepIndex: 0,
+    fields: [],
+    activeBlocker: null,
+    validationErrors: [],
+    lastFilledField: null,
+  });
+
+  emitDiagTrace("Session", `Continuing session on page: ${location.href}`);
+  const relayResponse = await withTimeout(
+    chrome.runtime.sendMessage({
+      type: MSG.RUN_SESSION_AUTOFILL,
+      data: {
+        profile,
+        sessionFilledFieldTypes: session.filledFieldTypes,
+      },
+    }) as Promise<SessionAutofillRelayResponse>,
+    30000,
+    "Session relay autofill"
+  );
+
+  if (!relayResponse?.success) {
+    throw new Error(relayResponse?.error ?? "Session relay autofill failed");
+  }
+
+  const total = relayResponse.total ?? 0;
+  const filled = relayResponse.filled ?? 0;
+  const skipped = relayResponse.skipped ?? 0;
+  sendProgress({
+    state: "complete",
+    total,
+    filled,
+    manual: 0,
+    skipped,
+    currentField: null,
+    currentAction: null,
+    paused: false,
+    completed: true,
+    sessionComplete: false,
+    stepIndex: 0,
+    fields: [],
+    activeBlocker: null,
+    validationErrors: [],
+    lastFilledField: null,
+  });
+  return filled;
+}
+
+function startSessionWatcher(): void {
+  if (window !== window.top || sessionWatcherStarted) return;
+  sessionWatcherStarted = true;
+
+  let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+  let urlPollTimer: ReturnType<typeof setInterval> | null = null;
+  let stopPassiveMonitor: (() => void) | null = null;
+  let unpatchHistory: (() => void) | null = null;
+  let watchersInstalled = false;
+  let lastUrl = location.href;
+
+  const teardown = () => {
+    if (debounceTimer) {
+      clearTimeout(debounceTimer);
+      debounceTimer = null;
+    }
+    if (urlPollTimer) {
+      clearInterval(urlPollTimer);
+      urlPollTimer = null;
+    }
+    if (stopPassiveMonitor) {
+      stopPassiveMonitor();
+      stopPassiveMonitor = null;
+    }
+    if (unpatchHistory) {
+      unpatchHistory();
+      unpatchHistory = null;
+    }
+    watchersInstalled = false;
+    autofillRunInProgress = false;
+    removeSessionBadge();
+  };
+  sessionWatcherCleanup = teardown;
+
+  const triggerContinuation = async (reason: string) => {
+    if (autofillRunInProgress) return;
+    const session = await getActiveSession();
+    if (!session) {
+      teardown();
+      return;
+    }
+
+    if (isSuccessPage()) {
+      emitDiagTrace("Session", `Success page detected (${reason}); ending session`);
+      chrome.runtime
+        .sendMessage({ type: MSG.AUTOFILL_SESSION_CANCEL, data: { reason: "success_page" } })
+        .catch(() => {});
+      teardown();
+      return;
+    }
+
+    showSessionBadge();
+    autofillRunInProgress = true;
+    try {
+      await runSessionFillPass(session);
+    } catch (err) {
+      emitDiagTrace(
+        "Session",
+        `Session continuation failed: ${err instanceof Error ? err.message : String(err)}`,
+        "warn"
+      );
+    } finally {
+      autofillRunInProgress = false;
+    }
+  };
+
+  const scheduleContinuation = (reason: string) => {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null;
+      void triggerContinuation(reason);
+    }, 400);
+  };
+
+  const installWatchers = () => {
+    if (watchersInstalled) return;
+    stopPassiveMonitor = startPassiveFormMonitor(() => scheduleContinuation("dom_mutation"));
+    unpatchHistory = patchHistoryAPI(() => scheduleContinuation("history_change"));
+    urlPollTimer = setInterval(() => {
+      if (location.href !== lastUrl) {
+        lastUrl = location.href;
+        scheduleContinuation("url_poll");
+      }
+    }, 1000);
+    watchersInstalled = true;
+  };
+
+  requestSessionWatcherActivation = (runInitialPass: boolean) => {
+    void (async () => {
+      const session = await getActiveSession();
+      if (!session) return;
+      showSessionBadge();
+      installWatchers();
+      if (runInitialPass) {
+        await sleep(800);
+        await triggerContinuation("initial_load");
+      }
+    })();
+  };
+
+  requestSessionWatcherActivation(true);
+}
+
+startSessionWatcher();
 

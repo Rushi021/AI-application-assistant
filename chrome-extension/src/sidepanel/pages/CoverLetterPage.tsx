@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useAppStore } from "../store";
 import { generateCoverLetter } from "../services/api";
+import WorkflowLayout from "../components/WorkflowLayout";
 
 export default function CoverLetterPage() {
   const { draft, coverLetter, setCoverLetter, setPage } = useAppStore();
@@ -47,32 +48,51 @@ export default function CoverLetterPage() {
   };
 
   return (
-    <div className="flex flex-col h-screen">
-      {/* Header */}
-      <div className="px-4 pt-4 pb-2">
-        <div className="flex items-center justify-between">
-          <h1 className="text-lg font-bold text-gray-900">Cover Letter</h1>
-          <span className="text-xs text-gray-400 font-medium">Step 4/5</span>
-        </div>
-        <p className="text-xs text-gray-500 mt-1">
-          Review the generated cover letter. Edit or regenerate with instructions.
-        </p>
-      </div>
-
-      {/* Cover letter text */}
-      <div className="flex-1 px-4 py-2 flex flex-col gap-2">
+    <WorkflowLayout
+      title="Cover letter"
+      subtitle="Review, edit, or regenerate before auto-fill"
+      footer={
+        <>
+          {error && <p className="text-xs text-red-400">{error}</p>}
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setPage("section-editor")}
+              className="px-4 py-2.5 text-sm font-medium text-wf-text border border-wf-border rounded-[10px] hover:bg-wf-surfaceHover shrink-0"
+            >
+              ← Back
+            </button>
+            <button
+              type="button"
+              onClick={handleDownload}
+              className="px-4 py-2.5 text-sm font-medium text-primary-400 border border-wf-border rounded-[10px] hover:bg-wf-surfaceHover shrink-0"
+            >
+              Download
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveAndContinue}
+              className="flex-1 py-2.5 text-sm font-semibold text-white bg-primary-500 rounded-[10px] hover:bg-primary-600"
+            >
+              Continue to auto-fill →
+            </button>
+          </div>
+        </>
+      }
+    >
+      <div className="flex-1 flex flex-col gap-3 px-4 pb-2 min-h-0">
         <textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
-          className="flex-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm resize-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none leading-relaxed"
-          placeholder="Cover letter will appear here after generation..."
+          className="flex-1 w-full min-h-[220px] rounded-[10px] border border-wf-border bg-wf-surface px-3.5 py-3 text-sm text-wf-text placeholder:text-wf-dim resize-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/40 outline-none leading-relaxed"
+          placeholder="Cover letter will appear here after generation…"
         />
 
-        {/* Regenerate with instructions */}
         <div>
           <button
+            type="button"
             onClick={() => setShowInstructions(!showInstructions)}
-            className="text-xs text-primary-600 hover:text-primary-700 font-medium"
+            className="text-xs text-primary-400 hover:text-primary-300 font-medium"
           >
             {showInstructions ? "Hide instructions" : "Regenerate with instructions"}
           </button>
@@ -81,46 +101,22 @@ export default function CoverLetterPage() {
               <textarea
                 value={instructions}
                 onChange={(e) => setInstructions(e.target.value)}
-                placeholder="e.g. Make it more concise, emphasize leadership..."
+                placeholder="e.g. Shorter, emphasize leadership…"
                 rows={2}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-xs resize-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500 outline-none"
+                className="w-full rounded-[10px] border border-wf-border bg-wf-bg px-3 py-2 text-xs text-wf-text placeholder:text-wf-dim resize-none focus:border-primary-500 outline-none"
               />
               <button
+                type="button"
                 onClick={handleRegenerate}
                 disabled={regenerating}
-                className="px-3 py-1.5 text-xs font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
+                className="px-3 py-1.5 text-xs font-semibold text-white bg-primary-500 rounded-lg hover:bg-primary-600 disabled:opacity-50"
               >
-                {regenerating ? "Regenerating..." : "Regenerate"}
+                {regenerating ? "Regenerating…" : "Regenerate"}
               </button>
             </div>
           )}
         </div>
       </div>
-
-      {/* Footer */}
-      <div className="px-4 py-3 border-t bg-white space-y-2">
-        {error && <p className="text-xs text-red-600">{error}</p>}
-        <div className="flex gap-2">
-          <button
-            onClick={() => setPage("section-editor")}
-            className="px-4 py-2 text-sm text-gray-600 border rounded-lg hover:bg-gray-50"
-          >
-            Back
-          </button>
-          <button
-            onClick={handleDownload}
-            className="px-4 py-2 text-sm text-primary-600 border border-primary-300 rounded-lg hover:bg-primary-50"
-          >
-            Download
-          </button>
-          <button
-            onClick={handleSaveAndContinue}
-            className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 transition-colors"
-          >
-            Continue to Auto-Fill
-          </button>
-        </div>
-      </div>
-    </div>
+    </WorkflowLayout>
   );
 }

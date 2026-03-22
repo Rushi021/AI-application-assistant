@@ -9,6 +9,7 @@ from datetime import datetime
 
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.oxml.ns import qn
 from docx.shared import Pt
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
@@ -269,6 +270,9 @@ def _apply_sections_to_docx(
     Uses per-paragraph formatting from parsed_json when available;
     otherwise falls back to copying the first run's font from the original.
     """
+    def _normalize_ws(text: str) -> str:
+        return re.sub(r"\s+", " ", text).strip()
+
     doc = Document(io.BytesIO(file_bytes))
     paragraphs = list(doc.paragraphs)
 
@@ -298,20 +302,38 @@ def _apply_sections_to_docx(
         )
 
         for pi, para in enumerate(target_paras):
+            # Layer 1 – structural: title paragraph is always first in a
+            # multi-paragraph section and is never rewritten.
+            if pi == 0 and len(target_paras) > 1:
+                continue
+
             if title_date_merge and pi == 1:
                 new_text = ""
             elif title_date_merge and pi > 1:
                 new_text = lines[pi - 1] if pi - 1 < len(lines) else ""
-            elif title_date_merge and pi == 0:
-                new_text = lines[0]
             else:
                 new_text = lines[pi] if pi < len(lines) else ""
             abs_idx = para_start + pi
 
-            if not para.text.strip() and not new_text:
+            # Layer 2 – content guard: never erase a paragraph that has
+            # real content (e.g. university names in education sections).
+            if not para.text.strip() and not new_text.strip():
+                continue
+            if not new_text.strip() and para.text.strip():
                 continue
 
+            # Layer 3 – text comparison: if whitespace-normalised content
+            # is identical, the paragraph is unchanged; skip to preserve
+            # original run-level formatting.
+            if _normalize_ws(new_text) == _normalize_ws(para.text):
+                continue
+
+            # --- paragraph IS being rewritten below this point ---
+
             first_run = para.runs[0] if para.runs else None
+            # Layer 4 – pPr preservation: capture paragraph-level XML
+            # (tab stops, indentation, alignment) before clearing.
+            p_pr = para._p.find(qn("w:pPr"))
             para.clear()
 
             if ":" in new_text and (first_run is not None or abs_idx in para_fmt_lookup):
@@ -333,6 +355,9 @@ def _apply_sections_to_docx(
                     _copy_run_font(first_run.font, new_run.font)
                 elif abs_idx in para_fmt_lookup:
                     _apply_fmt_to_run(new_run, para_fmt_lookup[abs_idx])
+
+            if p_pr is not None:
+                para._p.insert(0, p_pr)
 
     out = io.BytesIO()
     doc.save(out)

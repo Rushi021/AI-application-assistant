@@ -12,6 +12,8 @@ export const STORAGE_KEYS = {
   AUTOFILL_TRACE_LOG: "autofill_trace_log",
   /** Optional: URL to fetch resume file for programmatic file input fill (set by side panel when available). */
   RESUME_FILE_URL: "autofill_resume_file_url",
+  /** Multi-page autofill session state (chrome.storage.session). */
+  AUTOFILL_SESSION: "autofill_session",
 } as const;
 
 /** Message types for communication between extension parts */
@@ -38,6 +40,13 @@ export const MSG = {
   AUTOFILL_CONFIRM_SUBMIT: "AUTOFILL_CONFIRM_SUBMIT",
   AUTOFILL_COMPLETE: "AUTOFILL_COMPLETE",
   AUTOFILL_FIELD_MANUAL: "AUTOFILL_FIELD_MANUAL",
+
+  // Multi-page session
+  AUTOFILL_SESSION_STARTED: "AUTOFILL_SESSION_STARTED",
+  AUTOFILL_SESSION_CHECK: "AUTOFILL_SESSION_CHECK",
+  AUTOFILL_SESSION_UPDATE: "AUTOFILL_SESSION_UPDATE",
+  AUTOFILL_SESSION_CANCEL: "AUTOFILL_SESSION_CANCEL",
+  RUN_SESSION_AUTOFILL: "RUN_SESSION_AUTOFILL",
 
   // Profile
   GET_USER_PROFILE: "GET_USER_PROFILE",

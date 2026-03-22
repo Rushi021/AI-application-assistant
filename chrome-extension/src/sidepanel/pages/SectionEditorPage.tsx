@@ -4,6 +4,7 @@ import { patchSection, applySection, applyAllSections, generateCoverLetter, getD
 import type { DraftSection } from "@/shared/types";
 import SectionCard from "../components/SectionCard";
 import ChatInterface from "../components/ChatInterface";
+import WorkflowLayout from "../components/WorkflowLayout";
 
 const OTHER_GROUP = "Other";
 
@@ -36,8 +37,8 @@ export default function SectionEditorPage() {
 
   if (!draft) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <p className="text-sm text-gray-500">No draft loaded. Go back and select a resume.</p>
+      <div className="flex items-center justify-center h-screen bg-wf-bg px-4">
+        <p className="text-sm text-wf-muted text-center">No draft loaded. Go back and select a resume.</p>
       </div>
     );
   }
@@ -130,89 +131,82 @@ export default function SectionEditorPage() {
   const canShowStartAutofillShortcut = draft.starting_source === "base" && !hasEdits;
 
   return (
-    <div className="flex h-screen">
-      {/* Sections panel */}
-      <div className={`flex flex-col ${chatSectionId ? "w-1/2" : "w-full"} transition-all`}>
-        {/* Header */}
-        <div className="px-4 pt-4 pb-2">
-          <div className="flex items-center justify-between">
-            <h1 className="text-lg font-bold text-gray-900">Edit Sections</h1>
-            <span className="text-xs text-gray-400 font-medium">Step 3/5</span>
-          </div>
-          <p className="text-xs text-gray-500 mt-1">
-            Review and refine each section. Use the chat to ask AI for changes.
-          </p>
-        </div>
-
-        {/* Section list: main section headers with sub-section cards */}
-        <div className="flex-1 overflow-y-auto px-4 py-2 space-y-4">
-          {sectionGroups.map(({ groupTitle, sections: groupSections }) => (
-            <div key={groupTitle} className="space-y-2">
-              <h2 className="text-sm font-semibold text-gray-700 sticky top-0 bg-white/95 py-1 -mx-1 px-1">
-                {groupTitle}
-              </h2>
-              <div className="space-y-2">
-                {groupSections.map((section: DraftSection) => (
-                  <SectionCard
-                    key={section.section_id}
-                    section={section}
-                    chatOpen={chatSectionId === section.section_id}
-                    onEdit={(text) => handleEdit(section.section_id, text)}
-                    onOpenChat={() =>
-                      setChatSectionId(
-                        chatSectionId === section.section_id ? null : section.section_id
-                      )
-                    }
-                    onAcceptProposed={() => handleAcceptProposed(section.section_id)}
-                    onRejectProposed={() => handleRejectProposed(section.section_id)}
-                  />
-                ))}
+    <WorkflowLayout
+      title="Edit sections"
+      subtitle="Review and refine each section. Use Refine with AI for targeted edits."
+    >
+      <div className="flex flex-1 min-h-0 w-full min-w-0">
+        <div className={`flex flex-col min-w-0 min-h-0 transition-all ${chatSectionId ? "w-1/2" : "w-full"}`}>
+          <div className="flex-1 overflow-y-auto px-4 py-2 space-y-4 min-h-0">
+            {sectionGroups.map(({ groupTitle, sections: groupSections }) => (
+              <div key={groupTitle} className="space-y-2">
+                <h2 className="text-[10px] font-bold text-wf-dim tracking-widest uppercase sticky top-0 bg-wf-bg/95 backdrop-blur-sm py-2 -mx-1 px-1 z-[1]">
+                  {groupTitle}
+                </h2>
+                <div className="space-y-2">
+                  {groupSections.map((section: DraftSection) => (
+                    <SectionCard
+                      key={section.section_id}
+                      section={section}
+                      chatOpen={chatSectionId === section.section_id}
+                      onEdit={(text) => handleEdit(section.section_id, text)}
+                      onOpenChat={() =>
+                        setChatSectionId(
+                          chatSectionId === section.section_id ? null : section.section_id
+                        )
+                      }
+                      onAcceptProposed={() => handleAcceptProposed(section.section_id)}
+                      onRejectProposed={() => handleRejectProposed(section.section_id)}
+                    />
+                  ))}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
 
-        {/* Footer */}
-        <div className="px-4 py-3 border-t bg-white space-y-2">
-          {error && <p className="text-xs text-red-600">{error}</p>}
-          <div className="flex gap-2">
-            <button
-              onClick={() => setPage("resume-select")}
-              className="px-4 py-2 text-sm text-gray-600 border rounded-lg hover:bg-gray-50"
-            >
-              Back
-            </button>
-            {canShowStartAutofillShortcut && (
+          <div className="shrink-0 px-4 py-3 border-t border-wf-border bg-wf-bg space-y-2">
+            {error && <p className="text-xs text-red-400">{error}</p>}
+            <div className="flex gap-2">
               <button
-                onClick={handleStartAutofillShortcut}
-                className="px-4 py-2 text-sm font-medium text-primary-600 border border-primary-300 rounded-lg hover:bg-primary-50 transition-colors"
+                type="button"
+                onClick={() => setPage("resume-select")}
+                className="px-4 py-2.5 text-sm font-medium text-wf-text border border-wf-border rounded-[10px] hover:bg-wf-surfaceHover shrink-0"
               >
-                Start Autofill
+                ← Back
               </button>
-            )}
-            <button
-              onClick={handleApplyAll}
-              disabled={saving}
-              className="flex-1 px-4 py-2 text-sm font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
-            >
-              {saving ? "Applying..." : "Apply / Save Changes"}
-            </button>
+              {canShowStartAutofillShortcut && (
+                <button
+                  type="button"
+                  onClick={handleStartAutofillShortcut}
+                  className="px-3 py-2.5 text-sm font-medium text-primary-400 border border-wf-border rounded-[10px] hover:bg-wf-surfaceHover"
+                >
+                  Skip to autofill
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={handleApplyAll}
+                disabled={saving}
+                className="flex-1 py-2.5 text-sm font-semibold text-white bg-primary-500 rounded-[10px] hover:bg-primary-600 disabled:opacity-50"
+              >
+                {saving ? "Saving…" : "Save & continue →"}
+              </button>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Chat panel (slides in from right) */}
-      {chatSectionId && chatSectionData && (
-        <div className="w-1/2 border-l">
-          <ChatInterface
-            draftId={draft.id}
-            sectionId={chatSectionId}
-            sectionTitle={chatSectionData.section_title}
-            onProposedText={handleProposedText}
-            onClose={() => setChatSectionId(null)}
-          />
-        </div>
-      )}
-    </div>
+        {chatSectionId && chatSectionData && (
+          <div className="w-1/2 min-w-0 border-l border-wf-border flex flex-col min-h-0">
+            <ChatInterface
+              draftId={draft.id}
+              sectionId={chatSectionId}
+              sectionTitle={chatSectionData.section_title}
+              onProposedText={handleProposedText}
+              onClose={() => setChatSectionId(null)}
+            />
+          </div>
+        )}
+      </div>
+    </WorkflowLayout>
   );
 }

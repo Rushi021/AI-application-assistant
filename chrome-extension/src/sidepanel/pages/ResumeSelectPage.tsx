@@ -9,6 +9,7 @@ import {
   createDraft,
 } from "../services/api";
 import ResumeCard from "../components/ResumeCard";
+import WorkflowLayout from "../components/WorkflowLayout";
 
 export default function ResumeSelectPage() {
   const {
@@ -37,7 +38,6 @@ export default function ResumeSelectPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef2 = useRef<HTMLInputElement>(null);
 
-  // Fetch resumes and scores on mount
   useEffect(() => {
     (async () => {
       try {
@@ -188,48 +188,107 @@ export default function ResumeSelectPage() {
     }
   };
 
+  const tailorName = resumes.find((r) => r.id === tailorResumeId)?.original_filename ?? "Resume";
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-screen">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-600" />
+      <div className="flex flex-col h-screen bg-wf-bg text-wf-text">
+        <div className="flex-1 flex items-center justify-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-2 border-wf-border border-t-primary-500" />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-screen">
-      {/* Header */}
-      <div className="px-4 pt-4 pb-2">
-        <div className="flex items-center justify-between">
-          <h1 className="text-lg font-bold text-gray-900">Select Resume</h1>
-          <span className="text-xs text-gray-400 font-medium">Step 2/5</span>
-        </div>
-        <p className="text-xs text-gray-500 mt-1">
-          Choose a resume to use or tailor for this application.
-        </p>
-      </div>
-
-      {/* Tailor step: show when tailorResumeId is set */}
+    <WorkflowLayout
+      title={tailorResumeId ? "Tailor resume" : "Select resume"}
+      subtitle={
+        tailorResumeId
+          ? tailorName
+          : "Pick a resume to use or tailor for this role"
+      }
+      footer={
+        tailorResumeId ? (
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setTailorResumeId(null);
+                setShowInstructionsInput(false);
+                setInstructions("");
+              }}
+              className="px-4 py-2 text-sm text-wf-muted border border-transparent rounded-[10px] hover:text-wf-text"
+            >
+              ← Cancel
+            </button>
+          </div>
+        ) : (
+          <>
+            {error && <p className="text-xs text-red-400">{error}</p>}
+            {(removing || uploading) && (
+              <p className="text-xs text-wf-muted">{removing ? "Removing…" : "Uploading…"}</p>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setPage("job-description")}
+                className="px-4 py-2.5 text-sm font-medium text-wf-text border border-wf-border rounded-[10px] hover:bg-wf-surfaceHover"
+              >
+                ← Back
+              </button>
+              {resumes.length < 2 && (
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className="flex-1 py-2.5 text-sm font-medium text-primary-500 border border-wf-border rounded-[10px] hover:bg-wf-surfaceHover disabled:opacity-50"
+                >
+                  {uploading ? "Uploading…" : "+ Upload resume"}
+                </button>
+              )}
+            </div>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".docx,.doc,.pdf"
+              onChange={handleUpload}
+              className="hidden"
+            />
+            <input
+              ref={fileInputRef2}
+              type="file"
+              accept=".docx,.doc,.pdf"
+              onChange={handleUpload}
+              className="hidden"
+            />
+          </>
+        )
+      }
+    >
       {tailorResumeId ? (
         <div className="flex-1 overflow-y-auto px-4 py-2 space-y-3">
-          <div className="rounded-lg border-2 border-primary-200 bg-primary-50/50 p-4 space-y-3">
-            <p className="text-sm font-medium text-gray-900">
-              Tailor: {resumes.find((r) => r.id === tailorResumeId)?.original_filename ?? "Resume"}
+          <div className="rounded-xl border border-wf-border bg-wf-surface p-4 space-y-3">
+            <p className="text-sm font-semibold text-wf-text">What should the AI focus on?</p>
+            <p className="text-[11px] text-wf-muted leading-snug">
+              Optional: add instructions below, or continue to run the default tailoring pipeline.
             </p>
             {!showInstructionsInput ? (
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <button
+                  type="button"
                   onClick={() => setShowInstructionsInput(true)}
-                  className="px-3 py-2 text-xs font-medium text-primary-600 border border-primary-300 rounded-lg hover:bg-primary-50 transition-colors"
+                  className="px-3 py-2 text-xs font-medium text-wf-text border border-wf-border rounded-lg hover:bg-wf-surfaceHover"
                 >
-                  Add Additional Instructions
+                  Add specific instructions
                 </button>
                 <button
+                  type="button"
                   onClick={handleTailorContinue}
                   disabled={tailoring}
-                  className="px-3 py-2 text-xs font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
+                  className="px-3 py-2 text-xs font-semibold text-white bg-primary-500 rounded-lg hover:bg-primary-600 disabled:opacity-50"
                 >
-                  {tailoring ? "Tailoring..." : "Continue"}
+                  {tailoring ? "Starting…" : "Start tailoring →"}
                 </button>
               </div>
             ) : (
@@ -237,143 +296,98 @@ export default function ResumeSelectPage() {
                 <textarea
                   value={instructions}
                   onChange={(e) => setInstructions(e.target.value)}
-                  placeholder="e.g., Emphasize cloud experience, downplay front-end work..."
-                  className="w-full px-3 py-2 text-xs border border-gray-300 rounded-lg resize-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500"
+                  placeholder="e.g. Emphasize cloud experience, keep ProHealth on page one…"
+                  className="w-full px-3 py-2 text-xs border border-wf-border rounded-[10px] bg-wf-bg text-wf-text placeholder:text-wf-dim resize-none focus:border-primary-500 focus:ring-1 focus:ring-primary-500/30 outline-none"
                   rows={3}
                 />
                 <div className="flex gap-2">
                   <button
+                    type="button"
                     onClick={() => {
                       setShowInstructionsInput(false);
                       setInstructions("");
                     }}
-                    className="px-3 py-2 text-xs font-medium border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+                    className="px-3 py-2 text-xs font-medium text-wf-text border border-wf-border rounded-lg hover:bg-wf-surfaceHover"
                   >
                     Back
                   </button>
                   <button
+                    type="button"
                     onClick={handleTailorWithInstructions}
                     disabled={tailoring}
-                    className="px-3 py-2 text-xs font-medium text-white bg-primary-600 rounded-lg hover:bg-primary-700 disabled:opacity-50 transition-colors"
+                    className="px-3 py-2 text-xs font-semibold text-white bg-primary-500 rounded-lg hover:bg-primary-600 disabled:opacity-50"
                   >
-                    {tailoring ? "Tailoring..." : "Tailor"}
+                    {tailoring ? "Starting…" : "Start tailoring →"}
                   </button>
                 </div>
               </div>
             )}
-            <button
-              onClick={() => {
-                setTailorResumeId(null);
-                setShowInstructionsInput(false);
-                setInstructions("");
-              }}
-              className="text-xs text-gray-500 hover:text-gray-700"
-            >
-              Cancel
-            </button>
           </div>
         </div>
       ) : (
-        <>
-      {/* Resume slots (max 2) */}
-      <div className="flex-1 overflow-y-auto px-4 py-2 space-y-3">
-        {/* Slot 1 */}
-        {resumes[0] ? (
-          <ResumeCard
-            key={resumes[0].id}
-            resume={resumes[0]}
-            score={resumeScores.find((s) => s.resume_id === resumes[0].id)}
-            selected={selectedResumeId === resumes[0].id}
-            onSelect={() => setSelectedResumeId(resumes[0].id)}
-            onUse={() => handleUse(resumes[0].id)}
-            onTailor={() => handleTailorClick(resumes[0].id)}
-            onRemove={() => handleRemove(resumes[0].id)}
-            tailoring={tailoring}
-          />
-        ) : (
-          <div
-            onClick={() => !uploading && fileInputRef.current?.click()}
-            className={`flex flex-col items-center justify-center py-6 rounded-lg border-2 border-dashed transition-colors ${
-              uploading ? "border-gray-200 bg-gray-50 cursor-not-allowed" : "border-gray-300 hover:border-primary-400 hover:bg-primary-50/30 cursor-pointer"
-            }`}
-          >
-            <svg className="w-10 h-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-            </svg>
-            <p className="mt-2 text-sm text-gray-500">Upload resume (.docx)</p>
-          </div>
-        )}
-
-        {/* Slot 2 - only show when slot 1 is filled or we have 0 resumes */}
-        {resumes.length >= 1 && (
-          resumes[1] ? (
+        <div className="flex-1 overflow-y-auto px-4 py-2 space-y-3">
+          {resumes[0] ? (
             <ResumeCard
-              key={resumes[1].id}
-              resume={resumes[1]}
-              score={resumeScores.find((s) => s.resume_id === resumes[1].id)}
-              selected={selectedResumeId === resumes[1].id}
-              onSelect={() => setSelectedResumeId(resumes[1].id)}
-              onUse={() => handleUse(resumes[1].id)}
-              onTailor={() => handleTailorClick(resumes[1].id)}
-              onRemove={() => handleRemove(resumes[1].id)}
+              key={resumes[0].id}
+              resume={resumes[0]}
+              score={resumeScores.find((s) => s.resume_id === resumes[0].id)}
+              selected={selectedResumeId === resumes[0].id}
+              onSelect={() => setSelectedResumeId(resumes[0].id)}
+              onUse={() => handleUse(resumes[0].id)}
+              onTailor={() => handleTailorClick(resumes[0].id)}
+              onRemove={() => handleRemove(resumes[0].id)}
               tailoring={tailoring}
             />
           ) : (
-            <div
-              onClick={() => !uploading && fileInputRef2.current?.click()}
-              className={`flex flex-col items-center justify-center py-6 rounded-lg border-2 border-dashed transition-colors ${
-                uploading ? "border-gray-200 bg-gray-50 cursor-not-allowed" : "border-gray-300 hover:border-primary-400 hover:bg-primary-50/30 cursor-pointer"
+            <button
+              type="button"
+              onClick={() => !uploading && fileInputRef.current?.click()}
+              disabled={uploading}
+              className={`w-full flex flex-col items-center justify-center py-8 rounded-xl border-2 border-dashed transition-colors ${
+                uploading
+                  ? "border-wf-border bg-wf-surface/50 cursor-not-allowed opacity-60"
+                  : "border-wf-borderBright hover:border-primary-500/60 bg-wf-surface/40 hover:bg-wf-surface cursor-pointer"
               }`}
             >
-              <svg className="w-10 h-10 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
-              </svg>
-              <p className="mt-2 text-sm text-gray-500">Upload another resume (max 2)</p>
-            </div>
-          )
-        )}
-      </div>
-        </>
-      )}
-
-      {/* Footer */}
-      <div className="px-4 py-3 border-t bg-white space-y-2">
-        {error && <p className="text-xs text-red-600">{error}</p>}
-        {(removing || uploading) && (
-          <p className="text-xs text-gray-500">{removing ? "Removing..." : "Uploading..."}</p>
-        )}
-        <div className="flex gap-2">
-          <button
-            onClick={() => setPage("job-description")}
-            className="px-4 py-2 text-sm text-gray-600 border rounded-lg hover:bg-gray-50"
-          >
-            Back
-          </button>
-          {resumes.length < 2 && (
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              disabled={uploading}
-              className="flex-1 px-4 py-2 text-sm font-medium text-primary-600 border border-primary-300 rounded-lg hover:bg-primary-50 disabled:opacity-50 transition-colors"
-            >
-                {uploading ? "Uploading..." : "Upload Resume"}
+              <span className="text-3xl mb-1" aria-hidden>
+                📄
+              </span>
+              <p className="text-sm text-wf-muted">Upload resume (.docx, .pdf)</p>
             </button>
           )}
+
+          {resumes.length >= 1 &&
+            (resumes[1] ? (
+              <ResumeCard
+                key={resumes[1].id}
+                resume={resumes[1]}
+                score={resumeScores.find((s) => s.resume_id === resumes[1].id)}
+                selected={selectedResumeId === resumes[1].id}
+                onSelect={() => setSelectedResumeId(resumes[1].id)}
+                onUse={() => handleUse(resumes[1].id)}
+                onTailor={() => handleTailorClick(resumes[1].id)}
+                onRemove={() => handleRemove(resumes[1].id)}
+                tailoring={tailoring}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={() => !uploading && fileInputRef2.current?.click()}
+                disabled={uploading}
+                className={`w-full flex flex-col items-center justify-center py-6 rounded-xl border-2 border-dashed transition-colors ${
+                  uploading
+                    ? "border-wf-border bg-wf-surface/50 cursor-not-allowed opacity-60"
+                    : "border-wf-borderBright hover:border-primary-500/60 bg-wf-surface/40 hover:bg-wf-surface cursor-pointer"
+                }`}
+              >
+                <span className="text-2xl mb-1" aria-hidden>
+                  +
+                </span>
+                <p className="text-sm text-wf-muted">Upload another resume (max 2)</p>
+              </button>
+            ))}
         </div>
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept=".docx,.doc,.pdf"
-          onChange={handleUpload}
-          className="hidden"
-        />
-        <input
-          ref={fileInputRef2}
-          type="file"
-          accept=".docx,.doc,.pdf"
-          onChange={handleUpload}
-          className="hidden"
-        />
-      </div>
-    </div>
+      )}
+    </WorkflowLayout>
   );
 }
