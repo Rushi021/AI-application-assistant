@@ -25,6 +25,9 @@ Thumbs.db
 backend/app.db
 backend/data/
 backend/.env
+.env
+.env.production
+*.db
 
 # Chrome extension dependencies and build artifacts
 chrome-extension/node_modules/

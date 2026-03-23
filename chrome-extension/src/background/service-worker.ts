@@ -93,15 +93,186 @@ type SessionRelayFrameResult = {
   };
 };
 
-async function runSessionAutofillRelay(
-  tabId: number,
-  profile: Record<string, unknown>
-): Promise<{
+type FrameProbeDiagnostic = {
+  frameId: number;
+  fieldCount: number;
+  hasFormSignals: boolean;
+  probeTimeMs: number;
+  error?: string;
+};
+
+type FillAttemptDiagnostic = {
+  frameId: number;
+  filled: number;
+  skipped: number;
+  fillTimeMs: number;
+};
+
+type SequentialFrameAutofillResult = {
   total: number;
   filled: number;
   skipped: number;
   newFilledKeys: string[];
-}> {
+  framesScanned: number;
+  scannedFrameIds: number[];
+  frameId: number | null;
+  href: string | null;
+  isTop: boolean;
+  result: SessionRelayFrameResult["result"] | null;
+  reason?: "no_fields_found" | "frame_scan_limit";
+  frameProbes: FrameProbeDiagnostic[];
+  totalProbePhaseMs: number;
+  fillAttempts: FillAttemptDiagnostic[];
+};
+
+/** Cheap pre-check budget before deciding whether a frame deserves a full autofill attempt. */
+const FRAME_PREFLIGHT_TIMEOUT_MS = 1200;
+/** Full autofill budget per attempted frame. */
+const PER_FILL_ATTEMPT_MS = 6000;
+/** Hard cap on ordered frame attempts to keep direct + continuation runs bounded. */
+const MAX_FRAMES_TO_SCAN = 3;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${ms}ms`));
+    }, ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      }
+    );
+  });
+}
+
+async function probeFrameLightweight(tabId: number, frameId: number): Promise<FrameProbeDiagnostic> {
+  const t0 = Date.now();
+  try {
+    const exec = await withTimeout(
+      chrome.scripting.executeScript({
+        target: { tabId, frameIds: [frameId] },
+        func: () => {
+          const FORM_SIGNAL = /\b(name|email|phone|resume|experience|company|title|linkedin|address|work)\b/i;
+
+          const isVisible = (el: HTMLElement): boolean => {
+            const style = window.getComputedStyle(el);
+            if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
+            const rect = el.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          };
+
+          const getLabelText = (el: HTMLElement): string => {
+            const withLabels = el as HTMLElement & { labels?: NodeListOf<HTMLLabelElement> };
+            if (withLabels.labels && withLabels.labels.length > 0) {
+              return Array.from(withLabels.labels)
+                .map((l) => l.textContent?.trim() ?? "")
+                .join(" ");
+            }
+            const aria = el.getAttribute("aria-label") ?? "";
+            if (aria) return aria;
+            if (el.id) {
+              try {
+                const fallback = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+                if (fallback) return fallback.textContent?.trim() ?? "";
+              } catch {
+                const fb = document.querySelector(`label[for="${el.id.replace(/"/g, '\\"')}"]`);
+                if (fb) return fb.textContent?.trim() ?? "";
+              }
+            }
+            return "";
+          };
+
+          const controls = Array.from(
+            document.querySelectorAll(
+              'input:not([type="hidden"]):not([type="button"]):not([type="submit"]):not([type="reset"]), select, textarea'
+            )
+          ).filter((el): el is HTMLElement => el instanceof HTMLElement && !(el as HTMLInputElement).disabled && isVisible(el));
+
+          let hasFormSignals = false;
+          for (const el of controls) {
+            const hay = [
+              el.getAttribute("name") ?? "",
+              el.id ?? "",
+              el.getAttribute("placeholder") ?? "",
+              getLabelText(el),
+            ]
+              .join(" ")
+              .toLowerCase();
+            if (FORM_SIGNAL.test(hay)) {
+              hasFormSignals = true;
+              break;
+            }
+          }
+
+          return { fieldCount: controls.length, hasFormSignals };
+        },
+      }),
+      FRAME_PREFLIGHT_TIMEOUT_MS,
+      `probe frameId=${frameId}`
+    );
+    const raw = exec[0]?.result as { fieldCount?: number; hasFormSignals?: boolean } | undefined;
+    const probeTimeMs = Date.now() - t0;
+    return {
+      frameId,
+      fieldCount: typeof raw?.fieldCount === "number" ? raw.fieldCount : 0,
+      hasFormSignals: Boolean(raw?.hasFormSignals),
+      probeTimeMs,
+    };
+  } catch (err) {
+    const probeTimeMs = Date.now() - t0;
+    return {
+      frameId,
+      fieldCount: 0,
+      hasFormSignals: false,
+      probeTimeMs,
+      error: err instanceof Error ? err.message : String(err),
+    };
+  }
+}
+
+function shouldAttemptFrameFill(
+  probe: FrameProbeDiagnostic,
+  frameIndex: number
+): boolean {
+  if (frameIndex === 0) return true;
+  if (probe.error) return false;
+  return probe.fieldCount > 0 || probe.hasFormSignals;
+}
+
+async function getCandidateFrames(tabId: number): Promise<Array<{ frameId: number; url: string }>> {
+  const frames = await new Promise<chrome.webNavigation.GetAllFrameResultDetails[]>((resolve, reject) => {
+    chrome.webNavigation.getAllFrames({ tabId }, (items) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message ?? "getAllFrames failed"));
+        return;
+      }
+      resolve(items ?? []);
+    });
+  });
+
+  const filtered = frames.filter((frame) => {
+    const url = frame.url ?? "";
+    if (!url) return false;
+    if (url === "about:blank") return false;
+    if (url.startsWith("chrome-extension://")) return false;
+    return true;
+  });
+
+  filtered.sort((a, b) => {
+    if (a.frameId === 0 && b.frameId !== 0) return -1;
+    if (b.frameId === 0 && a.frameId !== 0) return 1;
+    return a.frameId - b.frameId;
+  });
+
+  return filtered.map((frame) => ({ frameId: frame.frameId, url: frame.url ?? "" }));
+}
+
+async function ensureDomRuntimeInjected(tabId: number): Promise<void> {
   let runtimeExistsInPrimaryFrame = false;
   try {
     const runtimeCheck = await chrome.scripting.executeScript({
@@ -110,7 +281,6 @@ async function runSessionAutofillRelay(
     });
     runtimeExistsInPrimaryFrame = Boolean(runtimeCheck[0]?.result);
   } catch {
-    // If check fails (restricted frame timing/context), proceed with injection.
     runtimeExistsInPrimaryFrame = false;
   }
 
@@ -120,84 +290,296 @@ async function runSessionAutofillRelay(
       files: ["content/dom-runtime.js"],
     });
   }
+}
 
-  const exec = await chrome.scripting.executeScript({
-    target: { tabId, allFrames: false },
-    args: [profile],
-    func: async (rawProfile) => {
-      const engine = (window as Window & {
-        __AI_DOM_CONTROL_ENGINE__?: {
-          runUnifiedAutofill: (input: unknown) => Promise<{
-            candidates: unknown[];
-            results: Array<{ action: string; canonicalKey: string | null }>;
-          }>;
+async function runUnifiedAutofillForFrame(
+  tabId: number,
+  frameId: number,
+  profile: Record<string, unknown>,
+  allowRetryAfterInjection = true
+): Promise<{
+  frameId: number;
+  href: string;
+  isTop: boolean;
+  result: SessionRelayFrameResult["result"];
+}> {
+  try {
+    const exec = await chrome.scripting.executeScript({
+      target: { tabId, frameIds: [frameId] },
+      args: [profile],
+      func: async (rawProfile) => {
+        const engine = (window as Window & {
+          __AI_DOM_CONTROL_ENGINE__?: {
+            runUnifiedAutofill: (input: unknown) => Promise<{
+              candidates: unknown[];
+              results: Array<{ action: string; canonicalKey: string | null }>;
+            }>;
+          };
+        }).__AI_DOM_CONTROL_ENGINE__;
+        if (!engine) {
+          throw new Error("DOM runtime not available in page context");
+        }
+        return {
+          href: window.location.href,
+          isTop: window === window.top,
+          result: await engine.runUnifiedAutofill(rawProfile),
         };
-      }).__AI_DOM_CONTROL_ENGINE__;
-      if (!engine) {
-        throw new Error("DOM runtime not available in page context");
-      }
-      return {
-        href: window.location.href,
-        isTop: window === window.top,
-        result: await engine.runUnifiedAutofill(rawProfile),
+      },
+    });
+
+    const value = exec[0]?.result as SessionRelayFrameResult | undefined;
+    if (!value) {
+      throw new Error(`No result returned for frameId=${frameId}`);
+    }
+    return { frameId, href: value.href, isTop: value.isTop, result: value.result };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (allowRetryAfterInjection && /DOM runtime not available/i.test(msg)) {
+      await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        files: ["content/dom-runtime.js"],
+      });
+      return runUnifiedAutofillForFrame(tabId, frameId, profile, false);
+    }
+    throw err;
+  }
+}
+
+async function hasResumeFieldInFrame(tabId: number, frameId: number): Promise<boolean> {
+  const exec = await chrome.scripting.executeScript({
+    target: { tabId, frameIds: [frameId] },
+    func: () => {
+      const resumePattern = /\b(resume|cv|upload)\b/i;
+      const headings = Array.from(document.querySelectorAll("h1, h2, h3, h4, [role='heading']"));
+
+      const isVisible = (el: HTMLElement): boolean => {
+        const style = window.getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
+        const rect = el.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0;
       };
+
+      const nearestHeadingText = (el: HTMLElement): string => {
+        const elRect = el.getBoundingClientRect();
+        let bestText = "";
+        let bestDistance = Number.POSITIVE_INFINITY;
+        for (const heading of headings) {
+          if (!(heading instanceof HTMLElement)) continue;
+          const rect = heading.getBoundingClientRect();
+          if (rect.bottom > elRect.top) continue;
+          const distance = Math.abs(elRect.top - rect.bottom);
+          if (distance < bestDistance) {
+            bestDistance = distance;
+            bestText = heading.textContent?.trim() ?? "";
+          }
+        }
+        return bestText;
+      };
+
+      const getLabelText = (input: HTMLInputElement): string => {
+        const labels = input.labels ? Array.from(input.labels) : [];
+        const explicit = labels.map((l) => l.textContent?.trim() ?? "").join(" ");
+        if (explicit) return explicit;
+        const aria = input.getAttribute("aria-label") ?? "";
+        if (aria) return aria;
+        if (input.id) {
+          const fallback = document.querySelector(`label[for=\"${CSS.escape(input.id)}\"]`);
+          if (fallback) return fallback.textContent?.trim() ?? "";
+        }
+        return "";
+      };
+
+      const inputs = Array.from(document.querySelectorAll("input[type='file']"))
+        .filter((input): input is HTMLInputElement => input instanceof HTMLInputElement)
+        .filter((input) => !input.disabled)
+        .filter((input) => isVisible(input));
+
+      return inputs.some((input) => {
+        const signal = [
+          getLabelText(input),
+          input.getAttribute("aria-label") ?? "",
+          input.name ?? "",
+          input.id ?? "",
+          nearestHeadingText(input),
+        ]
+          .join(" ")
+          .toLowerCase();
+        return resumePattern.test(signal);
+      });
     },
   });
+  return Boolean(exec[0]?.result);
+}
 
-  const frameResults = exec
-    .map((row) => {
-      const value = row.result as SessionRelayFrameResult | undefined;
-      if (!value) return null;
-      return {
-        frameId: row.frameId,
-        href: value.href,
-        isTop: value.isTop,
-        result: value.result,
-      };
-    })
-    .filter(
-      (
-        row
-      ): row is {
-        frameId: number;
-        href: string;
-        isTop: boolean;
-        result: SessionRelayFrameResult["result"];
-      } => row !== null
+async function runUnifiedAutofillSequential(
+  tabId: number,
+  profile: Record<string, unknown>
+): Promise<SequentialFrameAutofillResult> {
+  await ensureDomRuntimeInjected(tabId);
+
+  let frames: Array<{ frameId: number; url: string }> = [];
+  try {
+    frames = await getCandidateFrames(tabId);
+  } catch (err) {
+    emitDiagTrace(
+      "FrameScan",
+      `getAllFrames failed for tabId=${tabId}; fallback frame 0: ${err instanceof Error ? err.message : String(err)}`,
+      "warn"
+    );
+    frames = [{ frameId: 0, url: "" }];
+  }
+
+  if (frames.length === 0) {
+    frames = [{ frameId: 0, url: "" }];
+  }
+
+  const frameScanLimitExceeded = frames.length > MAX_FRAMES_TO_SCAN;
+  const framesToProbe = frames.slice(0, MAX_FRAMES_TO_SCAN);
+  if (frameScanLimitExceeded) {
+    emitDiagTrace(
+      "FrameScan",
+      `Scanning first ${MAX_FRAMES_TO_SCAN} of ${frames.length} frames`,
+      "warn"
+    );
+  }
+
+  const frameProbes: FrameProbeDiagnostic[] = [];
+  const fillAttempts: FillAttemptDiagnostic[] = [];
+  const scannedFrameIds = framesToProbe.map((f) => f.frameId);
+  const probePhaseStarted = Date.now();
+  let lastFrameResult: Awaited<ReturnType<typeof runUnifiedAutofillForFrame>> | null = null;
+
+  for (let i = 0; i < framesToProbe.length; i += 1) {
+    const frame = framesToProbe[i];
+    const probe = await probeFrameLightweight(tabId, frame.frameId);
+    frameProbes.push(probe);
+    emitDiagTrace(
+      "FrameProbe",
+      `frameId=${probe.frameId} fieldCount=${probe.fieldCount} hasFormSignals=${probe.hasFormSignals} probeTimeMs=${probe.probeTimeMs}${probe.error ? ` err=${probe.error}` : ""}`
     );
 
-  if (frameResults.length === 0) {
-    throw new Error("No frame returned session autofill results");
+    if (!shouldAttemptFrameFill(probe, i)) {
+      emitDiagTrace(
+        "FrameScan",
+        `Skipping frameId=${frame.frameId} after preflight`,
+        "info"
+      );
+      continue;
+    }
+
+    const fillStarted = Date.now();
+    try {
+      const frameResult = await withTimeout(
+        runUnifiedAutofillForFrame(tabId, frame.frameId, profile),
+        PER_FILL_ATTEMPT_MS,
+        `runUnifiedAutofill frameId=${frame.frameId}`
+      );
+      const fillTimeMs = Date.now() - fillStarted;
+      const filled = frameResult.result.results.filter((item) => item.action === "filled").length;
+      const skipped = frameResult.result.results.filter((item) => item.action.startsWith("skipped")).length;
+      fillAttempts.push({ frameId: frame.frameId, filled, skipped, fillTimeMs });
+      lastFrameResult = frameResult;
+
+      const hasMeaningfulResult =
+        filled > 0 ||
+        frameResult.result.results.length > 0 ||
+        frameResult.result.candidates.length > 0;
+
+      emitDiagTrace(
+        "FrameScan",
+        `Attempt=${i + 1} frameId=${frame.frameId} filled=${filled} resultCount=${frameResult.result.results.length} fillTimeMs=${fillTimeMs}`
+      );
+
+      if (hasMeaningfulResult) {
+        const totalProbePhaseMs = Date.now() - probePhaseStarted;
+        const newFilledKeys = Array.from(
+          new Set(
+            frameResult.result.results
+              .filter((item) => item.action === "filled" && typeof item.canonicalKey === "string")
+              .map((item) => item.canonicalKey as string)
+          )
+        );
+        return {
+          total: frameResult.result.results.length,
+          filled,
+          skipped,
+          newFilledKeys,
+          framesScanned: frameProbes.length,
+          scannedFrameIds,
+          frameId: frameResult.frameId,
+          href: frameResult.href,
+          isTop: frameResult.isTop,
+          result: frameResult.result,
+          frameProbes,
+          totalProbePhaseMs,
+          fillAttempts,
+        };
+      }
+    } catch (err) {
+      const fillTimeMs = Date.now() - fillStarted;
+      fillAttempts.push({ frameId: frame.frameId, filled: 0, skipped: 0, fillTimeMs });
+      emitDiagTrace(
+        "FrameScan",
+        `Attempt=${i + 1} frameId=${frame.frameId} failed: ${err instanceof Error ? err.message : String(err)}`,
+        "warn"
+      );
+    }
   }
 
-  const primary = frameResults.reduce<typeof frameResults[number] | null>((best, row) => {
-    if (!best) return row;
-    const bestFilled = best.result.results.filter((item) => item.action === "filled").length;
-    const rowFilled = row.result.results.filter((item) => item.action === "filled").length;
-    const bestMatched = best.result.results.filter((item) => item.canonicalKey !== null).length;
-    const rowMatched = row.result.results.filter((item) => item.canonicalKey !== null).length;
-    const bestScore = bestFilled * 1000 + bestMatched * 100 + best.result.candidates.length * 10;
-    const rowScore = rowFilled * 1000 + rowMatched * 100 + row.result.candidates.length * 10;
-    if (rowScore !== bestScore) return rowScore > bestScore ? row : best;
-    return row.isTop && !best.isTop ? row : best;
-  }, null);
+  const totalProbePhaseMs = Date.now() - probePhaseStarted;
+  emitDiagTrace("FrameScan", `Sequential scan complete totalProbePhaseMs=${totalProbePhaseMs} frames=${frameProbes.length}`);
 
-  if (!primary) {
-    throw new Error("No primary frame selected for session autofill");
+  if (lastFrameResult) {
+    const filled = lastFrameResult.result.results.filter((item) => item.action === "filled").length;
+    const skipped = lastFrameResult.result.results.filter((item) => item.action.startsWith("skipped")).length;
+    const newFilledKeys = Array.from(
+      new Set(
+        lastFrameResult.result.results
+          .filter((item) => item.action === "filled" && typeof item.canonicalKey === "string")
+          .map((item) => item.canonicalKey as string)
+      )
+    );
+    return {
+      total: lastFrameResult.result.results.length,
+      filled,
+      skipped,
+      newFilledKeys,
+      framesScanned: frameProbes.length,
+      scannedFrameIds,
+      frameId: lastFrameResult.frameId,
+      href: lastFrameResult.href,
+      isTop: lastFrameResult.isTop,
+      result: lastFrameResult.result,
+      reason: "no_fields_found",
+      frameProbes,
+      totalProbePhaseMs,
+      fillAttempts,
+    };
   }
 
-  const total = primary.result.results.length;
-  const filled = primary.result.results.filter((item) => item.action === "filled").length;
-  const skipped = primary.result.results.filter((item) => item.action.startsWith("skipped")).length;
-  const newFilledKeys = Array.from(
-    new Set(
-      primary.result.results
-        .filter((item) => item.action === "filled" && typeof item.canonicalKey === "string")
-        .map((item) => item.canonicalKey as string)
-    )
-  );
+  return {
+    total: 0,
+    filled: 0,
+    skipped: 0,
+    newFilledKeys: [],
+    framesScanned: frameProbes.length,
+    scannedFrameIds,
+    frameId: null,
+    href: null,
+    isTop: false,
+    result: null,
+    reason: frameScanLimitExceeded ? "frame_scan_limit" : "no_fields_found",
+    frameProbes,
+    totalProbePhaseMs,
+    fillAttempts,
+  };
+}
 
-  return { total, filled, skipped, newFilledKeys };
+async function runSessionAutofillRelay(
+  tabId: number,
+  profile: Record<string, unknown>
+): Promise<SequentialFrameAutofillResult> {
+  return runUnifiedAutofillSequential(tabId, profile);
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -360,6 +742,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           tabId,
           startedAt: Date.now(),
           filledFieldTypes: [],
+          resumeFileUploaded: false,
           pagesVisited: [message.data?.url ?? ""],
           suppressWorkAndSkills: !!message.data?.suppressWorkAndSkills,
           totalFilledAcrossPages: 0,
@@ -407,6 +790,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const updated: AutofillSession = {
         ...session,
         filledFieldTypes: Array.from(merged),
+        resumeFileUploaded: session.resumeFileUploaded || data.resumeFileUploaded === true,
         totalFilledAcrossPages: session.totalFilledAcrossPages + (data.filled ?? 0),
         totalSkippedAcrossPages: session.totalSkippedAcrossPages + (data.skipped ?? 0),
         totalManualAcrossPages: session.totalManualAcrossPages + (data.manual ?? 0),
@@ -452,6 +836,31 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         );
 
         const relayResult = await runSessionAutofillRelay(tabId, profile);
+        let uploadGateSkipReason: "no_resume_field_on_page" | "already_uploaded_this_session" | undefined;
+        if (relayResult.frameId != null) {
+          try {
+            const hasResumeField = await hasResumeFieldInFrame(tabId, relayResult.frameId);
+            if (!hasResumeField) {
+              uploadGateSkipReason = "no_resume_field_on_page";
+              emitDiagTrace(
+                "SessionUploadGate",
+                `skip_reason=${uploadGateSkipReason} frameId=${relayResult.frameId}`
+              );
+            } else if (session.resumeFileUploaded) {
+              uploadGateSkipReason = "already_uploaded_this_session";
+              emitDiagTrace(
+                "SessionUploadGate",
+                `skip_reason=${uploadGateSkipReason} frameId=${relayResult.frameId}`
+              );
+            }
+          } catch (err) {
+            emitDiagTrace(
+              "SessionUploadGate",
+              `Resume field preflight failed frameId=${relayResult.frameId}: ${err instanceof Error ? err.message : String(err)}`,
+              "warn"
+            );
+          }
+        }
         const dedupedNewFilledKeys = relayResult.newFilledKeys.filter((key) => !alreadyFilled.has(key));
 
         const mergedFilledTypes = new Set([...session.filledFieldTypes, ...dedupedNewFilledKeys]);
@@ -465,14 +874,84 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         emitDiagTrace(
           "Session",
-          `Relay pass finished tabId=${tabId} total=${relayResult.total} filled=${relayResult.filled} skipped=${relayResult.skipped} newKeys=${dedupedNewFilledKeys.length}`
+          `Relay pass finished tabId=${tabId} total=${relayResult.total} filled=${relayResult.filled} skipped=${relayResult.skipped} framesScanned=${relayResult.framesScanned} newKeys=${dedupedNewFilledKeys.length}`
         );
+        if (relayResult.reason === "no_fields_found") {
+          emitDiagTrace(
+            "Session",
+            `No fields found during continuation scan tabId=${tabId} framesScanned=${relayResult.framesScanned}`,
+            "warn"
+          );
+        }
         sendResponse({
           success: true,
           total: relayResult.total,
           filled: relayResult.filled,
           skipped: relayResult.skipped,
           newFilledKeys: dedupedNewFilledKeys,
+          framesScanned: relayResult.framesScanned,
+          scannedFrameIds: relayResult.scannedFrameIds,
+          frameId: relayResult.frameId,
+          reason: relayResult.reason,
+          uploadGateSkipReason,
+          frameProbes: relayResult.frameProbes,
+          totalProbePhaseMs: relayResult.totalProbePhaseMs,
+          fillAttempts: relayResult.fillAttempts,
+        });
+      } catch (err) {
+        sendResponse({
+          success: false,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    })();
+    return true;
+  }
+
+  if (message.type === MSG.RUN_DIRECT_AUTOFILL) {
+    (async () => {
+      try {
+        const tabId = message.data?.tabId as number | undefined;
+        if (typeof tabId !== "number") {
+          sendResponse({ success: false, error: "Missing tabId" });
+          return;
+        }
+        const profile = message.data?.profile as Record<string, unknown> | undefined;
+        if (!profile || typeof profile !== "object") {
+          sendResponse({ success: false, error: "Missing profile" });
+          return;
+        }
+
+        const result = await runUnifiedAutofillSequential(tabId, profile);
+        if (result.reason === "no_fields_found") {
+          emitDiagTrace(
+            "DirectAutofill",
+            `No fields found in frame scan tabId=${tabId} framesScanned=${result.framesScanned}`,
+            "warn"
+          );
+        } else {
+          emitDiagTrace(
+            "DirectAutofill",
+            `Direct pass finished tabId=${tabId} frameId=${result.frameId} total=${result.total} filled=${result.filled} skipped=${result.skipped} framesScanned=${result.framesScanned}`
+          );
+        }
+
+        sendResponse({
+          success: true,
+          total: result.total,
+          filled: result.filled,
+          skipped: result.skipped,
+          newFilledKeys: result.newFilledKeys,
+          framesScanned: result.framesScanned,
+          scannedFrameIds: result.scannedFrameIds,
+          frameId: result.frameId,
+          href: result.href,
+          isTop: result.isTop,
+          result: result.result,
+          reason: result.reason,
+          frameProbes: result.frameProbes,
+          totalProbePhaseMs: result.totalProbePhaseMs,
+          fillAttempts: result.fillAttempts,
         });
       } catch (err) {
         sendResponse({

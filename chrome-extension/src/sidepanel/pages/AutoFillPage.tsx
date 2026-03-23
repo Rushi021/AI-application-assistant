@@ -22,6 +22,31 @@ const STATE_LABELS: Record<string, string> = {
   stopped: "Stopped",
 };
 
+/**
+ * After a fill pass completes: show "Done" only when there is no active multi-page session
+ * (user must continue on further pages). If `sess.active === true`, always return false so the
+ * UI stays on "waiting for next step", not "Done".
+ * Short retries handle storage write lag after AUTOFILL_SESSION_STARTED.
+ */
+async function shouldMarkSessionCompleteAfterPass(): Promise<boolean> {
+  try {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const result = await chrome.storage.session.get([STORAGE_KEYS.AUTOFILL_SESSION]);
+      const sess = result[STORAGE_KEYS.AUTOFILL_SESSION] as AutofillSession | undefined;
+      if (sess?.active) return false;
+      if (sess && !sess.active) return true;
+      if (!sess && attempt < 2) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+    }
+    const result = await chrome.storage.session.get([STORAGE_KEYS.AUTOFILL_SESSION]);
+    const sess = result[STORAGE_KEYS.AUTOFILL_SESSION] as AutofillSession | undefined;
+    return !sess?.active;
+  } catch {
+    return true;
+  }
+}
+
 function getBlockerMessage(blocker: FormBlocker): string {
   switch (blocker.type) {
     case "file_upload":
@@ -104,6 +129,10 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
   });
 }
 
+function isResumeSignal(text: string): boolean {
+  return /\b(resume|cv|upload)\b/i.test(text);
+}
+
 export default function AutoFillPage() {
   const {
     autofillProgress,
@@ -131,6 +160,32 @@ export default function AutoFillPage() {
     href: string;
     isTop: boolean;
     result: UnifiedAutofillRunResult;
+  };
+  type FrameProbeRow = {
+    frameId: number;
+    fieldCount: number;
+    hasFormSignals: boolean;
+    probeTimeMs: number;
+    error?: string;
+  };
+  type FillAttemptRow = { frameId: number; filled: number; skipped: number; fillTimeMs: number };
+  type DirectAutofillRelayResponse = {
+    success?: boolean;
+    total?: number;
+    filled?: number;
+    skipped?: number;
+    newFilledKeys?: string[];
+    framesScanned?: number;
+    scannedFrameIds?: number[];
+    frameId?: number | null;
+    href?: string | null;
+    isTop?: boolean;
+    result?: UnifiedAutofillRunResult | null;
+    reason?: "no_fields_found" | "frame_scan_limit";
+    frameProbes?: FrameProbeRow[];
+    totalProbePhaseMs?: number;
+    fillAttempts?: FillAttemptRow[];
+    error?: string;
   };
   const [uploadDetectorResults, setUploadDetectorResults] = useState<Array<UploadDetectorFrameResult>>([]);
   const [autofillRunResults, setAutofillRunResults] = useState<Array<AutofillRunFrameResult>>([]);
@@ -360,6 +415,80 @@ export default function AutoFillPage() {
     });
   }, []);
 
+  const hasResumeFileFieldInFrame = useCallback(
+    async (tabId: number, frameId: number): Promise<boolean> => {
+      const rows = await chrome.scripting.executeScript({
+        target: { tabId, frameIds: [frameId] },
+        func: () => {
+          const resumePattern = /\b(resume|cv|upload)\b/i;
+          const headings = Array.from(document.querySelectorAll("h1, h2, h3, h4, [role='heading']"));
+          const isVisible = (el: HTMLElement): boolean => {
+            const style = window.getComputedStyle(el);
+            if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
+            const rect = el.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          };
+          const nearestHeadingText = (el: HTMLElement): string => {
+            const elRect = el.getBoundingClientRect();
+            let bestText = "";
+            let bestDistance = Number.POSITIVE_INFINITY;
+            for (const heading of headings) {
+              if (!(heading instanceof HTMLElement)) continue;
+              const rect = heading.getBoundingClientRect();
+              if (rect.bottom > elRect.top) continue;
+              const distance = Math.abs(elRect.top - rect.bottom);
+              if (distance < bestDistance) {
+                bestDistance = distance;
+                bestText = heading.textContent?.trim() ?? "";
+              }
+            }
+            return bestText;
+          };
+          const getLabelText = (input: HTMLInputElement): string => {
+            const labels = input.labels ? Array.from(input.labels) : [];
+            const explicit = labels.map((l) => l.textContent?.trim() ?? "").join(" ");
+            if (explicit) return explicit;
+            const aria = input.getAttribute("aria-label") ?? "";
+            if (aria) return aria;
+            if (input.id) {
+              const fallback = document.querySelector(`label[for=\"${CSS.escape(input.id)}\"]`);
+              if (fallback) return fallback.textContent?.trim() ?? "";
+            }
+            return "";
+          };
+          const inputs = Array.from(document.querySelectorAll("input[type='file']"))
+            .filter((input): input is HTMLInputElement => input instanceof HTMLInputElement)
+            .filter((input) => !input.disabled)
+            .filter((input) => isVisible(input));
+          return inputs.some((input) => {
+            const signal = [
+              getLabelText(input),
+              input.getAttribute("aria-label") ?? "",
+              input.name ?? "",
+              input.id ?? "",
+              nearestHeadingText(input),
+            ]
+              .join(" ")
+              .toLowerCase();
+            return resumePattern.test(signal);
+          });
+        },
+      });
+      return Boolean(rows[0]?.result);
+    },
+    []
+  );
+
+  const isResumeAlreadyUploadedInSession = useCallback(async (): Promise<boolean> => {
+    try {
+      const response = await chrome.runtime.sendMessage({ type: MSG.AUTOFILL_SESSION_CHECK });
+      const session = (response as { session?: AutofillSession })?.session;
+      return Boolean(session?.active && session.resumeFileUploaded === true);
+    } catch {
+      return false;
+    }
+  }, []);
+
   const persistAutofillProgress = useCallback(
     async (progress: AutofillProgress | null) => {
       setAutofillProgress(progress);
@@ -452,66 +581,70 @@ export default function AutoFillPage() {
 
     appendTimeline("Direct autofill flow started");
     const { id: tabId } = await withTimeout(getActiveTab(), 5000, "Resolve active tab");
-    await withTimeout(ensureDomRuntime(tabId), 10000, "Inject DOM runtime");
 
     appendTimeline("Running full deterministic autofill pass");
-    const exec = await withTimeout(
-      chrome.scripting.executeScript({
-        target: { tabId, allFrames: true },
-        args: [effectiveProfile],
-        func: async (rawProfile) => {
-          const engine = (window as Window & {
-            __AI_DOM_CONTROL_ENGINE__?: {
-              runUnifiedAutofill: (profile: UserProfile) => Promise<UnifiedAutofillRunResult>;
-            };
-          }).__AI_DOM_CONTROL_ENGINE__;
-          if (!engine) {
-            throw new Error("DOM runtime not available in page context");
-          }
-          return {
-            href: window.location.href,
-            isTop: window === window.top,
-            result: await engine.runUnifiedAutofill(rawProfile as UserProfile),
-          };
-        },
-      }),
-      25000,
-      "Autofill execution"
+    const relay = await withTimeout(
+      chrome.runtime.sendMessage({
+        type: MSG.RUN_DIRECT_AUTOFILL,
+        data: { tabId, profile: effectiveProfile },
+      }) as Promise<DirectAutofillRelayResponse>,
+      22000,
+      "Direct autofill relay execution"
     );
-
-    const frameResults = exec
-      .map((row) => {
-        const value = row.result as Omit<AutofillRunFrameResult, "frameId"> | undefined;
-        if (!value) return null;
-        return {
-          frameId: row.frameId,
-          href: value.href,
-          isTop: value.isTop,
-          result: value.result,
-        } satisfies AutofillRunFrameResult;
-      })
-      .filter((row): row is AutofillRunFrameResult => row !== null)
-      .sort((a, b) => Number(b.isTop) - Number(a.isTop));
-    if (frameResults.length === 0) {
-      throw new Error("No frame returned autofill results");
+    if (!relay?.success) {
+      throw new Error(relay?.error ?? "Direct autofill relay failed");
     }
 
-    setAutofillRunResults(frameResults);
-    const primary = getPrimaryFrame(frameResults, (row) => {
-      const filledCount = row.result.results.filter((item) => item.action === "filled").length;
-      const matchedCount = row.result.results.filter((item) => item.canonicalKey !== null).length;
-      return filledCount * 1000 + matchedCount * 100 + row.result.candidates.length * 10;
-    });
-    const total = primary?.result.results.length ?? 0;
-    const filled = primary?.result.results.filter((item) => item.action === "filled").length ?? 0;
-    const failed =
-      primary?.result.results.filter((item) => item.action === "failed_write" || item.action === "failed_verify").length ?? 0;
-    const skipped = primary?.result.results.filter((item) => item.action.startsWith("skipped")).length ?? 0;
-    appendTimeline(`Autofill pass finished: total=${total}, filled=${filled}, skipped=${skipped}, failed=${failed}`);
+    if (relay.reason === "no_fields_found") {
+      appendTimeline(
+        `No fillable fields found after scanning ${relay.framesScanned ?? 0} frame(s)`,
+        "warn"
+      );
+    } else if (relay.reason === "frame_scan_limit") {
+      appendTimeline(
+        `Autofill scan stopped after ${relay.framesScanned ?? 0} frame(s) (iframe limit); try the page’s main frame or fewer embedded frames`,
+        "warn"
+      );
+    }
 
-    const filledCanonicalKeys = primary?.result.results
-      .filter((r) => r.action === "filled" && r.canonicalKey)
-      .map((r) => r.canonicalKey!) ?? [];
+    const primaryResult: UnifiedAutofillRunResult = relay.result ?? {
+      candidates: [],
+      results: [],
+      phase1Results: [],
+      radioResults: [],
+      checkboxResults: [],
+      dropdownResults: [],
+    };
+    const primaryFrame: AutofillRunFrameResult | null =
+      relay.frameId != null && relay.href
+        ? {
+            frameId: relay.frameId,
+            href: relay.href,
+            isTop: Boolean(relay.isTop),
+            result: primaryResult,
+          }
+        : null;
+
+    setAutofillRunResults(primaryFrame ? [primaryFrame] : []);
+    const total = relay.total ?? primaryResult.results.length;
+    const filled = relay.filled ?? primaryResult.results.filter((item) => item.action === "filled").length;
+    const failed = primaryResult.results.filter((item) => item.action === "failed_write" || item.action === "failed_verify").length;
+    const skipped = relay.skipped ?? primaryResult.results.filter((item) => item.action.startsWith("skipped")).length;
+    const probeSummary =
+      relay.frameProbes && relay.frameProbes.length > 0
+        ? ` probePhase=${relay.totalProbePhaseMs ?? "?"}ms [${relay.frameProbes
+            .map((p) => `f${p.frameId}:${p.probeTimeMs}ms${p.hasFormSignals ? "*" : ""}`)
+            .join(", ")}]`
+        : "";
+    const fillSummary =
+      relay.fillAttempts && relay.fillAttempts.length > 0
+        ? ` fills=[${relay.fillAttempts.map((a) => `f${a.frameId}:${a.fillTimeMs}ms`).join(", ")}]`
+        : "";
+    appendTimeline(
+      `Autofill pass finished: total=${total}, filled=${filled}, skipped=${skipped}, failed=${failed}, framesProbed=${relay.framesScanned ?? 0}${probeSummary}${fillSummary}`
+    );
+
+    const filledCanonicalKeys = (relay.newFilledKeys ?? []).filter((key): key is string => typeof key === "string");
     if (filledCanonicalKeys.length > 0) {
       chrome.runtime
         .sendMessage({
@@ -521,6 +654,7 @@ export default function AutoFillPage() {
         .catch(() => {});
     }
 
+    await withTimeout(ensureDomRuntime(tabId), 10000, "Inject DOM runtime");
     const detectorExec = await withTimeout(
       chrome.scripting.executeScript({
         target: { tabId, allFrames: true },
@@ -566,7 +700,7 @@ export default function AutoFillPage() {
         row.result.visibleUploadTriggers.length
     );
 
-    const nextBlocker = primaryDetectorFrame?.result.candidates.find((candidate) => {
+    let nextBlocker = primaryDetectorFrame?.result.candidates.find((candidate) => {
       const key = `${candidate.selector}::${candidate.subType ?? "generic"}`;
       if (handledUploadBlockerKeysRef.current.has(key)) {
         return false;
@@ -602,6 +736,20 @@ export default function AutoFillPage() {
       return true;
     });
 
+    if (nextBlocker?.subType === "resume" && primaryDetectorFrame?.frameId != null) {
+      const hasResumeField = await hasResumeFileFieldInFrame(tabId, primaryDetectorFrame.frameId);
+      if (!hasResumeField) {
+        appendTimeline("Upload gate skipped: { skip_reason: 'no_resume_field_on_page' }");
+        nextBlocker = undefined;
+      } else {
+        const alreadyUploaded = await isResumeAlreadyUploadedInSession();
+        if (alreadyUploaded) {
+          appendTimeline("Upload gate skipped: { skip_reason: 'already_uploaded_this_session' }");
+          nextBlocker = undefined;
+        }
+      }
+    }
+
     if (nextBlocker) {
       appendTimeline(`Upload blocker detected: ${nextBlocker.subType} selector=${nextBlocker.selector}`, "warn");
       await persistAutofillProgress({
@@ -630,6 +778,8 @@ export default function AutoFillPage() {
       return;
     }
 
+    const sessionComplete = await shouldMarkSessionCompleteAfterPass();
+
     if (total === 0) {
       appendTimeline("No supported fields were detected on this step", "warn");
       await persistAutofillProgress({
@@ -642,7 +792,7 @@ export default function AutoFillPage() {
         currentAction: null,
         paused: false,
         completed: true,
-        sessionComplete: false,
+        sessionComplete,
         stepIndex: 0,
         fields: [],
         activeBlocker: null,
@@ -662,14 +812,22 @@ export default function AutoFillPage() {
       currentAction: null,
       paused: false,
       completed: true,
-      sessionComplete: false,
+      sessionComplete,
       stepIndex: 0,
       fields: [],
       activeBlocker: null,
       validationErrors: [],
       lastFilledField: null,
     });
-  }, [appendTimeline, effectiveProfile, ensureDomRuntime, getActiveTab, persistAutofillProgress]);
+  }, [
+    appendTimeline,
+    effectiveProfile,
+    ensureDomRuntime,
+    getActiveTab,
+    hasResumeFileFieldInFrame,
+    isResumeAlreadyUploadedInSession,
+    persistAutofillProgress,
+  ]);
 
   const handleStartAutofill = useCallback(async () => {
     setError(null);
@@ -691,15 +849,15 @@ export default function AutoFillPage() {
               suppressWorkAndSkills: autofillContext.suppressWorkAndSkills,
             },
           }),
-          3000,
+          2500,
           "Session creation handshake"
         )
           .then((resp) => {
             if ((resp as { success?: boolean })?.success === false) {
               appendTimeline("Session create failed, continuing one-page autofill", "warn");
-              return;
+            } else {
+              appendTimeline("Multi-page session ready — further pages will auto-fill");
             }
-            appendTimeline("Multi-page session created");
           })
           .catch(() => {
             appendTimeline("Session create timed out, continuing one-page autofill", "warn");
@@ -765,6 +923,14 @@ export default function AutoFillPage() {
         `Upload decision: ${decision} (${blocker.subType ?? "generic"})`,
         decision === "skipped_by_user" ? "warn" : "info"
       );
+      if (blocker.subType === "resume" && decision === "resolved_by_user") {
+        chrome.runtime
+          .sendMessage({
+            type: MSG.AUTOFILL_SESSION_UPDATE,
+            data: { resumeFileUploaded: true },
+          })
+          .catch(() => {});
+      }
       await persistAutofillProgress({
         state: "apply",
         total: autofillProgress?.total ?? 0,
@@ -1093,6 +1259,12 @@ export default function AutoFillPage() {
                     </>
                   )}
                 </div>
+                {isSessionComplete && (
+                  <p className="text-xs text-green-200/80 mt-2">
+                    Auto-tracking runs when you tap <span className="font-semibold">Done — track application</span> below — that
+                    saves the entry to your account. Submit the employer&apos;s form in the tab first if you haven&apos;t already.
+                  </p>
+                )}
                 {!isSessionComplete && sessionActive && (
                   <div className="mt-2 flex items-center gap-2">
                     <p className="text-xs text-blue-200/90 flex-1">
@@ -1384,4 +1556,3 @@ function StatCard({
     </div>
   );
 }
-

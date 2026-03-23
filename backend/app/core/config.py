@@ -1,6 +1,7 @@
 from functools import lru_cache
-from typing import List
+from typing import List, Optional
 
+from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,14 +9,43 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
     app_name: str = "AI Job Application Assistant"
-    environment: str = "development"
+    environment: str = Field(default="development", validation_alias=AliasChoices("ENVIRONMENT"))
 
-    database_url: str = "sqlite:///./app.db"
+    # Unsafe for production; production validator rejects this default.
+    database_url: str = Field(
+        default="sqlite:///./app.db",
+        validation_alias=AliasChoices("DATABASE_URL"),
+    )
 
-    storage_backend: str = "local"
-    local_storage_path: str = "./data/resumes"
+    storage_backend: str = Field(default="local", validation_alias=AliasChoices("STORAGE_BACKEND"))
+    local_storage_path: str = Field(
+        default="./data/resumes",
+        validation_alias=AliasChoices("LOCAL_STORAGE_PATH"),
+    )
+    allowed_origins: str = Field(default="", validation_alias=AliasChoices("ALLOWED_ORIGINS"))
     max_upload_size_mb: int = 10
     allowed_extensions: str = "pdf,doc,docx"
+
+    aws_access_key_id: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("AWS_ACCESS_KEY_ID"),
+    )
+    aws_secret_access_key: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("AWS_SECRET_ACCESS_KEY"),
+    )
+    aws_endpoint_url: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("AWS_ENDPOINT_URL"),
+    )
+    s3_bucket_name: str = Field(
+        default="resumes",
+        validation_alias=AliasChoices("S3_BUCKET_NAME"),
+    )
+    api_key_encryption_key: Optional[str] = Field(
+        default=None,
+        validation_alias=AliasChoices("API_KEY_ENCRYPTION_KEY"),
+    )
 
     # Output paths for generated/tailored files saved to local machine
     output_resume_path: str = r"E:\rushi\storage - resume\resumes"
@@ -26,11 +56,22 @@ class Settings(BaseSettings):
     test_password: str = "testpass"
     test_token: str = "test-token"
 
-    # Google OAuth
-    google_oauth_client_id: str = ""
+    # Unsafe for production; production validator rejects empty values.
+    google_client_id: str = Field(
+        default="",
+        validation_alias=AliasChoices("GOOGLE_CLIENT_ID", "GOOGLE_OAUTH_CLIENT_ID"),
+    )
+    google_client_secret: str = Field(
+        default="",
+        validation_alias=AliasChoices("GOOGLE_CLIENT_SECRET"),
+    )
 
     # JWT settings
-    jwt_secret_key: str = "change-me-in-production-use-a-long-random-string"
+    # Unsafe for production; production validator rejects this default.
+    secret_key: str = Field(
+        default="local-dev-secret-do-not-use-in-production",
+        validation_alias=AliasChoices("SECRET_KEY", "JWT_SECRET_KEY"),
+    )
     jwt_algorithm: str = "HS256"
     jwt_access_token_expire_minutes: int = 60 * 24  # 24 hours
     jwt_refresh_token_expire_minutes: int = 60 * 24 * 30  # 30 days
@@ -42,6 +83,35 @@ class Settings(BaseSettings):
     @property
     def allowed_extensions_list(self) -> List[str]:
         return [ext.strip().lower() for ext in self.allowed_extensions.split(",") if ext.strip()]
+
+    @property
+    def allowed_origins_list(self) -> List[str]:
+        if self.allowed_origins.strip():
+            return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
+        return ["http://localhost:3000", "http://localhost:5173"]
+
+    def validate_startup_requirements(self) -> None:
+        if self.environment != "production":
+            return
+
+        invalid: list[str] = []
+
+        if not self.database_url.strip() or self.database_url == "sqlite:///./app.db":
+            invalid.append("DATABASE_URL")
+
+        if not self.secret_key.strip() or self.secret_key == "local-dev-secret-do-not-use-in-production":
+            invalid.append("SECRET_KEY")
+
+        if not self.google_client_id.strip():
+            invalid.append("GOOGLE_CLIENT_ID")
+
+        if not self.google_client_secret.strip():
+            invalid.append("GOOGLE_CLIENT_SECRET")
+
+        if invalid:
+            raise RuntimeError(
+                "Missing or insecure production configuration values: " + ", ".join(invalid)
+            )
 
 
 @lru_cache

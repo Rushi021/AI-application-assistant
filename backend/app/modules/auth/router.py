@@ -91,7 +91,7 @@ def dev_login(payload: DevLoginRequest, db: Session = Depends(get_db)) -> TokenR
     """
     settings = get_settings()
     if settings.environment != "development":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Dev login disabled in production")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
     if not payload.email or not payload.email.strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email is required")

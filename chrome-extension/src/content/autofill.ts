@@ -940,6 +940,82 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): 
   });
 }
 
+function hasVisibleResumeFileFieldOnPage(): boolean {
+  const resumePattern = /\b(resume|cv|upload)\b/i;
+  const headings = Array.from(document.querySelectorAll("h1, h2, h3, h4, [role='heading']"));
+  const isVisible = (el: HTMLElement): boolean => {
+    const style = window.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  };
+  const nearestHeadingText = (el: HTMLElement): string => {
+    const elRect = el.getBoundingClientRect();
+    let bestText = "";
+    let bestDistance = Number.POSITIVE_INFINITY;
+    for (const heading of headings) {
+      if (!(heading instanceof HTMLElement)) continue;
+      const rect = heading.getBoundingClientRect();
+      if (rect.bottom > elRect.top) continue;
+      const distance = Math.abs(elRect.top - rect.bottom);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestText = heading.textContent?.trim() ?? "";
+      }
+    }
+    return bestText;
+  };
+  const getLabelText = (input: HTMLInputElement): string => {
+    const labels = input.labels ? Array.from(input.labels) : [];
+    const explicit = labels.map((label) => label.textContent?.trim() ?? "").join(" ");
+    if (explicit) return explicit;
+    const aria = input.getAttribute("aria-label") ?? "";
+    if (aria) return aria;
+    if (input.id) {
+      const fallback = document.querySelector(`label[for=\"${CSS.escape(input.id)}\"]`);
+      if (fallback) return fallback.textContent?.trim() ?? "";
+    }
+    return "";
+  };
+
+  const inputs = Array.from(document.querySelectorAll("input[type='file']"))
+    .filter((input): input is HTMLInputElement => input instanceof HTMLInputElement)
+    .filter((input) => !input.disabled)
+    .filter((input) => isVisible(input));
+
+  return inputs.some((input) => {
+    const signal = [
+      getLabelText(input),
+      input.getAttribute("aria-label") ?? "",
+      input.name ?? "",
+      input.id ?? "",
+      nearestHeadingText(input),
+    ]
+      .join(" ")
+      .toLowerCase();
+    return resumePattern.test(signal);
+  });
+}
+
+async function isResumeAlreadyUploadedInSession(): Promise<boolean> {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: MSG.AUTOFILL_SESSION_CHECK });
+    const session = (response as { session?: AutofillSession })?.session;
+    return Boolean(session?.active && session.resumeFileUploaded === true);
+  } catch {
+    return false;
+  }
+}
+
+function markResumeUploadedInSession(): void {
+  chrome.runtime
+    .sendMessage({
+      type: MSG.AUTOFILL_SESSION_UPDATE,
+      data: { resumeFileUploaded: true },
+    })
+    .catch(() => {});
+}
+
 function shouldSuppressWorkAndSkillsField(field: FormField): boolean {
   if (SUPPRESSED_WORK_SKILL_FIELD_TYPES.has(field.fieldType)) {
     return true;
@@ -1187,8 +1263,25 @@ async function runAutofillLoop(
 
     if (unresolvedBlockers.length > 0) {
       const blocker = unresolvedBlockers[0];
+
+      if (blocker.type === "file_upload" && blocker.subType === "resume") {
+        if (!hasVisibleResumeFileFieldOnPage()) {
+          handledUploadBlockers.set(getUploadBlockerKey(blocker), "skipped_by_user");
+          emitDiagTrace("UploadBlocker", "skip_reason=no_resume_field_on_page");
+          continue;
+        }
+        if (await isResumeAlreadyUploadedInSession()) {
+          handledUploadBlockers.set(getUploadBlockerKey(blocker), "resolved_by_user");
+          emitDiagTrace("UploadBlocker", "skip_reason=already_uploaded_this_session");
+          continue;
+        }
+      }
+
       const filled = await tryFillFileBlocker(blocker);
       if (filled) {
+        if (blocker.type === "file_upload" && blocker.subType === "resume") {
+          markResumeUploadedInSession();
+        }
         continue;
       }
 
@@ -1204,6 +1297,9 @@ async function runAutofillLoop(
         });
         resolveUploadBlockerDecision = null;
         handledUploadBlockers.set(getUploadBlockerKey(blocker), decision);
+        if (blocker.subType === "resume" && decision === "resolved_by_user") {
+          markResumeUploadedInSession();
+        }
         emitDiagTrace("UploadBlocker", `Decision ${decision} selector=${blocker.selector}`, "info");
         progress.paused = false;
         progress.activeBlocker = null;
@@ -2320,7 +2416,7 @@ async function runSessionFillPass(session: AutofillSession): Promise<number> {
         sessionFilledFieldTypes: session.filledFieldTypes,
       },
     }) as Promise<SessionAutofillRelayResponse>,
-    30000,
+    22000,
     "Session relay autofill"
   );
 
@@ -2455,4 +2551,3 @@ function startSessionWatcher(): void {
 }
 
 startSessionWatcher();
-

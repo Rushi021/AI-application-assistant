@@ -28,7 +28,7 @@ def create_access_token(user_id: int, email: str) -> str:
         "exp": expire,
         "iat": datetime.now(timezone.utc),
     }
-    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    return jwt.encode(payload, settings.secret_key, algorithm=settings.jwt_algorithm)
 
 
 def create_refresh_token(user_id: int) -> str:
@@ -41,14 +41,14 @@ def create_refresh_token(user_id: int) -> str:
         "exp": expire,
         "iat": datetime.now(timezone.utc),
     }
-    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+    return jwt.encode(payload, settings.secret_key, algorithm=settings.jwt_algorithm)
 
 
 def decode_jwt_token(token: str) -> dict:
     """Decode and validate a JWT token. Raises HTTPException on failure."""
     settings = get_settings()
     try:
-        payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+        payload = jwt.decode(token, settings.secret_key, algorithms=[settings.jwt_algorithm])
         return payload
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired")

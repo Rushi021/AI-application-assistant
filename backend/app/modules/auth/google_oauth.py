@@ -44,9 +44,9 @@ async def verify_google_id_token(id_token: str) -> GoogleUser:
     payload = resp.json()
 
     # Validate audience matches our client ID (skip if not configured for dev)
-    if settings.google_oauth_client_id:
+    if settings.google_client_id:
         aud = payload.get("aud", "")
-        if aud != settings.google_oauth_client_id:
+        if aud != settings.google_client_id:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Token audience mismatch",

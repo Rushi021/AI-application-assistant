@@ -10,6 +10,7 @@ if str(_backend_root) not in sys.path:
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
+from app.core.config import get_settings
 from app.db.base import Base
 from app.modules.applications.models import Application, ApplicationEvent
 from app.modules.drafts.models import ResumeDraft, ResumeDraftSection, SectionChatMessage
@@ -19,6 +20,7 @@ from app.modules.resumes.models import Resume
 from app.modules.users.models import User
 
 config = context.config
+config.set_main_option("sqlalchemy.url", get_settings().database_url)
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 

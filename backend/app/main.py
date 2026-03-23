@@ -1,5 +1,8 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 
 from app.core.config import get_settings
 from app.core.logging import setup_logging
@@ -22,14 +25,40 @@ from app.modules.applications import models as _application_models  # noqa: F401
 from app.modules.drafts import models as _draft_models  # noqa: F401
 
 
+class ChromeExtensionCORSMiddleware(BaseHTTPMiddleware):
+    def _cors_headers(self, origin: str) -> dict[str, str]:
+        return {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Authorization, X-Session-Id",
+        }
+
+    async def dispatch(self, request: Request, call_next):
+        origin = request.headers.get("origin", "")
+        if origin.startswith("chrome-extension://") and request.method == "OPTIONS":
+            return Response(status_code=200, headers=self._cors_headers(origin))
+
+        response = await call_next(request)
+        if origin.startswith("chrome-extension://"):
+            for header, value in self._cors_headers(origin).items():
+                response.headers[header] = value
+        return response
+
+
 def create_app() -> FastAPI:
     setup_logging()
+    settings = get_settings()
+    settings.validate_startup_requirements()
+
     app = FastAPI(title="AI Job Application Assistant")
 
-    # CORS: allow localhost + Chrome extension origins
+    app.add_middleware(ChromeExtensionCORSMiddleware)
+
+    # CORS: allow configured web origins; extension origins handled by custom middleware
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],  # Tighten in production to specific chrome-extension:// origins
+        allow_origins=settings.allowed_origins_list,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],

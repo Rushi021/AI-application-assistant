@@ -328,6 +328,8 @@ export interface AutofillSession {
   startedAt: number;
   /** Field types (canonical keys) already filled across all pages in this session. */
   filledFieldTypes: string[];
+  /** True once resume upload is confirmed in this session. */
+  resumeFileUploaded: boolean;
   /** URLs of pages visited during this session. */
   pagesVisited: string[];
   suppressWorkAndSkills: boolean;
