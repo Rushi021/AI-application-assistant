@@ -12,6 +12,7 @@ from sqlalchemy import engine_from_config, pool
 
 from app.core.config import get_settings
 from app.db.base import Base
+from app.modules.auth.models import WebLoginCode
 from app.modules.applications.models import Application, ApplicationEvent
 from app.modules.drafts.models import ResumeDraft, ResumeDraftSection, SectionChatMessage
 from app.modules.jobs.models import Job

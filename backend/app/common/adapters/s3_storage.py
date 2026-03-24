@@ -1,11 +1,16 @@
-import boto3
-
 from app.common.ports import ResumeStorage
 from app.core.config import get_settings
 
 
 class S3ResumeStorage(ResumeStorage):
     def __init__(self) -> None:
+        try:
+            import boto3  # type: ignore
+        except ImportError as exc:
+            raise RuntimeError(
+                "S3 storage requires boto3. Install backend dependencies (pip install -r backend/requirements.txt)."
+            ) from exc
+
         settings = get_settings()
         self.client = boto3.client(
             "s3",

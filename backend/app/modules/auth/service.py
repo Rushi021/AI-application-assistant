@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import hashlib
+import secrets
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -7,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.common.adapters.sqlalchemy_repos import SqlAlchemyUserRepo
 from app.core.config import get_settings
 from app.core.security import TestUser
+from app.modules.auth.models import WebLoginCode
 from app.modules.auth.google_oauth import GoogleUser
 from app.modules.users.models import User
 
@@ -60,6 +64,76 @@ def get_or_create_google_user(db: Session, google_user: GoogleUser) -> tuple[Use
     db.commit()
     db.refresh(user)
     return user, True
+
+
+def get_active_whitelisted_google_user(db: Session, google_user: GoogleUser) -> Optional[User]:
+    """
+    Return an existing active user matching Google identity/email.
+    Never auto-creates users: whitelist membership is DB-managed.
+    """
+    settings = get_settings()
+    email = (google_user.email or "").strip().lower()
+
+    # First preference: existing linked Google account.
+    user = db.query(User).filter(User.google_id == google_user.google_id).first()
+    if not user and email:
+        user = db.query(User).filter(User.email == email).first()
+
+    if not user or not user.is_active:
+        return None
+
+    if email and user.email != email:
+        user.email = email
+
+    user.google_id = google_user.google_id
+    user.picture_url = google_user.picture
+    if not user.full_name and google_user.name:
+        user.full_name = google_user.name
+
+    # Bootstrap admin access through configured allow-list.
+    if email and email in settings.admin_emails_list and not user.is_admin:
+        user.is_admin = True
+
+    db.commit()
+    db.refresh(user)
+    return user
+
+
+def create_web_login_code(db: Session, user_id: int) -> str:
+    settings = get_settings()
+    raw_code = secrets.token_urlsafe(32)
+    code_hash = hashlib.sha256(raw_code.encode("utf-8")).hexdigest()
+    expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
+        seconds=settings.web_login_code_ttl_seconds
+    )
+
+    login_code = WebLoginCode(
+        code_hash=code_hash,
+        user_id=user_id,
+        expires_at=expires_at,
+    )
+    db.add(login_code)
+    db.commit()
+    return raw_code
+
+
+def consume_web_login_code(db: Session, raw_code: str) -> Optional[User]:
+    code_hash = hashlib.sha256(raw_code.encode("utf-8")).hexdigest()
+    record = db.query(WebLoginCode).filter(WebLoginCode.code_hash == code_hash).first()
+    if not record:
+        return None
+    if record.consumed_at is not None:
+        return None
+    if record.expires_at <= datetime.now(timezone.utc).replace(tzinfo=None):
+        return None
+
+    user = db.query(User).filter(User.id == record.user_id).first()
+    if not user or not user.is_active:
+        return None
+
+    record.consumed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+    db.commit()
+    return user
 
 
 def get_user_by_id(db: Session, user_id: int) -> Optional[User]:

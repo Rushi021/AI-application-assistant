@@ -23,6 +23,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("LOCAL_STORAGE_PATH"),
     )
     allowed_origins: str = Field(default="", validation_alias=AliasChoices("ALLOWED_ORIGINS"))
+    admin_emails: str = Field(default="", validation_alias=AliasChoices("ADMIN_EMAILS"))
     max_upload_size_mb: int = 10
     allowed_extensions: str = "pdf,doc,docx"
 
@@ -65,6 +66,18 @@ class Settings(BaseSettings):
         default="",
         validation_alias=AliasChoices("GOOGLE_CLIENT_SECRET"),
     )
+    google_web_redirect_uri: str = Field(
+        default="http://localhost:8000/auth/web/google/callback",
+        validation_alias=AliasChoices("GOOGLE_WEB_REDIRECT_URI"),
+    )
+    web_app_url: str = Field(
+        default="http://localhost:8501",
+        validation_alias=AliasChoices("WEB_APP_URL"),
+    )
+    web_login_code_ttl_seconds: int = Field(
+        default=300,
+        validation_alias=AliasChoices("WEB_LOGIN_CODE_TTL_SECONDS"),
+    )
 
     # JWT settings
     # Unsafe for production; production validator rejects this default.
@@ -89,6 +102,10 @@ class Settings(BaseSettings):
         if self.allowed_origins.strip():
             return [origin.strip() for origin in self.allowed_origins.split(",") if origin.strip()]
         return ["http://localhost:3000", "http://localhost:5173"]
+
+    @property
+    def admin_emails_list(self) -> List[str]:
+        return [email.strip().lower() for email in self.admin_emails.split(",") if email.strip()]
 
     def validate_startup_requirements(self) -> None:
         if self.environment != "production":

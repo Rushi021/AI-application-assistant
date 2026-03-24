@@ -31,6 +31,10 @@ class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
 
+class WebExchangeRequest(BaseModel):
+    code: str
+
+
 # ---------------------------------------------------------------------------
 # Dev login (for development without Google OAuth setup)
 # ---------------------------------------------------------------------------
