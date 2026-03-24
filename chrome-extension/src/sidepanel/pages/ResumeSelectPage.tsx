@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useAppStore } from "../store";
 import {
+  ApiError,
   listResumes,
   scoreResumes,
   uploadResume,
@@ -10,6 +11,36 @@ import {
 } from "../services/api";
 import ResumeCard from "../components/ResumeCard";
 import WorkflowLayout from "../components/WorkflowLayout";
+
+function formatApiError(err: unknown, fallback: string): string {
+  if (err instanceof ApiError) {
+    try {
+      const j = JSON.parse(err.body) as {
+        detail?: string | Array<{ msg?: string } | string>;
+      };
+      const d = j.detail;
+      if (typeof d === "string") return d;
+      if (Array.isArray(d)) {
+        const parts = d.map((x) =>
+          typeof x === "string"
+            ? x
+            : x && typeof x === "object" && "msg" in x
+              ? String((x as { msg: string }).msg)
+              : "",
+        );
+        const s = parts.filter(Boolean).join(", ");
+        if (s) return s;
+      }
+    } catch {
+      /* ignore */
+    }
+    const t = err.body?.trim();
+    if (t) return t.length > 400 ? `${t.slice(0, 400)}…` : t;
+    return err.message;
+  }
+  if (err instanceof Error) return err.message;
+  return fallback;
+}
 
 export default function ResumeSelectPage() {
   const {
@@ -133,6 +164,10 @@ export default function ResumeSelectPage() {
 
   const handleTailorContinue = async () => {
     if (!tailorResumeId) return;
+    if (!jobDescription?.trim()) {
+      setError("Add a job description first (go back to the Job step).");
+      return;
+    }
     setError(null);
     setTailoring(true);
     try {
@@ -153,7 +188,7 @@ export default function ResumeSelectPage() {
       setInstructions("");
       setPage("section-editor");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Tailoring failed");
+      setError(formatApiError(err, "Tailoring failed"));
     } finally {
       setTailoring(false);
     }
@@ -161,6 +196,10 @@ export default function ResumeSelectPage() {
 
   const handleTailorWithInstructions = async () => {
     if (!tailorResumeId) return;
+    if (!jobDescription?.trim()) {
+      setError("Add a job description first (go back to the Job step).");
+      return;
+    }
     setError(null);
     setTailoring(true);
     try {
@@ -182,7 +221,7 @@ export default function ResumeSelectPage() {
       setInstructions("");
       setPage("section-editor");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Tailoring failed");
+      setError(formatApiError(err, "Tailoring failed"));
     } finally {
       setTailoring(false);
     }
@@ -210,18 +249,26 @@ export default function ResumeSelectPage() {
       }
       footer={
         tailorResumeId ? (
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setTailorResumeId(null);
-                setShowInstructionsInput(false);
-                setInstructions("");
-              }}
-              className="px-4 py-2 text-sm text-wf-muted border border-transparent rounded-[10px] hover:text-wf-text"
-            >
-              ← Cancel
-            </button>
+          <div className="space-y-2 w-full">
+            {error && (
+              <p className="text-xs text-red-400 leading-snug break-words" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setTailorResumeId(null);
+                  setShowInstructionsInput(false);
+                  setInstructions("");
+                  setError(null);
+                }}
+                className="px-4 py-2 text-sm text-wf-muted border border-transparent rounded-[10px] hover:text-wf-text"
+              >
+                ← Cancel
+              </button>
+            </div>
           </div>
         ) : (
           <>
@@ -273,6 +320,9 @@ export default function ResumeSelectPage() {
             <p className="text-[11px] text-wf-muted leading-snug">
               Optional: add instructions below, or continue to run the default tailoring pipeline.
             </p>
+            {tailoring && (
+              <p className="text-[11px] text-wf-muted">Calling the AI… this can take up to a minute.</p>
+            )}
             {!showInstructionsInput ? (
               <div className="flex flex-wrap gap-2">
                 <button
