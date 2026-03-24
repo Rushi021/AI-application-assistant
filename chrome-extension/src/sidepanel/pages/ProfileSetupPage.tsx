@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useAppStore } from "../store";
 import { updateProfile } from "../services/api";
 import { STORAGE_KEYS } from "@/shared/constants";
+import { buildAutofillAnswersFromProfile } from "@/shared/autofill-answers";
 import type { EducationHistoryEntry, UserProfile, WorkExperienceEntry } from "@/shared/types";
 
 const STEPS = ["Basic Info", "Professional", "Education", "Work Auth", "Demographics", "Salary"];
@@ -175,7 +176,10 @@ export default function ProfileSetupPage() {
       };
       const updated = await updateProfile(payload);
       setProfile(updated);
-      await chrome.storage.local.set({ [STORAGE_KEYS.USER_PROFILE]: updated });
+      await chrome.storage.local.set({
+        [STORAGE_KEYS.USER_PROFILE]: updated,
+        [STORAGE_KEYS.AUTOFILL_ANSWERS]: buildAutofillAnswersFromProfile(updated),
+      });
       setPage("job-description");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save profile");

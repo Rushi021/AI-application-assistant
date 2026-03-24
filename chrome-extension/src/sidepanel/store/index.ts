@@ -15,6 +15,7 @@ import type {
   UserProfile,
 } from "@/shared/types";
 import { STORAGE_KEYS } from "@/shared/constants";
+import { buildAutofillAnswersFromProfile } from "@/shared/autofill-answers";
 
 interface AppState {
   // Navigation
@@ -152,7 +153,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   // Reset workflow (keep auth)
   resetWorkflow: () => {
     chrome.storage.local
-      .remove([STORAGE_KEYS.AUTOFILL_PROGRESS, STORAGE_KEYS.AUTOFILL_TRACE_LOG])
+      .remove([STORAGE_KEYS.AUTOFILL_PROGRESS])
       .catch(() => {});
     set({
       jobDescription: "",
@@ -186,10 +187,13 @@ export const useAppStore = create<AppState>((set, get) => ({
  * Initialise auth state from chrome.storage on extension load.
  */
 export async function initAuthState() {
-  const result = await chrome.storage.local.get([STORAGE_KEYS.ACCESS_TOKEN, STORAGE_KEYS.SESSION_ID]);
+  const result = await chrome.storage.local.get([
+    STORAGE_KEYS.ACCESS_TOKEN,
+    STORAGE_KEYS.SESSION_ID,
+    STORAGE_KEYS.USER_PROFILE,
+  ]);
   const hasToken = !!result[STORAGE_KEYS.ACCESS_TOKEN];
 
-  // Ensure session_id exists
   if (!result[STORAGE_KEYS.SESSION_ID]) {
     const sessionId = crypto.randomUUID();
     await chrome.storage.local.set({ [STORAGE_KEYS.SESSION_ID]: sessionId });
@@ -200,5 +204,13 @@ export async function initAuthState() {
 
   if (hasToken) {
     useAppStore.getState().setPage("job-description");
+
+    const cachedProfile = result[STORAGE_KEYS.USER_PROFILE] as UserProfile | undefined;
+    if (cachedProfile) {
+      useAppStore.getState().setProfile(cachedProfile);
+      await chrome.storage.local.set({
+        [STORAGE_KEYS.AUTOFILL_ANSWERS]: buildAutofillAnswersFromProfile(cachedProfile),
+      });
+    }
   }
 }

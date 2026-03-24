@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { STORAGE_KEYS, MSG } from "@/shared/constants";
+import { buildAutofillAnswersFromProfile } from "@/shared/autofill-answers";
 import { authGoogle, devLogin, getProfile } from "../services/api";
 import { useAppStore } from "../store";
 
@@ -31,8 +32,10 @@ export function useAuth() {
       const profile = await getProfile();
       setProfile(profile);
 
-      // Cache profile for content script access
-      await chrome.storage.local.set({ [STORAGE_KEYS.USER_PROFILE]: profile });
+      await chrome.storage.local.set({
+        [STORAGE_KEYS.USER_PROFILE]: profile,
+        [STORAGE_KEYS.AUTOFILL_ANSWERS]: buildAutofillAnswersFromProfile(profile),
+      });
 
       // Navigate based on whether user is new
       if (tokens.is_new_user || !profile.full_name) {
@@ -96,6 +99,7 @@ export function useAuth() {
     ]);
     setAuthenticated(false);
     setProfile(null);
+    await chrome.storage.local.remove([STORAGE_KEYS.AUTOFILL_ANSWERS]);
     setPage("login");
   }, [setAuthenticated, setProfile, setPage]);
 

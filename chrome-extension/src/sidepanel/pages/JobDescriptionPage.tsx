@@ -27,7 +27,7 @@ export default function JobDescriptionPage() {
   const clearAutofillArtifacts = async () => {
     setAutofillProgress(null);
     await chrome.storage.local
-      .remove([STORAGE_KEYS.AUTOFILL_PROGRESS, STORAGE_KEYS.AUTOFILL_TRACE_LOG])
+      .remove([STORAGE_KEYS.AUTOFILL_PROGRESS])
       .catch(() => {});
   };
 

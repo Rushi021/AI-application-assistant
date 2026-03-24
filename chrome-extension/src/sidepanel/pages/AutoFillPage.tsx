@@ -3,11 +3,6 @@ import { useAppStore } from "../store";
 import { deleteResume } from "../services/api";
 import { MSG, STORAGE_KEYS } from "@/shared/constants";
 import type { AutofillProgress, AutofillSession, FileUploadBlockerDecision, FormBlocker, UserProfile } from "@/shared/types";
-import type {
-  Phase1FillResult,
-  UnifiedAutofillRunResult,
-  UploadDetectorRunResult,
-} from "@/shared/dom-control-engine";
 import WorkflowLayout from "../components/WorkflowLayout";
 
 const STATE_LABELS: Record<string, string> = {
@@ -21,31 +16,6 @@ const STATE_LABELS: Record<string, string> = {
   complete: "Complete",
   stopped: "Stopped",
 };
-
-/**
- * After a fill pass completes: show "Done" only when there is no active multi-page session
- * (user must continue on further pages). If `sess.active === true`, always return false so the
- * UI stays on "waiting for next step", not "Done".
- * Short retries handle storage write lag after AUTOFILL_SESSION_STARTED.
- */
-async function shouldMarkSessionCompleteAfterPass(): Promise<boolean> {
-  try {
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const result = await chrome.storage.session.get([STORAGE_KEYS.AUTOFILL_SESSION]);
-      const sess = result[STORAGE_KEYS.AUTOFILL_SESSION] as AutofillSession | undefined;
-      if (sess?.active) return false;
-      if (sess && !sess.active) return true;
-      if (!sess && attempt < 2) {
-        await new Promise((r) => setTimeout(r, 50));
-      }
-    }
-    const result = await chrome.storage.session.get([STORAGE_KEYS.AUTOFILL_SESSION]);
-    const sess = result[STORAGE_KEYS.AUTOFILL_SESSION] as AutofillSession | undefined;
-    return !sess?.active;
-  } catch {
-    return true;
-  }
-}
 
 function getBlockerMessage(blocker: FormBlocker): string {
   switch (blocker.type) {
@@ -99,40 +69,6 @@ function formatTimelineTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour12: false });
 }
 
-function getPrimaryFrame<T extends { isTop: boolean }>(
-  rows: T[],
-  score: (row: T) => number
-): T | null {
-  return rows.reduce<T | null>((best, row) => {
-    if (!best) return row;
-    const bestScore = score(best);
-    const rowScore = score(row);
-    if (rowScore !== bestScore) return rowScore > bestScore ? row : best;
-    return row.isTop && !best.isTop ? row : best;
-  }, null);
-}
-
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = window.setTimeout(() => {
-      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-    promise
-      .then((value) => {
-        window.clearTimeout(timer);
-        resolve(value);
-      })
-      .catch((err) => {
-        window.clearTimeout(timer);
-        reject(err);
-      });
-  });
-}
-
-function isResumeSignal(text: string): boolean {
-  return /\b(resume|cv|upload)\b/i.test(text);
-}
-
 export default function AutoFillPage() {
   const {
     autofillProgress,
@@ -149,76 +85,19 @@ export default function AutoFillPage() {
   const [started, setStarted] = useState(false);
   const [showUploadCompleteConfirm, setShowUploadCompleteConfirm] = useState(false);
   const [uploadedSameAsProfileResume, setUploadedSameAsProfileResume] = useState(false);
-  type UploadDetectorFrameResult = {
-    frameId: number;
-    href: string;
-    isTop: boolean;
-    result: UploadDetectorRunResult;
-  };
-  type AutofillRunFrameResult = {
-    frameId: number;
-    href: string;
-    isTop: boolean;
-    result: UnifiedAutofillRunResult;
-  };
-  type FrameProbeRow = {
-    frameId: number;
-    fieldCount: number;
-    hasFormSignals: boolean;
-    probeTimeMs: number;
-    error?: string;
-  };
-  type FillAttemptRow = { frameId: number; filled: number; skipped: number; fillTimeMs: number };
-  type DirectAutofillRelayResponse = {
-    success?: boolean;
-    total?: number;
-    filled?: number;
-    skipped?: number;
-    newFilledKeys?: string[];
-    framesScanned?: number;
-    scannedFrameIds?: number[];
-    frameId?: number | null;
-    href?: string | null;
-    isTop?: boolean;
-    result?: UnifiedAutofillRunResult | null;
-    reason?: "no_fields_found" | "frame_scan_limit";
-    frameProbes?: FrameProbeRow[];
-    totalProbePhaseMs?: number;
-    fillAttempts?: FillAttemptRow[];
-    error?: string;
-  };
-  const [uploadDetectorResults, setUploadDetectorResults] = useState<Array<UploadDetectorFrameResult>>([]);
-  const [autofillRunResults, setAutofillRunResults] = useState<Array<AutofillRunFrameResult>>([]);
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [profileFromStorage, setProfileFromStorage] = useState<UserProfile | null>(null);
   const [sessionActive, setSessionActive] = useState(false);
   const previousProgressRef = useRef<AutofillProgress | null>(null);
   const handledUploadBlockerKeysRef = useRef<Set<string>>(new Set());
+  const triggerResetTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     chrome.storage.local.get(
-      [STORAGE_KEYS.USER_PROFILE, STORAGE_KEYS.AUTOFILL_PROGRESS, STORAGE_KEYS.AUTOFILL_TRACE_LOG],
+      [STORAGE_KEYS.USER_PROFILE, STORAGE_KEYS.AUTOFILL_PROGRESS],
       (result) => {
         setProfileFromStorage((result[STORAGE_KEYS.USER_PROFILE] as UserProfile) ?? null);
         setAutofillProgress((result[STORAGE_KEYS.AUTOFILL_PROGRESS] as AutofillProgress) ?? null);
-        const traceRows = Array.isArray(result[STORAGE_KEYS.AUTOFILL_TRACE_LOG])
-          ? (result[STORAGE_KEYS.AUTOFILL_TRACE_LOG] as Array<{
-              ts?: number;
-              level?: TimelineLevel;
-              step?: string;
-              detail?: string;
-              source?: string;
-            }>)
-          : [];
-        if (traceRows.length > 0) {
-          setTimeline(
-            traceRows.slice(0, 20).map((row) => ({
-              ts: row.ts ?? Date.now(),
-              level: row.level ?? "info",
-              message: `${row.source ? `[${row.source}] ` : ""}${row.step ?? "Trace"}: ${row.detail ?? ""}`.trim(),
-            }))
-          );
-        }
       }
     );
     const storageListener: Parameters<typeof chrome.storage.onChanged.addListener>[0] = (changes, areaName) => {
@@ -228,24 +107,6 @@ export default function AutoFillPage() {
       }
       if (changes[STORAGE_KEYS.AUTOFILL_PROGRESS]) {
         setAutofillProgress((changes[STORAGE_KEYS.AUTOFILL_PROGRESS].newValue as AutofillProgress) ?? null);
-      }
-      if (changes[STORAGE_KEYS.AUTOFILL_TRACE_LOG]) {
-        const traceRows = Array.isArray(changes[STORAGE_KEYS.AUTOFILL_TRACE_LOG].newValue)
-          ? (changes[STORAGE_KEYS.AUTOFILL_TRACE_LOG].newValue as Array<{
-              ts?: number;
-              level?: TimelineLevel;
-              step?: string;
-              detail?: string;
-              source?: string;
-            }>)
-          : [];
-        setTimeline(
-          traceRows.slice(0, 20).map((row) => ({
-            ts: row.ts ?? Date.now(),
-            level: row.level ?? "info",
-            message: `${row.source ? `[${row.source}] ` : ""}${row.step ?? "Trace"}: ${row.detail ?? ""}`.trim(),
-          }))
-        );
       }
     };
     chrome.storage.onChanged.addListener(storageListener);
@@ -276,12 +137,12 @@ export default function AutoFillPage() {
   }, [autofillProgress?.activeBlocker?.selector, autofillContext.uploadedSameAsProfileResume]);
 
   useEffect(() => {
-    if (!autofillProgress) {
-      setStarted(false);
-      return;
-    }
-    setStarted(!autofillProgress.completed);
-  }, [autofillProgress]);
+    return () => {
+      if (triggerResetTimerRef.current != null) {
+        window.clearTimeout(triggerResetTimerRef.current);
+      }
+    };
+  }, []);
 
   const effectiveProfile = profile ?? profileFromStorage;
   const canRunAutofill = !!effectiveProfile;
@@ -292,12 +153,22 @@ export default function AutoFillPage() {
     setTimeline((prev) => [{ ts: Date.now(), level, message }, ...prev].slice(0, 20));
   }, []);
 
+  const scheduleStartedReset = useCallback((delayMs = 2500) => {
+    if (triggerResetTimerRef.current != null) {
+      window.clearTimeout(triggerResetTimerRef.current);
+    }
+    triggerResetTimerRef.current = window.setTimeout(() => {
+      setStarted(false);
+      triggerResetTimerRef.current = null;
+    }, delayMs);
+  }, []);
+
   const resetExecutionView = useCallback(() => {
     setAutofillProgress(null);
     setTimeline([]);
     previousProgressRef.current = null;
     chrome.storage.local
-      .remove([STORAGE_KEYS.AUTOFILL_PROGRESS, STORAGE_KEYS.AUTOFILL_TRACE_LOG])
+      .remove([STORAGE_KEYS.AUTOFILL_PROGRESS])
       .catch(() => {});
   }, [setAutofillProgress]);
 
@@ -331,10 +202,6 @@ export default function AutoFillPage() {
               : "Autofill stopped before completion",
             next.state === "complete" ? "info" : "warn"
           );
-          setStarted(false);
-        }
-        if ((prev?.completed ?? false) && !next.completed) {
-          setStarted(true);
         }
         previousProgressRef.current = next;
         setAutofillProgress(next);
@@ -403,90 +270,9 @@ export default function AutoFillPage() {
     if (!tab?.id) throw new Error("No active tab found");
     const url = tab.url ?? "";
     if (["chrome:", "edge:", "about:", "chrome-extension:", "moz-extension:"].some((p) => url.startsWith(p))) {
-      throw new Error("Cannot run handler tests on this page type");
+      throw new Error("Cannot run auto-fill on this page type");
     }
     return { id: tab.id };
-  }, []);
-
-  const ensureDomRuntime = useCallback(async (tabId: number) => {
-    await chrome.scripting.executeScript({
-      target: { tabId, allFrames: true },
-      files: ["content/dom-runtime.js"],
-    });
-  }, []);
-
-  const hasResumeFileFieldInFrame = useCallback(
-    async (tabId: number, frameId: number): Promise<boolean> => {
-      const rows = await chrome.scripting.executeScript({
-        target: { tabId, frameIds: [frameId] },
-        func: () => {
-          const resumePattern = /\b(resume|cv|upload)\b/i;
-          const headings = Array.from(document.querySelectorAll("h1, h2, h3, h4, [role='heading']"));
-          const isVisible = (el: HTMLElement): boolean => {
-            const style = window.getComputedStyle(el);
-            if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") return false;
-            const rect = el.getBoundingClientRect();
-            return rect.width > 0 && rect.height > 0;
-          };
-          const nearestHeadingText = (el: HTMLElement): string => {
-            const elRect = el.getBoundingClientRect();
-            let bestText = "";
-            let bestDistance = Number.POSITIVE_INFINITY;
-            for (const heading of headings) {
-              if (!(heading instanceof HTMLElement)) continue;
-              const rect = heading.getBoundingClientRect();
-              if (rect.bottom > elRect.top) continue;
-              const distance = Math.abs(elRect.top - rect.bottom);
-              if (distance < bestDistance) {
-                bestDistance = distance;
-                bestText = heading.textContent?.trim() ?? "";
-              }
-            }
-            return bestText;
-          };
-          const getLabelText = (input: HTMLInputElement): string => {
-            const labels = input.labels ? Array.from(input.labels) : [];
-            const explicit = labels.map((l) => l.textContent?.trim() ?? "").join(" ");
-            if (explicit) return explicit;
-            const aria = input.getAttribute("aria-label") ?? "";
-            if (aria) return aria;
-            if (input.id) {
-              const fallback = document.querySelector(`label[for=\"${CSS.escape(input.id)}\"]`);
-              if (fallback) return fallback.textContent?.trim() ?? "";
-            }
-            return "";
-          };
-          const inputs = Array.from(document.querySelectorAll("input[type='file']"))
-            .filter((input): input is HTMLInputElement => input instanceof HTMLInputElement)
-            .filter((input) => !input.disabled)
-            .filter((input) => isVisible(input));
-          return inputs.some((input) => {
-            const signal = [
-              getLabelText(input),
-              input.getAttribute("aria-label") ?? "",
-              input.name ?? "",
-              input.id ?? "",
-              nearestHeadingText(input),
-            ]
-              .join(" ")
-              .toLowerCase();
-            return resumePattern.test(signal);
-          });
-        },
-      });
-      return Boolean(rows[0]?.result);
-    },
-    []
-  );
-
-  const isResumeAlreadyUploadedInSession = useCallback(async (): Promise<boolean> => {
-    try {
-      const response = await chrome.runtime.sendMessage({ type: MSG.AUTOFILL_SESSION_CHECK });
-      const session = (response as { session?: AutofillSession })?.session;
-      return Boolean(session?.active && session.resumeFileUploaded === true);
-    } catch {
-      return false;
-    }
   }, []);
 
   const persistAutofillProgress = useCallback(
@@ -574,259 +360,23 @@ export default function AutoFillPage() {
     }
   }, [appendTimeline, autofillProgress, persistAutofillProgress, resetExecutionView, resetWorkflow, setPage]);
 
-  const runDirectAutofillFlow = useCallback(async () => {
+  const triggerAutofill = useCallback(async () => {
     if (!effectiveProfile) {
       throw new Error("No user profile found in extension storage");
     }
 
-    appendTimeline("Direct autofill flow started");
-    const { id: tabId } = await withTimeout(getActiveTab(), 5000, "Resolve active tab");
+    const { id: tabId } = await getActiveTab();
 
-    appendTimeline("Running full deterministic autofill pass");
-    const relay = await withTimeout(
-      chrome.runtime.sendMessage({
-        type: MSG.RUN_DIRECT_AUTOFILL,
-        data: { tabId, profile: effectiveProfile },
-      }) as Promise<DirectAutofillRelayResponse>,
-      22000,
-      "Direct autofill relay execution"
-    );
-    if (!relay?.success) {
-      throw new Error(relay?.error ?? "Direct autofill relay failed");
-    }
+    await chrome.storage.session.set({ [STORAGE_KEYS.AUTOFILL_TRIGGER_TS]: Date.now() });
+    chrome.tabs.sendMessage(tabId, { action: "run_autofill" }).catch(() => {});
 
-    if (relay.reason === "no_fields_found") {
-      appendTimeline(
-        `No fillable fields found after scanning ${relay.framesScanned ?? 0} frame(s)`,
-        "warn"
-      );
-    } else if (relay.reason === "frame_scan_limit") {
-      appendTimeline(
-        `Autofill scan stopped after ${relay.framesScanned ?? 0} frame(s) (iframe limit); try the page’s main frame or fewer embedded frames`,
-        "warn"
-      );
-    }
-
-    const primaryResult: UnifiedAutofillRunResult = relay.result ?? {
-      candidates: [],
-      results: [],
-      phase1Results: [],
-      radioResults: [],
-      checkboxResults: [],
-      dropdownResults: [],
-    };
-    const primaryFrame: AutofillRunFrameResult | null =
-      relay.frameId != null && relay.href
-        ? {
-            frameId: relay.frameId,
-            href: relay.href,
-            isTop: Boolean(relay.isTop),
-            result: primaryResult,
-          }
-        : null;
-
-    setAutofillRunResults(primaryFrame ? [primaryFrame] : []);
-    const total = relay.total ?? primaryResult.results.length;
-    const filled = relay.filled ?? primaryResult.results.filter((item) => item.action === "filled").length;
-    const failed = primaryResult.results.filter((item) => item.action === "failed_write" || item.action === "failed_verify").length;
-    const skipped = relay.skipped ?? primaryResult.results.filter((item) => item.action.startsWith("skipped")).length;
-    const probeSummary =
-      relay.frameProbes && relay.frameProbes.length > 0
-        ? ` probePhase=${relay.totalProbePhaseMs ?? "?"}ms [${relay.frameProbes
-            .map((p) => `f${p.frameId}:${p.probeTimeMs}ms${p.hasFormSignals ? "*" : ""}`)
-            .join(", ")}]`
-        : "";
-    const fillSummary =
-      relay.fillAttempts && relay.fillAttempts.length > 0
-        ? ` fills=[${relay.fillAttempts.map((a) => `f${a.frameId}:${a.fillTimeMs}ms`).join(", ")}]`
-        : "";
-    appendTimeline(
-      `Autofill pass finished: total=${total}, filled=${filled}, skipped=${skipped}, failed=${failed}, framesProbed=${relay.framesScanned ?? 0}${probeSummary}${fillSummary}`
-    );
-
-    const filledCanonicalKeys = (relay.newFilledKeys ?? []).filter((key): key is string => typeof key === "string");
-    if (filledCanonicalKeys.length > 0) {
-      chrome.runtime
-        .sendMessage({
-          type: MSG.AUTOFILL_SESSION_UPDATE,
-          data: { newFilledFieldTypes: filledCanonicalKeys, filled, skipped },
-        })
-        .catch(() => {});
-    }
-
-    await withTimeout(ensureDomRuntime(tabId), 10000, "Inject DOM runtime");
-    const detectorExec = await withTimeout(
-      chrome.scripting.executeScript({
-        target: { tabId, allFrames: true },
-        func: () => {
-          const engine = (window as Window & {
-            __AI_DOM_CONTROL_ENGINE__?: { scanUploadDetectors: () => UploadDetectorRunResult };
-          }).__AI_DOM_CONTROL_ENGINE__;
-          if (!engine) {
-            throw new Error("DOM runtime not available in page context");
-          }
-          return {
-            href: window.location.href,
-            isTop: window === window.top,
-            result: engine.scanUploadDetectors(),
-          };
-        },
-      }),
-      10000,
-      "Upload detector scan"
-    );
-
-    const detectorFrames = detectorExec
-      .map((row) => {
-        const value = row.result as Omit<UploadDetectorFrameResult, "frameId"> | undefined;
-        if (!value) return null;
-        return {
-          frameId: row.frameId,
-          href: value.href,
-          isTop: value.isTop,
-          result: value.result,
-        } satisfies UploadDetectorFrameResult;
-      })
-      .filter((row): row is UploadDetectorFrameResult => row !== null)
-      .sort((a, b) => Number(b.isTop) - Number(a.isTop));
-
-    setUploadDetectorResults(detectorFrames);
-    const primaryDetectorFrame = getPrimaryFrame(
-      detectorFrames,
-      (row) =>
-        row.result.candidates.length * 100 +
-        row.result.visibleFileInputs.length * 10 +
-        row.result.hiddenFileInputs.length * 5 +
-        row.result.visibleUploadTriggers.length
-    );
-
-    let nextBlocker = primaryDetectorFrame?.result.candidates.find((candidate) => {
-      const key = `${candidate.selector}::${candidate.subType ?? "generic"}`;
-      if (handledUploadBlockerKeysRef.current.has(key)) {
-        return false;
-      }
-
-      const allInputs = [
-        ...(primaryDetectorFrame?.result.visibleFileInputs ?? []),
-        ...(primaryDetectorFrame?.result.hiddenFileInputs ?? []),
-      ];
-      const inputBySelector = new Map(allInputs.map((input) => [input.selector, input]));
-      const directInput = inputBySelector.get(candidate.selector);
-      if (directInput?.hasFiles) {
-        return false;
-      }
-
-      // If any file input for this subtype already has files, treat the subtype as resolved.
-      if (
-        (candidate.subType === "resume" || candidate.subType === "cover_letter") &&
-        allInputs.some((input) => {
-          if (!input.hasFiles) return false;
-          const signals = [input.label, input.name ?? "", input.id ?? "", ...(input.signals ?? [])]
-            .join(" ")
-            .toLowerCase();
-          if (candidate.subType === "resume") {
-            return /resume|cv|curriculum/.test(signals);
-          }
-          return /cover.?letter/.test(signals);
-        })
-      ) {
-        return false;
-      }
-
-      return true;
-    });
-
-    if (nextBlocker?.subType === "resume" && primaryDetectorFrame?.frameId != null) {
-      const hasResumeField = await hasResumeFileFieldInFrame(tabId, primaryDetectorFrame.frameId);
-      if (!hasResumeField) {
-        appendTimeline("Upload gate skipped: { skip_reason: 'no_resume_field_on_page' }");
-        nextBlocker = undefined;
-      } else {
-        const alreadyUploaded = await isResumeAlreadyUploadedInSession();
-        if (alreadyUploaded) {
-          appendTimeline("Upload gate skipped: { skip_reason: 'already_uploaded_this_session' }");
-          nextBlocker = undefined;
-        }
-      }
-    }
-
-    if (nextBlocker) {
-      appendTimeline(`Upload blocker detected: ${nextBlocker.subType} selector=${nextBlocker.selector}`, "warn");
-      await persistAutofillProgress({
-        state: "blocked",
-        total,
-        filled,
-        manual: 0,
-        skipped,
-        currentField: null,
-        currentAction: null,
-        paused: true,
-        completed: false,
-        sessionComplete: false,
-        stepIndex: 0,
-        fields: [],
-        activeBlocker: {
-          type: "file_upload",
-          selector: nextBlocker.selector,
-          label: nextBlocker.label,
-          subType: nextBlocker.subType,
-          resolved: false,
-        },
-        validationErrors: [],
-        lastFilledField: null,
-      });
-      return;
-    }
-
-    const sessionComplete = await shouldMarkSessionCompleteAfterPass();
-
-    if (total === 0) {
-      appendTimeline("No supported fields were detected on this step", "warn");
-      await persistAutofillProgress({
-        state: "complete",
-        total: 0,
-        filled: 0,
-        manual: 0,
-        skipped: 0,
-        currentField: null,
-        currentAction: null,
-        paused: false,
-        completed: true,
-        sessionComplete,
-        stepIndex: 0,
-        fields: [],
-        activeBlocker: null,
-        validationErrors: [],
-        lastFilledField: null,
-      });
-      return;
-    }
-
-    await persistAutofillProgress({
-      state: "complete",
-      total,
-      filled,
-      manual: 0,
-      skipped,
-      currentField: null,
-      currentAction: null,
-      paused: false,
-      completed: true,
-      sessionComplete,
-      stepIndex: 0,
-      fields: [],
-      activeBlocker: null,
-      validationErrors: [],
-      lastFilledField: null,
-    });
+    appendTimeline("Autofill trigger sent");
+    scheduleStartedReset(2500);
   }, [
     appendTimeline,
     effectiveProfile,
-    ensureDomRuntime,
     getActiveTab,
-    hasResumeFileFieldInFrame,
-    isResumeAlreadyUploadedInSession,
-    persistAutofillProgress,
+    scheduleStartedReset,
   ]);
 
   const handleStartAutofill = useCallback(async () => {
@@ -836,41 +386,15 @@ export default function AutoFillPage() {
 
     try {
       handledUploadBlockerKeysRef.current.clear();
+      await chrome.storage.local.remove([STORAGE_KEYS.AUTOFILL_UPLOAD_DECISIONS]);
       setStarted(true);
-
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      if (tab?.id) {
-        void withTimeout(
-          chrome.runtime.sendMessage({
-            type: MSG.AUTOFILL_SESSION_STARTED,
-            data: {
-              tabId: tab.id,
-              url: tab.url ?? "",
-              suppressWorkAndSkills: autofillContext.suppressWorkAndSkills,
-            },
-          }),
-          2500,
-          "Session creation handshake"
-        )
-          .then((resp) => {
-            if ((resp as { success?: boolean })?.success === false) {
-              appendTimeline("Session create failed, continuing one-page autofill", "warn");
-            } else {
-              appendTimeline("Multi-page session ready — further pages will auto-fill");
-            }
-          })
-          .catch(() => {
-            appendTimeline("Session create timed out, continuing one-page autofill", "warn");
-          });
-      }
-
-      await runDirectAutofillFlow();
+      await triggerAutofill();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start auto-fill");
       appendTimeline(err instanceof Error ? err.message : "Failed to start auto-fill", "error");
       setStarted(false);
     }
-  }, [appendTimeline, autofillContext.suppressWorkAndSkills, resetExecutionView, runDirectAutofillFlow]);
+  }, [appendTimeline, resetExecutionView, triggerAutofill]);
 
   const handleStopAutofill = useCallback(() => {
     appendTimeline("Stop requested", "warn");
@@ -896,21 +420,6 @@ export default function AutoFillPage() {
     setStarted(false);
   }, [appendTimeline, autofillProgress, persistAutofillProgress]);
 
-  const handleUndoAll = useCallback(() => {
-    chrome.runtime.sendMessage({ type: MSG.AUTOFILL_UNDO_ALL }).catch(() => {});
-  }, []);
-
-  const handleFillAll = useCallback(() => {
-    appendTimeline("Preview confirmed: Fill All");
-    setStarted(true);
-    runDirectAutofillFlow().catch((err) => {
-      const msg = err instanceof Error ? err.message : "Failed to continue autofill";
-      setError(msg);
-      appendTimeline(msg, "error");
-      setStarted(false);
-    });
-  }, [appendTimeline, runDirectAutofillFlow]);
-
   const sendUploadBlockerDecision = useCallback(
     async (decision: FileUploadBlockerDecision) => {
       const blocker = useAppStore.getState().autofillProgress?.activeBlocker;
@@ -919,6 +428,24 @@ export default function AutoFillPage() {
       }
       const selectorKey = `${blocker.selector}::${blocker.subType ?? "generic"}`;
       handledUploadBlockerKeysRef.current.add(selectorKey);
+      const decisionsResult = await chrome.storage.local.get([STORAGE_KEYS.AUTOFILL_UPLOAD_DECISIONS]);
+      const decisions =
+        (decisionsResult[STORAGE_KEYS.AUTOFILL_UPLOAD_DECISIONS] as Record<
+          string,
+          { decision: FileUploadBlockerDecision; ts: number }
+        > | undefined) ?? {};
+      decisions[selectorKey] = { decision, ts: Date.now() };
+      await chrome.storage.local.set({ [STORAGE_KEYS.AUTOFILL_UPLOAD_DECISIONS]: decisions });
+      chrome.runtime
+        .sendMessage({
+          type: MSG.AUTOFILL_UPLOAD_BLOCKER_DECISION,
+          data: {
+            selector: blocker.selector,
+            subType: blocker.subType ?? "generic",
+            decision,
+          },
+        })
+        .catch(() => {});
       appendTimeline(
         `Upload decision: ${decision} (${blocker.subType ?? "generic"})`,
         decision === "skipped_by_user" ? "warn" : "info"
@@ -949,10 +476,10 @@ export default function AutoFillPage() {
         lastFilledField: autofillProgress?.lastFilledField ?? null,
       });
       setStarted(true);
-      await runDirectAutofillFlow();
+      await triggerAutofill();
       appendTimeline("Autofill resumed after upload blocker");
     },
-    [appendTimeline, autofillProgress, persistAutofillProgress, runDirectAutofillFlow]
+    [appendTimeline, autofillProgress, persistAutofillProgress, triggerAutofill]
   );
 
   const handleMoveWithoutUpload = useCallback(async () => {
@@ -998,21 +525,6 @@ export default function AutoFillPage() {
   const state = progress?.state ?? "intake";
   const activeBlocker = progress?.activeBlocker ?? null;
   const validationErrors = progress?.validationErrors ?? [];
-  const lastFilledField = progress?.lastFilledField ?? null;
-  const primaryUploadDetectorResult = getPrimaryFrame(
-    uploadDetectorResults,
-    (row) =>
-      row.result.candidates.length * 100 +
-      row.result.visibleFileInputs.length * 10 +
-      row.result.hiddenFileInputs.length * 5 +
-      row.result.visibleUploadTriggers.length
-  );
-  const primaryAutofillResult = getPrimaryFrame(
-    autofillRunResults,
-    (row) =>
-      row.result.results.filter((item) => item.action === "filled").length * 100 +
-      row.result.results.length
-  );
 
   return (
     <WorkflowLayout
@@ -1204,19 +716,6 @@ export default function AutoFillPage() {
               </div>
             )}
 
-            {/* Pre-fill preview */}
-            {state === "preview" && progress.previewSummary && (
-              <div className="bg-blue-950/40 border border-blue-900/50 rounded-xl p-3">
-                <p className="text-xs font-medium text-blue-200">
-                  Found {progress.previewSummary.total} fields. Will fill: {progress.previewSummary.willFill.slice(0, 6).join(", ")}
-                  {progress.previewSummary.willFill.length > 6 ? "…" : ""}
-                </p>
-                <p className="text-xs text-blue-200/80 mt-1">
-                  Unknown: {progress.previewSummary.unknownCount} fields. Click Fill all to proceed.
-                </p>
-              </div>
-            )}
-
             {/* Paused - field manual */}
             {isPaused && !activeBlocker && state !== "preview" && (
               <div className="bg-yellow-950/30 border border-yellow-900/40 rounded-xl p-3">
@@ -1321,90 +820,6 @@ export default function AutoFillPage() {
                 Action: <span className="font-medium text-wf-text">{progress.currentAction}</span>
               </p>
             )}
-
-            {/* Last filled (for undo hint) */}
-            {lastFilledField && !isComplete && (
-              <p className="text-xs text-wf-muted">
-                Last filled: {lastFilledField.label} — use overlay to undo if needed
-              </p>
-            )}
-          </div>
-        )}
-
-        {uploadDetectorResults.length > 0 && primaryUploadDetectorResult && (
-          <div className="mt-4 bg-wf-surface border border-wf-border rounded-xl p-3">
-            <p className="text-xs font-semibold text-wf-text mb-2">Upload detector (debug)</p>
-            <div className="space-y-2 text-xs text-wf-muted">
-              <div key={`${primaryUploadDetectorResult.frameId}-${primaryUploadDetectorResult.href}`}>
-                <p>
-                  <span className="font-semibold text-indigo-700">
-                    Frame {primaryUploadDetectorResult.frameId} {primaryUploadDetectorResult.isTop ? "(top)" : "(iframe)"}
-                  </span>
-                  {`: visibleInputs=${primaryUploadDetectorResult.result.visibleFileInputs.length}, hiddenInputs=${primaryUploadDetectorResult.result.hiddenFileInputs.length}, triggers=${primaryUploadDetectorResult.result.visibleUploadTriggers.length}, candidates=${primaryUploadDetectorResult.result.candidates.length}`}
-                </p>
-              </div>
-
-              {primaryUploadDetectorResult.result.visibleFileInputs.slice(0, 5).map((item, idx) => (
-                <p key={`ud-visible-${idx}`} className="text-wf-muted">
-                  VISIBLE_FILE `{item.label}` selector=`{item.selector}` accept=`{item.accept ?? ""}` hasFiles={String(item.hasFiles)}
-                </p>
-              ))}
-
-              {primaryUploadDetectorResult.result.hiddenFileInputs.slice(0, 5).map((item, idx) => (
-                <p key={`ud-hidden-${idx}`} className="text-wf-muted">
-                  HIDDEN_FILE `{item.label}` selector=`{item.selector}` accept=`{item.accept ?? ""}` signals={item.signals.slice(0, 3).join(" | ")}
-                </p>
-              ))}
-
-              {primaryUploadDetectorResult.result.visibleUploadTriggers.slice(0, 6).map((item, idx) => (
-                <p key={`ud-trigger-${idx}`} className="text-wf-muted">
-                  TRIGGER [{item.tag}] `{item.text}` selector=`{item.selector}`
-                </p>
-              ))}
-
-              {primaryUploadDetectorResult.result.candidates.length > 0 ? (
-                primaryUploadDetectorResult.result.candidates.map((item, idx) => (
-                  <p key={`ud-candidate-${idx}`} className="text-green-700">
-                    CANDIDATE [{item.subType}] `{item.label}` via={item.source} selector=`{item.selector}` triggers={item.triggerTexts.join(" | ")}
-                  </p>
-                ))
-              ) : (
-                <p className="text-amber-700">No upload blocker candidates detected in the primary frame.</p>
-              )}
-            </div>
-          </div>
-        )}
-
-        {autofillRunResults.length > 0 && primaryAutofillResult && (
-          <div className="mt-4 bg-wf-surface border border-wf-border rounded-xl p-3">
-            <p className="text-xs font-semibold text-wf-text mb-2">Autofill results (debug)</p>
-            <div className="space-y-2 text-xs text-wf-muted">
-              <div>
-                <p>
-                  <span className="font-semibold text-primary-700">
-                    Frame {primaryAutofillResult.frameId} {primaryAutofillResult.isTop ? "(top)" : "(iframe)"}
-                  </span>
-                  {`: candidates=${primaryAutofillResult.result.candidates.length}, results=${primaryAutofillResult.result.results.length}`}
-                </p>
-                <p className="text-xs text-wf-dim">
-                  summary: filled={primaryAutofillResult.result.results.filter((item) => item.action === "filled").length}, skipped={primaryAutofillResult.result.results.filter((item) => item.action.startsWith("skipped")).length}, failed={primaryAutofillResult.result.results.filter((item) => item.action === "failed_write" || item.action === "failed_verify").length}
-                </p>
-              </div>
-              {primaryAutofillResult.result.results.map((item: Phase1FillResult, idx: number) => (
-                <p
-                  key={`autofill-${primaryAutofillResult.frameId}-${idx}`}
-                  className={
-                    item.action === "filled"
-                      ? "text-green-700"
-                      : item.action === "failed_write" || item.action === "failed_verify"
-                        ? "text-red-700"
-                        : "text-amber-700"
-                  }
-                >
-                  {item.action.toUpperCase()} [{item.canonicalKey ?? "unmatched"}] {item.label} before="{item.before}" attempted="{item.attemptedValue ?? ""}" after="{item.after}" verified={String(item.verified)} ({item.reason})
-                </p>
-              ))}
-            </div>
           </div>
         )}
 
@@ -1494,41 +909,22 @@ export default function AutoFillPage() {
           ) : (
             <>
               {started && (
-                <>
-                  <button
-                    type="button"
-                    onClick={handleUndoAll}
-                    className="px-4 py-2.5 text-sm text-amber-400 border border-amber-900/40 rounded-[10px] hover:bg-amber-950/30"
-                  >
-                    Undo all
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleStopAutofill}
-                    className="px-4 py-2.5 text-sm text-red-400 border border-red-900/50 rounded-[10px] hover:bg-red-950/40"
-                  >
-                    Stop
-                  </button>
-                </>
-              )}
-              {state === "preview" && isPaused ? (
                 <button
                   type="button"
-                  onClick={handleFillAll}
-                  className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-primary-500 rounded-[10px] hover:bg-primary-600 transition-colors"
+                  onClick={handleStopAutofill}
+                  className="px-4 py-2.5 text-sm text-red-400 border border-red-900/50 rounded-[10px] hover:bg-red-950/40"
                 >
-                  Fill all
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onClick={handleStartAutofill}
-                  disabled={(!canRunAutofill) || (started && !isComplete)}
-                  className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-primary-500 rounded-[10px] hover:bg-primary-600 disabled:opacity-50 transition-colors"
-                >
-                  {started ? (isPaused ? "Waiting…" : "Filling…") : "Start auto-fill ⚡"}
+                  Stop
                 </button>
               )}
+              <button
+                type="button"
+                onClick={handleStartAutofill}
+                disabled={!canRunAutofill || started}
+                className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-primary-500 rounded-[10px] hover:bg-primary-600 disabled:opacity-50 transition-colors"
+              >
+                {started ? "Filling…" : "Start auto-fill ⚡"}
+              </button>
             </>
           )}
         </div>

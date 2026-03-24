@@ -38,12 +38,10 @@ export default defineConfig({
       input: {
         sidepanel: resolve(__dirname, "src/sidepanel/index.html"),
         "service-worker": resolve(__dirname, "src/background/service-worker.ts"),
-        content: resolve(__dirname, "src/content/autofill.ts"),
       },
       output: {
         entryFileNames: (chunkInfo) => {
           if (chunkInfo.name === "service-worker") return "background/service-worker.js";
-          if (chunkInfo.name === "content") return "content/content.js";
           return "sidepanel/[name]-[hash].js";
         },
         chunkFileNames: "sidepanel/chunks/[name]-[hash].js",

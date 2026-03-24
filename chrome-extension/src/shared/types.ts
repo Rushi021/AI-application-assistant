@@ -8,7 +8,6 @@ export interface UserProfile {
   email: string | null;
   picture_url: string | null;
 
-  // Basic
   full_name: string | null;
   phone: string | null;
   address_line1: string | null;
@@ -18,7 +17,6 @@ export interface UserProfile {
   zip_code: string | null;
   country: string | null;
 
-  // Professional
   linkedin_url: string | null;
   portfolio_url: string | null;
   github_url: string | null;
@@ -26,34 +24,28 @@ export interface UserProfile {
   current_title: string | null;
   current_company: string | null;
 
-  // Education
   degree: string | null;
   field_of_study: string | null;
   university: string | null;
   graduation_year: number | null;
   gpa: number | null;
 
-  // Work authorization
   visa_status: string | null;
   work_authorization: string | null;
   sponsorship_needed: boolean | null;
 
-  // Demographics (EEO)
   gender: string | null;
   ethnicity: string | null;
   veteran_status: string | null;
   disability_status: string | null;
 
-  // Salary
   expected_salary: string | null;
   current_salary: string | null;
   salary_currency: string | null;
 
-  // Custom
   custom_fields: Record<string, unknown> | null;
 }
 
-/** One education block; stored in custom_fields.education_history for multi-school GPA support. */
 export interface EducationHistoryEntry {
   university: string;
   degree: string;
@@ -62,7 +54,6 @@ export interface EducationHistoryEntry {
   gpa: number | null;
 }
 
-/** One work experience block; stored in custom_fields.work_experience. */
 export interface WorkExperienceEntry {
   job_title: string;
   company: string;
@@ -180,45 +171,8 @@ export interface Application {
 }
 
 // ---------------------------------------------------------------------------
-// Autofill - Form Model (State A: Page Intake)
+// Autofill
 // ---------------------------------------------------------------------------
-
-export type ConfidenceTier = "A" | "B" | "C";
-
-export type FieldKind = "native" | "custom_select" | "contenteditable";
-
-export interface FormField {
-  selector: string;
-  fieldType: string;
-  label: string;
-  fieldKind?: FieldKind;
-  triggerSelector?: string;
-  /** name, id, placeholder, aria-label, autocomplete, data-testid */
-  signals: string[];
-  /** (source, value) for weighted scoring. Sources: autocomplete, type, name, id, placeholder, aria-label, label, nearby, required, pattern, minLength, maxLength */
-  signalsWithSource?: Array<{ source: string; value: string }>;
-  required: boolean;
-  visible: boolean;
-  enabled: boolean;
-  filled: boolean;
-  manual: boolean;
-  /** Populated after matching; null = no match or low confidence */
-  profileValue: string | null;
-  confidence: number;
-  confidenceTier: ConfidenceTier;
-  /** Section/step if detectable (e.g. "Personal Info", "Experience") */
-  section: string | null;
-  /** Why this field matched (e.g. "autocomplete:email", "label:first_name", "platform:greenhouse") */
-  matchReason?: string;
-  /** Logical group (address, name, phone) for atomic fill */
-  groupId?: string | null;
-}
-
-export interface FormAction {
-  type: "next" | "submit" | "continue";
-  selector: string;
-  label: string;
-}
 
 export type BlockerType = "file_upload" | "captcha" | "otp" | "agreement" | "submit_confirmation";
 export type FileUploadBlockerSubType = "resume" | "cover_letter" | "generic";
@@ -228,22 +182,9 @@ export interface FormBlocker {
   type: BlockerType;
   selector: string;
   label: string;
-  /** For file_upload: resume | cover_letter | generic */
   subType?: FileUploadBlockerSubType | string;
   resolved: boolean;
 }
-
-export interface FormModel {
-  fields: FormField[];
-  actions: FormAction[];
-  blockers: FormBlocker[];
-  /** Section/step grouping if detectable */
-  sections: string[];
-}
-
-// ---------------------------------------------------------------------------
-// Autofill - State Machine
-// ---------------------------------------------------------------------------
 
 export type AutofillStateType =
   | "intake"
@@ -256,7 +197,6 @@ export type AutofillStateType =
   | "complete"
   | "stopped";
 
-/** One validation error with optional field context for side panel and highlight */
 export interface ValidationErrorItem {
   message: string;
   fieldSelector?: string;
@@ -275,29 +215,12 @@ export interface AutofillProgress {
   paused: boolean;
   completed: boolean;
   sessionComplete: boolean;
-  /** Current step index for multi-step forms */
   stepIndex: number;
-  /** Detected fields with confidence (for UI preview) */
-  fields: FormField[];
-  /** Active blocker when state=blocked */
+  fields: unknown[];
   activeBlocker: FormBlocker | null;
-  /** Validation errors after fill (field + value for reporting/highlight) */
   validationErrors: ValidationErrorItem[];
-  /** Last filled field for UI display; previousValue kept only in content script for Undo */
   lastFilledField: { selector: string; label: string } | null;
-  /** Pre-fill preview: field labels we will fill; unknown count */
   previewSummary?: { total: number; willFill: string[]; unknownCount: number };
-}
-
-// Legacy compatibility — keep DetectedField for any external references
-export interface DetectedField {
-  selector: string;
-  fieldType: string;
-  label: string;
-  confidence: number;
-  value?: string;
-  filled: boolean;
-  manual: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -326,11 +249,8 @@ export interface AutofillSession {
   active: boolean;
   tabId: number;
   startedAt: number;
-  /** Field types (canonical keys) already filled across all pages in this session. */
   filledFieldTypes: string[];
-  /** True once resume upload is confirmed in this session. */
   resumeFileUploaded: boolean;
-  /** URLs of pages visited during this session. */
   pagesVisited: string[];
   suppressWorkAndSkills: boolean;
   totalFilledAcrossPages: number;

@@ -7,13 +7,15 @@ export const STORAGE_KEYS = {
   REFRESH_TOKEN: "refresh_token",
   SESSION_ID: "session_id",
   USER_PROFILE: "user_profile",
-  FIELD_MAPPINGS: "autofill_field_mappings",
   AUTOFILL_PROGRESS: "autofill_progress",
-  AUTOFILL_TRACE_LOG: "autofill_trace_log",
-  /** Optional: URL to fetch resume file for programmatic file input fill (set by side panel when available). */
-  RESUME_FILE_URL: "autofill_resume_file_url",
   /** Multi-page autofill session state (chrome.storage.session). */
   AUTOFILL_SESSION: "autofill_session",
+  /** Flat answer map used by content-script-owned autofill loop (chrome.storage.session). */
+  AUTOFILL_ANSWERS: "autofill_answers",
+  /** One-way content-script trigger stamp (chrome.storage.session). */
+  AUTOFILL_TRIGGER_TS: "autofill_trigger_ts",
+  /** Upload blocker decisions keyed by selector/subType (chrome.storage.session). */
+  AUTOFILL_UPLOAD_DECISIONS: "autofill_upload_decisions",
 } as const;
 
 /** Message types for communication between extension parts */
@@ -22,37 +24,21 @@ export const MSG = {
   GET_AUTH_TOKEN: "GET_AUTH_TOKEN",
   AUTH_STATE_CHANGED: "AUTH_STATE_CHANGED",
 
-  // Autofill
+  // Autofill lifecycle
   START_AUTOFILL: "START_AUTOFILL",
-  RUN_AUTOFILL_DIAGNOSTICS: "RUN_AUTOFILL_DIAGNOSTICS",
-  AUTOFILL_PING: "AUTOFILL_PING",
-  AUTOFILL_DIAG_TRACE: "AUTOFILL_DIAG_TRACE",
-  AUTOFILL_START_RESULT: "AUTOFILL_START_RESULT",
-  IFRAME_RELOADED: "IFRAME_RELOADED",
   STOP_AUTOFILL: "STOP_AUTOFILL",
   AUTOFILL_PROGRESS: "AUTOFILL_PROGRESS",
-  AUTOFILL_PAUSED: "AUTOFILL_PAUSED",
-  AUTOFILL_RESUME: "AUTOFILL_RESUME",
-  AUTOFILL_BLOCKER_RESOLVED: "AUTOFILL_BLOCKER_RESOLVED",
+  AUTOFILL_DIAG_TRACE: "AUTOFILL_DIAG_TRACE",
+  AUTOFILL_START_RESULT: "AUTOFILL_START_RESULT",
   AUTOFILL_UPLOAD_BLOCKER_DECISION: "AUTOFILL_UPLOAD_BLOCKER_DECISION",
-  AUTOFILL_UNDO: "AUTOFILL_UNDO",
-  AUTOFILL_UNDO_ALL: "AUTOFILL_UNDO_ALL",
-  AUTOFILL_CONFIRM_SUBMIT: "AUTOFILL_CONFIRM_SUBMIT",
-  AUTOFILL_COMPLETE: "AUTOFILL_COMPLETE",
-  AUTOFILL_FIELD_MANUAL: "AUTOFILL_FIELD_MANUAL",
 
   // Multi-page session
   AUTOFILL_SESSION_STARTED: "AUTOFILL_SESSION_STARTED",
   AUTOFILL_SESSION_CHECK: "AUTOFILL_SESSION_CHECK",
   AUTOFILL_SESSION_UPDATE: "AUTOFILL_SESSION_UPDATE",
   AUTOFILL_SESSION_CANCEL: "AUTOFILL_SESSION_CANCEL",
-  RUN_SESSION_AUTOFILL: "RUN_SESSION_AUTOFILL",
   RUN_DIRECT_AUTOFILL: "RUN_DIRECT_AUTOFILL",
 
   // Profile
   GET_USER_PROFILE: "GET_USER_PROFILE",
-
-  // Content script
-  DETECT_JOB_DESCRIPTION: "DETECT_JOB_DESCRIPTION",
-  JOB_DESCRIPTION_DETECTED: "JOB_DESCRIPTION_DETECTED",
 } as const;
