@@ -79,6 +79,22 @@ def get_active_whitelisted_google_user(db: Session, google_user: GoogleUser) -> 
     if not user and email:
         user = db.query(User).filter(User.email == email).first()
 
+    # Auto-create user if their email is in ADMIN_EMAILS bootstrap list.
+    if not user and email and email in settings.admin_emails_list:
+        user = User(
+            username=email,
+            google_id=google_user.google_id,
+            email=email,
+            full_name=google_user.name,
+            picture_url=google_user.picture,
+            is_active=True,
+            is_admin=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return user
+
     if not user or not user.is_active:
         return None
 
