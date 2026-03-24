@@ -83,3 +83,9 @@ class GenerateCoverLetterRequest(BaseModel):
 
 class GenerateCoverLetterResponse(BaseModel):
     cover_letter: str
+
+
+class CoverLetterDocxRequest(BaseModel):
+    """Render a .docx from cover letter body text (no LLM)."""
+
+    cover_letter: str

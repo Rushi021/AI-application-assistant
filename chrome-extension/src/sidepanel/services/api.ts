@@ -86,6 +86,38 @@ async function tryRefreshToken(): Promise<string | null> {
   }
 }
 
+/** Authenticated fetch returning a Blob, with 401 refresh retry (same as request()). */
+async function fetchWithAuthBlob(path: string, options: RequestInit = {}): Promise<Blob> {
+  const { accessToken, sessionId } = await getStoredTokens();
+  const headers: Record<string, string> = {
+    ...(options.headers as Record<string, string>),
+  };
+  if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
+  if (sessionId) headers["X-Session-Id"] = sessionId;
+  const hasBody = options.body != null && options.body !== "";
+  if (hasBody && !(options.body instanceof FormData)) {
+    headers["Content-Type"] = headers["Content-Type"] ?? "application/json";
+  }
+
+  const url = `${API_BASE_URL}${path}`;
+  let resp = await fetch(url, { ...options, headers });
+
+  if (resp.status === 401) {
+    const refreshed = await tryRefreshToken();
+    if (refreshed) {
+      headers["Authorization"] = `Bearer ${refreshed}`;
+      resp = await fetch(url, { ...options, headers });
+    } else {
+      throw new ApiError(401, "Authentication required");
+    }
+  }
+
+  if (!resp.ok) {
+    throw new ApiError(resp.status, await resp.text());
+  }
+  return resp.blob();
+}
+
 export class ApiError extends Error {
   constructor(public status: number, public body: string) {
     super(`API ${status}: ${body}`);
@@ -243,17 +275,14 @@ export async function applySection(draftId: number, sectionId: string): Promise<
 }
 
 export async function applyAllSections(draftId: number): Promise<Blob> {
-  const { accessToken, sessionId } = await getStoredTokens();
-  const headers: Record<string, string> = {};
-  if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
-  if (sessionId) headers["X-Session-Id"] = sessionId;
+  return fetchWithAuthBlob(`/drafts/${draftId}/apply-all`, { method: "POST" });
+}
 
-  const resp = await fetch(`${API_BASE_URL}/drafts/${draftId}/apply-all`, {
+export async function renderCoverLetterDocx(draftId: number, coverLetter: string): Promise<Blob> {
+  return fetchWithAuthBlob(`/drafts/${draftId}/cover-letter/docx`, {
     method: "POST",
-    headers,
+    body: JSON.stringify({ cover_letter: coverLetter }),
   });
-  if (!resp.ok) throw new ApiError(resp.status, await resp.text());
-  return resp.blob();
 }
 
 export async function generateCoverLetter(

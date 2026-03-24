@@ -29,6 +29,7 @@ from app.modules.drafts.models import ResumeDraft, ResumeDraftSection, SectionCh
 from app.modules.drafts.repos import DraftRepo, DraftSectionRepo, SectionChatRepo
 from app.modules.drafts.schemas import (
     ChatMessageRead,
+    CoverLetterDocxRequest,
     DraftCreate,
     DraftRead,
     GenerateCoverLetterRequest,
@@ -660,6 +661,75 @@ def apply_section(
     return SectionRead.model_validate(updated)
 
 
+def _cover_letter_header_and_parsed(
+    draft: ResumeDraft,
+    sections: list,
+    db: Session,
+    session_id: str,
+) -> tuple[str, dict | None, int | None, int | None]:
+    header_section = next(
+        (s for s in sections if s.section_title == "Header" or s.section_group == "Header"),
+        None,
+    )
+    header_text = header_section.current_text if header_section else ""
+    parsed_json = None
+    header_para_start = header_section.para_start if header_section else None
+    header_para_end = header_section.para_end if header_section else None
+    resume_repo = SqlAlchemyResumeRepo(db)
+    resume = resume_repo.get_by_scope(session_id, draft.base_resume_id)
+    if resume and resume.parsed_json:
+        parsed_json = json.loads(resume.parsed_json)
+    return header_text, parsed_json, header_para_start, header_para_end
+
+
+@router.post("/{draft_id}/cover-letter/docx", response_class=Response)
+def render_cover_letter_docx(
+    draft_id: int,
+    payload: CoverLetterDocxRequest,
+    scope: RequestScope = Depends(get_request_scope),
+    db: Session = Depends(get_db),
+) -> Response:
+    """
+    Build a formatted .docx from client-supplied cover letter text (no LLM).
+    Uses the draft's resume Header section and parsed_json for layout context.
+    """
+    body = (payload.cover_letter or "").strip()
+    if not body:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="cover_letter must not be empty",
+        )
+
+    draft_repo = DraftRepo(db)
+    draft = draft_repo.get_by_scope(scope.session_id, draft_id)
+    if not draft:
+        raise not_found("Draft not found")
+
+    section_repo = DraftSectionRepo(db)
+    sections = section_repo.list_by_draft(draft_id)
+    if not sections:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Draft has no sections",
+        )
+
+    header_text, parsed_json, header_para_start, header_para_end = _cover_letter_header_and_parsed(
+        draft, sections, db, scope.session_id
+    )
+    docx_bytes = _build_cover_letter_docx(
+        header_text=header_text,
+        body_text=body,
+        parsed_json=parsed_json,
+        header_para_start=header_para_start,
+        header_para_end=header_para_end,
+    )
+    return Response(
+        content=docx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": 'attachment; filename="Cover_Letter.docx"'},
+    )
+
+
 @router.post("/{draft_id}/generate-cover-letter", response_model=GenerateCoverLetterResponse)
 def generate_cover_letter(
     draft_id: int,
@@ -717,18 +787,9 @@ def generate_cover_letter(
     db.commit()
     db.refresh(draft)
 
-    header_section = next(
-        (s for s in sections if s.section_title == "Header" or s.section_group == "Header"),
-        None,
+    header_text, parsed_json, header_para_start, header_para_end = _cover_letter_header_and_parsed(
+        draft, sections, db, scope.session_id
     )
-    header_text = header_section.current_text if header_section else ""
-    parsed_json = None
-    header_para_start = header_section.para_start if header_section else None
-    header_para_end = header_section.para_end if header_section else None
-    resume_repo = SqlAlchemyResumeRepo(db)
-    resume = resume_repo.get_by_scope(scope.session_id, draft.base_resume_id)
-    if resume and resume.parsed_json:
-        parsed_json = json.loads(resume.parsed_json)
 
     docx_bytes = _build_cover_letter_docx(
         header_text=header_text,

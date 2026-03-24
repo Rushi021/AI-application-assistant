@@ -1,12 +1,18 @@
 import { useEffect, useState } from "react";
 import { useAppStore } from "../store";
-import { generateCoverLetter } from "../services/api";
+import { generateCoverLetter, renderCoverLetterDocx, ApiError } from "../services/api";
+import {
+  companySlugFromJobText,
+  coverLetterFilename,
+  triggerBlobDownload,
+} from "../utils/filename";
 import WorkflowLayout from "../components/WorkflowLayout";
 
 export default function CoverLetterPage() {
-  const { draft, coverLetter, setCoverLetter, setPage } = useAppStore();
+  const { draft, jobDescription, coverLetter, setCoverLetter, setPage } = useAppStore();
   const [text, setText] = useState(coverLetter);
   const [regenerating, setRegenerating] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [instructions, setInstructions] = useState("");
   const [showInstructions, setShowInstructions] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,14 +43,33 @@ export default function CoverLetterPage() {
     setPage("autofill");
   };
 
-  const handleDownload = () => {
-    const blob = new Blob([text], { type: "text/plain" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "cover_letter.txt";
-    a.click();
-    URL.revokeObjectURL(url);
+  const handleDownload = async () => {
+    if (!draft) return;
+    if (!text.trim()) {
+      setError("Add cover letter text before downloading.");
+      return;
+    }
+    setDownloading(true);
+    setError(null);
+    try {
+      const blob = await renderCoverLetterDocx(draft.id, text);
+      const jd = draft.job_description ?? jobDescription;
+      const companySlug = companySlugFromJobText(jd);
+      triggerBlobDownload(blob, coverLetterFilename(companySlug));
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 500) {
+        try {
+          const parsed = JSON.parse(err.body) as { detail?: string };
+          setError(parsed.detail ?? err.message);
+        } catch {
+          setError(err.message);
+        }
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to download cover letter");
+      }
+    } finally {
+      setDownloading(false);
+    }
   };
 
   return (
@@ -64,10 +89,11 @@ export default function CoverLetterPage() {
             </button>
             <button
               type="button"
-              onClick={handleDownload}
-              className="px-4 py-2.5 text-sm font-medium text-primary-400 border border-wf-border rounded-[10px] hover:bg-wf-surfaceHover shrink-0"
+              onClick={() => void handleDownload()}
+              disabled={downloading}
+              className="px-4 py-2.5 text-sm font-medium text-primary-400 border border-wf-border rounded-[10px] hover:bg-wf-surfaceHover shrink-0 disabled:opacity-50"
             >
-              Download
+              {downloading ? "Downloading…" : "Download"}
             </button>
             <button
               type="button"
