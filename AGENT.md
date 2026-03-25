@@ -3,23 +3,24 @@ This repository is an AI job application assistant with three main parts: a Fast
 
 # Repo structure
 - `backend/`: FastAPI service, SQLAlchemy models/repos, Alembic migrations, and backend tests.
-- `backend/app/main.py`: App entrypoint; mounts auth/users/resumes/jobs/pipeline/applications/drafts routers.
+- `backend/app/main.py`: App entrypoint; mounts auth, admin, users, resumes, jobs, pipeline, applications, drafts, and `me` routers.
 - `backend/app/core/`: Settings, dependency wiring, logging, auth/security helpers.
 - `backend/app/common/`: Shared ports/adapters, errors, utilities, resume parsing/docx services.
 - `backend/app/db/`: SQLAlchemy session/base and Alembic environment/versions.
-- `backend/app/modules/`: Domain modules (`auth`, `users`, `resumes`, `jobs`, `pipeline`, `applications`, `drafts`, `ai`, `chat`).
-- `backend/tests/`: Python tests (currently parser-focused tests in `test_resume_parser.py`).
+- `backend/app/modules/`: Domain modules (`auth`, `admin`, `users`, `resumes`, `jobs`, `pipeline`, `applications`, `drafts`, `me`, `ai`; section chat endpoints live under the drafts router).
+- `backend/tests/`: Python tests — `test_resume_parser.py` (resume parsing), `test_api_integration.py` (end-to-end HTTP checks against a live API), plus `conftest.py` shared fixtures.
+- `backend/pytest.ini`: Pytest config (e.g. `integration` marker, `testpaths`).
 - `backend/data/resumes/`: Local file storage location used by the local storage adapter.
 - `chrome-extension/`: MV3 extension project (TypeScript + React + Vite).
 - `chrome-extension/src/background/`: Service worker for auth token retrieval, message routing, and application tracking writes.
 - `chrome-extension/src/content/`: Content script (`autofill.ts` only) — DOM scanning/matching/filling, upload blocker detection, and mutation-driven re-run.
 - `chrome-extension/src/sidepanel/`: React sidepanel app (pages, hooks, store, API client).
-- `chrome-extension/src/shared/`: Shared constants/types and answer-map builder (`autofill-answers.ts`).
+- `chrome-extension/src/shared/`: Shared constants/types and answer-map builder (`autofill-answers.ts`). `constants.ts` exports `API_BASE_URL` (deployed FastAPI base URL; change per environment).
 - `chrome-extension/public/`: Static icons.
 - `chrome-extension/dist/`: Built extension output for loading unpacked.
 - `streamlit_app/`: Standalone Streamlit client app (`app.py`) and its own requirements file.
 - `.venv/`: Local virtual environment in repo root.
-- `.cursor/`: Present but empty in current snapshot.
+- `.cursor/`: Optional Cursor/IDE project settings (if present).
 
 # How to run each part
 ## Backend (local)
@@ -74,6 +75,7 @@ The Streamlit client defaults to backend URL `http://localhost:8000`.
 - Auth/network/utilities: `PyJWT>=2.8.0`, `httpx>=0.27.0`, `python-dotenv==1.0.1`, `python-multipart==0.0.9`, `boto3>=1.34.0`.
 - Document processing: `python-docx>=1.1.0`.
 - LLM SDK: `google-generativeai>=0.8.0`.
+- Tests: `pytest>=8.0.0` (see `backend/requirements.txt`).
 
 Also present at repo root (`requirements.txt`):
 - `fastapi>=0.115.0`, `uvicorn[standard]>=0.32.0`, `sqlalchemy>=2.0.0`, `pydantic>=2.0.0`, `pydantic-settings>=2.0.0`, `python-docx>=1.0.0`, `PyJWT>=2.8.0`, `httpx>=0.27.0`, `alembic>=1.13.0`, `google-generativeai>=0.8.0`, `streamlit>=1.40.0`, `requests>=2.31.0`.
@@ -95,6 +97,8 @@ Also present at repo root (`requirements.txt`):
 - Resume/draft flow convention: resume is parsed to canonical JSON at upload, draft sections are generated from that JSON, section edits are tracked separately, and `apply-all` reconstructs a `.docx` while preserving formatting.
 - Extension communication uses a shared message contract in `src/shared/constants.ts` (`MSG` keys).
 - Extension auth/session storage convention: `access_token`, `refresh_token`, and `session_id` are stored in `chrome.storage.local`; API client attaches `Authorization` and `X-Session-Id` and retries 401 via `/auth/refresh`.
+- Resume delete (`DELETE /resumes/{id}?force=true`): server clears linked draft rows, pipeline runs, and **nulls `applications.resume_id`** for that session so FK-safe deletes work when job-tracking rows reference the resume. **`DELETE` returns 204 No Content** (not 200).
+- Extension resume UI: after delete or upload, **keyword scoring** (`POST /resumes/score`) is treated as best-effort so a scoring failure does not look like delete/upload failure.
 - Autofill answer-source convention: sidepanel writes flat answer map to `chrome.storage.session[autofill_answers]` at login/profile save (via `buildAutofillAnswersFromProfile`), and content script reads it directly.
 - Autofill trigger convention: sidepanel sends one-way `{ action: "run_autofill" }` and updates `chrome.storage.session[autofill_trigger_ts]`; no answer payload is sent through runtime messages.
 - Autofill execution ownership: `src/content/autofill.ts` owns scan -> match -> fill lifecycle, including text/select/checkbox/radio handling and event dispatch (`input/change/blur`), plus `MutationObserver` re-runs for SPA or multi-step DOM changes.
@@ -109,11 +113,21 @@ cd backend
 python -m pytest tests/test_resume_parser.py
 ```
 
-Run all backend tests currently present:
+Run the full backend test suite (`tests/`):
 ```bash
 cd backend
 python -m pytest tests
 ```
+Without `RUN_INTEGRATION_TESTS=1` or `API_INTEGRATION_BASE_URL`, `tests/test_api_integration.py` **skips** so default runs stay fast.
+
+**API integration tests** (hits a real deployed API — e.g. Render). Default base URL when `RUN_INTEGRATION_TESTS=1` matches `chrome-extension/src/shared/constants.ts` (`API_BASE_URL`); override with `API_INTEGRATION_BASE_URL` for local `uvicorn`.
+```bash
+cd backend
+pip install -r requirements.txt
+$env:RUN_INTEGRATION_TESTS="1"   # PowerShell; use export RUN_INTEGRATION_TESTS=1 on bash
+python -m pytest tests/test_api_integration.py -v
+```
+Optional: `API_INTEGRATION_BASE_URL=http://127.0.0.1:8000` to point at a local `uvicorn` without changing the extension default. To force-skip integration, leave both env vars unset or set `RUN_INTEGRATION_TESTS=0` / `false` / `off`.
 
 No JavaScript/TypeScript test script is defined in `chrome-extension/package.json`.
 
@@ -138,6 +152,7 @@ No JavaScript/TypeScript test script is defined in `chrome-extension/package.jso
 <!-- Intentionally left blank for manual authoring. -->
 
 # Known issues and decisions made through debugging
+- Deployed backend URL for the extension is the single source in `chrome-extension/src/shared/constants.ts` (`API_BASE_URL`). Keep the integration test default in `backend/tests/test_api_integration.py` (`EXTENSION_API_BASE_URL`) in sync when that host changes.
 - `chrome.storage.session` requires `setAccessLevel({ accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS" })` in the service worker so content scripts can read autofill answers/trigger/decisions.
 - `chrome.storage.session` is ephemeral (cleared on browser restart or extension reload), so autofill answers must be rebuilt from the cached `USER_PROFILE` in `chrome.storage.local` on every service worker startup and sidepanel `initAuthState` call.
 - Dynamic DOMs and highly unstable selectors can cause blocker-decision key churn; decisions are reset on new autofill start to avoid stale gating.
