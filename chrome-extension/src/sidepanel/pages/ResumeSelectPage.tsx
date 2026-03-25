@@ -78,11 +78,15 @@ export default function ResumeSelectPage() {
         setAutofillContext({ hasStoredResume: resumeList.length > 0 });
 
         if (resumeList.length > 0 && jobDescription) {
-          const scores = await scoreResumes(jobDescription);
-          setResumeScores(scores);
+          try {
+            const scores = await scoreResumes(jobDescription);
+            setResumeScores(scores);
+          } catch {
+            setResumeScores([]);
+          }
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to load resumes");
+        setError(formatApiError(err, "Failed to load resumes"));
       } finally {
         setLoading(false);
       }
@@ -103,11 +107,15 @@ export default function ResumeSelectPage() {
       setSelectedResumeId(newResume.id);
 
       if (jobDescription) {
-        const scores = await scoreResumes(jobDescription);
-        setResumeScores(scores);
+        try {
+          const scores = await scoreResumes(jobDescription);
+          setResumeScores(scores);
+        } catch {
+          setResumeScores([]);
+        }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
+      setError(formatApiError(err, "Upload failed"));
     } finally {
       setUploading(false);
       fileInputRef.current!.value = "";
@@ -127,14 +135,19 @@ export default function ResumeSelectPage() {
       if (selectedResumeId === resumeId) {
         setSelectedResumeId(updated[0]?.id ?? null);
       }
+      // Re-scoring is best-effort: a 500 here used to look like "delete failed" even after DELETE 204.
       if (jobDescription && updated.length > 0) {
-        const scores = await scoreResumes(jobDescription);
-        setResumeScores(scores);
+        try {
+          const scores = await scoreResumes(jobDescription);
+          setResumeScores(scores);
+        } catch {
+          setResumeScores([]);
+        }
       } else {
         setResumeScores([]);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to remove resume");
+      setError(formatApiError(err, "Failed to remove resume"));
     } finally {
       setRemoving(false);
     }

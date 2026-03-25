@@ -6,6 +6,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.common.adapters.sqlalchemy_repos import SqlAlchemyResumeRepo
@@ -16,6 +17,7 @@ from app.core.config import get_settings
 from app.core.deps import get_db, get_request_scope, get_resume_storage
 from app.core.security import RequestScope
 from app.common.ports import ResumeStorage
+from app.modules.applications.models import Application
 from app.modules.drafts.models import ResumeDraft, ResumeDraftSection, SectionChatMessage
 from app.modules.pipeline.models import PipelineRun
 from app.modules.resumes.models import Resume
@@ -167,6 +169,14 @@ def delete_resume(
     item = repo.get_by_scope(scope.session_id, resume_id)
     if not item:
         raise not_found("Resume not found")
+
+    # Application rows may reference this resume (extension job tracking). Clear before delete so
+    # databases with FK applications.resume_id -> resumes.id do not raise IntegrityError.
+    db.query(Application).filter(
+        Application.session_id == scope.session_id,
+        Application.resume_id == resume_id,
+    ).update({Application.resume_id: None}, synchronize_session=False)
+
     draft_refs = db.query(ResumeDraft).filter(
         ResumeDraft.session_id == scope.session_id,
         ResumeDraft.base_resume_id == resume_id,
@@ -202,8 +212,16 @@ def delete_resume(
             storage.delete_file(item.file_key)
         except Exception as e:
             logger.warning("Failed to delete resume file %s: %s", item.file_key, e)
-    db.delete(item)
-    db.commit()
+    try:
+        db.delete(item)
+        db.commit()
+    except IntegrityError as e:
+        db.rollback()
+        logger.exception("delete_resume integrity error resume_id=%s", resume_id)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Cannot delete resume: it is still referenced. Try again or remove linked drafts/applications.",
+        ) from e
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
