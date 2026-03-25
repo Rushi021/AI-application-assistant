@@ -17,6 +17,7 @@ from app.core.deps import get_db, get_request_scope, get_resume_storage
 from app.core.security import RequestScope
 from app.common.ports import ResumeStorage
 from app.modules.drafts.models import ResumeDraft, ResumeDraftSection, SectionChatMessage
+from app.modules.pipeline.models import PipelineRun
 from app.modules.resumes.models import Resume
 from app.modules.resumes.schemas import ResumeRead
 from app.modules.resumes.scoring import score_resume_against_jd
@@ -189,6 +190,13 @@ def delete_resume(
         db.query(ResumeDraft).filter(
             ResumeDraft.id.in_(draft_ids),
         ).delete(synchronize_session=False)
+
+    # Pipeline runs reference resumes.id; remove them before deleting the resume row.
+    db.query(PipelineRun).filter(
+        PipelineRun.session_id == scope.session_id,
+        PipelineRun.resume_id == resume_id,
+    ).delete(synchronize_session=False)
+
     if not item.file_key.startswith("local:"):
         try:
             storage.delete_file(item.file_key)
