@@ -507,6 +507,7 @@ export default function AutoFillPage() {
   const isPaused = progress?.paused ?? false;
   const state = progress?.state ?? "intake";
   const activeBlocker = progress?.activeBlocker ?? null;
+  console.log("RENDER: activeBlocker =", JSON.stringify(activeBlocker));
   const validationErrors = progress?.validationErrors ?? [];
 
   return (
