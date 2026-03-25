@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class ResumeRead(BaseModel):
@@ -15,6 +15,10 @@ class ResumeRead(BaseModel):
     sha256: str
     created_at: datetime
     file_path: str
+    client_stored: bool = Field(
+        default=False,
+        description="Blob kept on user device only (server uses parsed JSON; file_key prefix local:).",
+    )
 
     class Config:
         from_attributes = True

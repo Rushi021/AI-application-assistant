@@ -48,7 +48,12 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("API_KEY_ENCRYPTION_KEY"),
     )
 
-    # Output paths for generated/tailored files saved to local machine
+    # When True, also write generated .docx to these paths (dev / personal machine only).
+    # Production + extension downloads should rely on HTTP responses, not server disk.
+    persist_generated_files_to_disk: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("PERSIST_GENERATED_FILES_TO_DISK"),
+    )
     output_resume_path: str = r"E:\rushi\storage - resume\resumes"
     output_cover_letter_path: str = r"E:\rushi\storage - resume\cover letters"
 

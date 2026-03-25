@@ -11,6 +11,7 @@ import {
   uploadResume,
 } from "../services/api";
 import WorkflowLayout from "../components/WorkflowLayout";
+import { forgetResumeFile, rememberResumeFile } from "../resumeLocalCache";
 
 async function runCoverLetterFromResume(
   jobDescriptionText: string,
@@ -153,13 +154,15 @@ export default function TemporaryResumeUploadPage() {
     try {
       if (autofillContext.temporaryResumeId) {
         try {
+          forgetResumeFile(autofillContext.temporaryResumeId);
           await deleteResume(autofillContext.temporaryResumeId);
         } catch {
           // best-effort cleanup before replacing temp resume
         }
       }
 
-      const resume = await uploadResume(file);
+      const resume = await uploadResume(file, true);
+      rememberResumeFile(resume.id, file);
       setResumes([resume, ...resumes.filter((r) => r.id !== resume.id)]);
       setSelectedResumeIdLocal(resume.id);
 

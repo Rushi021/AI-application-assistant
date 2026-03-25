@@ -1,5 +1,7 @@
 """Draft workflow router: create, get, section chat, patch, apply-section, apply-all."""
 
+from __future__ import annotations
+
 import io
 import json
 import logging
@@ -11,7 +13,7 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml.ns import qn
 from docx.shared import Pt
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import Response
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
@@ -27,6 +29,7 @@ from app.modules.ai.prompts.pipeline import build_cover_letter_prompt
 from app.modules.ai.prompts.section_chat import build_section_chat_prompt
 from app.modules.drafts.models import ResumeDraft, ResumeDraftSection, SectionChatMessage
 from app.modules.drafts.repos import DraftRepo, DraftSectionRepo, SectionChatRepo
+from app.modules.resumes.models import Resume
 from app.modules.drafts.schemas import (
     ChatMessageRead,
     CoverLetterDocxRequest,
@@ -43,6 +46,29 @@ from app.modules.drafts.schemas import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/drafts", tags=["drafts"])
+
+
+def _is_client_stored_resume(resume: Resume) -> bool:
+    return resume.file_key.startswith("local:")
+
+
+def _get_resume_docx_bytes(
+    resume: Resume,
+    resume_file: UploadFile | None,
+    resume_storage: ResumeStorage,
+) -> bytes:
+    """Load original .docx bytes from multipart upload or server storage."""
+    if resume_file is not None:
+        return resume_file.file.read()
+    if _is_client_stored_resume(resume):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=(
+                "This resume is stored only on your device. Attach the original .docx as resume_file "
+                "(the Chrome extension sends it automatically on Save & continue)."
+            ),
+        )
+    return resume_storage.get_file_bytes(resume.file_key)
 
 
 # ---------------------------------------------------------------------------
@@ -400,8 +426,8 @@ def create_draft(
     if resume.parsed_json:
         parsed = json.loads(resume.parsed_json)
     else:
-        # Fallback: parse on the fly and store for next time
-        file_bytes = resume_storage.get_file_bytes(resume.file_key)
+        # Fallback: parse on the fly and store for next time (requires server-side file or client re-upload)
+        file_bytes = _get_resume_docx_bytes(resume, None, resume_storage)
         parsed = parse_resume_to_json(file_bytes)
         resume.parsed_json = json.dumps(parsed)
         db.commit()
@@ -799,19 +825,27 @@ def generate_cover_letter(
         header_para_end=header_para_end,
     )
     settings = get_settings()
-    cl_dir = settings.output_cover_letter_path
-    os.makedirs(cl_dir, exist_ok=True)
-    cl_filename = f"cover_letter_draft_{draft_id}.docx"
-    cl_path = os.path.join(cl_dir, cl_filename)
-    with open(cl_path, "wb") as f:
-        f.write(docx_bytes)
-    logger.info("Saved cover letter to %s", cl_path)
+    if settings.persist_generated_files_to_disk:
+        cl_dir = settings.output_cover_letter_path
+        os.makedirs(cl_dir, exist_ok=True)
+        cl_filename = f"cover_letter_draft_{draft_id}.docx"
+        cl_path = os.path.join(cl_dir, cl_filename)
+        with open(cl_path, "wb") as f:
+            f.write(docx_bytes)
+        logger.info("Saved cover letter to %s", cl_path)
 
     return GenerateCoverLetterResponse(cover_letter=cover_letter)
 
 
 def _apply_all_detail_from_error(e: BaseException) -> str:
     """Turn known errors into a clear message for the client."""
+    if isinstance(e, FileNotFoundError):
+        return (
+            "The original resume file is no longer on the server. Cloud hosts often wipe local disk on "
+            "redeploy or use a fresh instance without your files. Configure STORAGE_BACKEND=s3 with "
+            "S3_BUCKET_NAME and AWS (or R2) credentials, or attach a persistent disk and set "
+            "LOCAL_STORAGE_PATH to that mount, then re-upload your resume."
+        )
     msg = str(e).lower()
     if isinstance(e, OperationalError) and ("no such column" in msg or "undefined column" in msg):
         return (
@@ -826,6 +860,10 @@ def _apply_all_detail_from_error(e: BaseException) -> str:
 @router.post("/{draft_id}/apply-all", response_class=Response)
 def apply_all(
     draft_id: int,
+    resume_file: UploadFile | None = File(
+        None,
+        description="Original .docx from the user's machine when resume was uploaded with client_stored=true.",
+    ),
     scope: RequestScope = Depends(get_request_scope),
     db: Session = Depends(get_db),
     resume_storage: ResumeStorage = Depends(get_resume_storage),
@@ -857,7 +895,7 @@ def apply_all(
 
         parsed_json = json.loads(resume.parsed_json) if resume.parsed_json else None
 
-        file_bytes = resume_storage.get_file_bytes(resume.file_key)
+        file_bytes = _get_resume_docx_bytes(resume, resume_file, resume_storage)
         out_bytes = _apply_sections_to_docx(file_bytes, sections, parsed_json)
 
         draft_repo.update_status(scope.session_id, draft_id, "approved")
@@ -867,12 +905,13 @@ def apply_all(
             filename += ".docx"
 
         settings = get_settings()
-        output_dir = settings.output_resume_path
-        os.makedirs(output_dir, exist_ok=True)
-        save_path = os.path.join(output_dir, filename)
-        with open(save_path, "wb") as f:
-            f.write(out_bytes)
-        logger.info("Saved tailored resume to %s", save_path)
+        if settings.persist_generated_files_to_disk:
+            output_dir = settings.output_resume_path
+            os.makedirs(output_dir, exist_ok=True)
+            save_path = os.path.join(output_dir, filename)
+            with open(save_path, "wb") as f:
+                f.write(out_bytes)
+            logger.info("Saved tailored resume to %s", save_path)
 
         return Response(
             content=out_bytes,
@@ -881,6 +920,13 @@ def apply_all(
         )
     except HTTPException:
         raise
+    except FileNotFoundError as e:
+        logger.exception("apply_all missing resume file for draft_id=%s", draft_id)
+        detail = _apply_all_detail_from_error(e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=detail,
+        ) from e
     except Exception as e:
         logger.exception("apply_all failed for draft_id=%s", draft_id)
         detail = _apply_all_detail_from_error(e)

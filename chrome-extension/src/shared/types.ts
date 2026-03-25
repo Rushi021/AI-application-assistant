@@ -80,9 +80,12 @@ export interface Resume {
   id: number;
   session_id: string;
   original_filename: string;
+  file_key?: string;
   content_type: string;
   size_bytes: number;
   created_at: string;
+  /** When true, the .docx is not stored on the API server; keep a local copy via resumeLocalCache. */
+  client_stored?: boolean;
 }
 
 export interface ResumeScore {
@@ -142,6 +145,7 @@ export interface DraftSection {
 export interface Draft {
   id: number;
   session_id: string;
+  base_resume_id: number;
   status: "drafting" | "approved" | "applied";
   starting_source: "base" | "tailored";
   job_description: string | null;

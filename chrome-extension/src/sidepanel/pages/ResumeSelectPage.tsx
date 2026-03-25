@@ -11,6 +11,7 @@ import {
 } from "../services/api";
 import ResumeCard from "../components/ResumeCard";
 import WorkflowLayout from "../components/WorkflowLayout";
+import { forgetResumeFile, rememberResumeFile } from "../resumeLocalCache";
 
 function formatApiError(err: unknown, fallback: string): string {
   if (err instanceof ApiError) {
@@ -94,7 +95,8 @@ export default function ResumeSelectPage() {
     setUploading(true);
     setError(null);
     try {
-      const newResume = await uploadResume(file);
+      const newResume = await uploadResume(file, true);
+      rememberResumeFile(newResume.id, file);
       const updated = [newResume, ...resumes];
       setResumes(updated);
       setAutofillContext({ hasStoredResume: updated.length > 0 });
@@ -117,6 +119,7 @@ export default function ResumeSelectPage() {
     setRemoving(true);
     setError(null);
     try {
+      forgetResumeFile(resumeId);
       await deleteResume(resumeId);
       const updated = resumes.filter((r) => r.id !== resumeId);
       setResumes(updated);

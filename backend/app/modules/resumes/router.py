@@ -1,5 +1,6 @@
 import json
 import logging
+import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -37,6 +38,11 @@ def _validate_upload(file: UploadFile, file_bytes: bytes) -> None:
 
 
 def _resume_to_read(item: Resume, storage: ResumeStorage) -> ResumeRead:
+    client_stored = item.file_key.startswith("local:")
+    if client_stored:
+        file_path = f"client://{item.original_filename}"
+    else:
+        file_path = storage.get_file_url_or_path(item.file_key)
     return ResumeRead(
         id=item.id,
         session_id=item.session_id,
@@ -47,13 +53,18 @@ def _resume_to_read(item: Resume, storage: ResumeStorage) -> ResumeRead:
         size_bytes=item.size_bytes,
         sha256=item.sha256,
         created_at=item.created_at,
-        file_path=storage.get_file_url_or_path(item.file_key),
+        file_path=file_path,
+        client_stored=client_stored,
     )
 
 
 @router.post("/upload", response_model=ResumeRead)
 def upload_resume(
     file: UploadFile = File(...),
+    client_stored: bool = Query(
+        False,
+        description="If true, do not persist the file on the server; only parsed JSON is stored. Requires .docx.",
+    ),
     scope: RequestScope = Depends(get_request_scope),
     storage: ResumeStorage = Depends(get_resume_storage),
     db: Session = Depends(get_db),
@@ -69,18 +80,35 @@ def upload_resume(
     file_bytes = file.file.read()
     _validate_upload(file, file_bytes)
 
-    file_key = storage.save_file(file_bytes, file.filename or "resume", file.content_type or "")
-
-    # Parse the resume into canonical JSON at upload time
-    parsed_json_str: Optional[str] = None
     ext = (file.filename or "").rsplit(".", 1)[-1].lower()
-    if ext == "docx":
+    parsed_json_str: Optional[str] = None
+
+    if client_stored:
+        if ext != "docx":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="client_stored=true requires a .docx file so the document can be rebuilt without a server-side copy.",
+            )
         try:
             parsed = parse_resume_to_json(file_bytes)
             parsed_json_str = json.dumps(parsed)
-            logger.info("Parsed resume into %d sections", len(parsed.get("sections", [])))
-        except Exception:
-            logger.exception("Failed to parse resume at upload (non-fatal)")
+            logger.info("Client-stored resume: parsed %d sections", len(parsed.get("sections", [])))
+        except Exception as e:
+            logger.exception("Client-stored resume parse failed")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Could not parse resume: {e!s}",
+            ) from e
+        file_key = f"local:{uuid.uuid4().hex}"
+    else:
+        file_key = storage.save_file(file_bytes, file.filename or "resume", file.content_type or "")
+        if ext == "docx":
+            try:
+                parsed = parse_resume_to_json(file_bytes)
+                parsed_json_str = json.dumps(parsed)
+                logger.info("Parsed resume into %d sections", len(parsed.get("sections", [])))
+            except Exception:
+                logger.exception("Failed to parse resume at upload (non-fatal)")
 
     resume = Resume(
         session_id=scope.session_id,

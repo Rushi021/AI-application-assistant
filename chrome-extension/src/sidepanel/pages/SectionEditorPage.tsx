@@ -6,6 +6,7 @@ import {
   triggerBlobDownload,
 } from "../utils/filename";
 import { patchSection, applySection, applyAllSections, generateCoverLetter, getDraft, ApiError } from "../services/api";
+import { getCachedResumeFile } from "../resumeLocalCache";
 import type { DraftSection } from "@/shared/types";
 import SectionCard from "../components/SectionCard";
 import ChatInterface from "../components/ChatInterface";
@@ -30,7 +31,7 @@ function groupSectionsByGroup(sections: DraftSection[]): { groupTitle: string; s
 }
 
 export default function SectionEditorPage() {
-  const { draft, jobDescription, setDraft, updateSection, setCoverLetter, setPage } = useAppStore();
+  const { draft, jobDescription, resumes, setDraft, updateSection, setCoverLetter, setPage } = useAppStore();
   const [chatSectionId, setChatSectionId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [hasEdits, setHasEdits] = useState(false);
@@ -92,7 +93,15 @@ export default function SectionEditorPage() {
     setSaving(true);
     setError(null);
     try {
-      const blob = await applyAllSections(draft.id);
+      const resumeMeta = resumes.find((r) => r.id === draft.base_resume_id);
+      const localFile = getCachedResumeFile(draft.base_resume_id);
+      if (resumeMeta?.client_stored === true && !localFile) {
+        setError(
+          "Your original resume file is needed to build the Word document. Go back to the Resume step, upload the same .docx again, then return here."
+        );
+        return;
+      }
+      const blob = await applyAllSections(draft.id, localFile);
       const jd = draft.job_description ?? jobDescription;
       const companySlug = companySlugFromJobText(jd);
       triggerBlobDownload(blob, tailoredResumeFilename(companySlug));
@@ -105,7 +114,7 @@ export default function SectionEditorPage() {
         .then((updated) => setDraft(updated))
         .catch(() => {});
     } catch (err) {
-      if (err instanceof ApiError && err.status === 500) {
+      if (err instanceof ApiError && (err.status === 500 || err.status === 503 || err.status === 400)) {
         try {
           const parsed = JSON.parse(err.body) as { detail?: string };
           setError(parsed.detail ?? err.message);

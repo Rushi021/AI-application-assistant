@@ -178,10 +178,15 @@ export async function replaceProfile(data: Partial<UserProfile>): Promise<UserPr
 // Resumes
 // ---------------------------------------------------------------------------
 
-export async function uploadResume(file: File): Promise<Resume> {
+/**
+ * @param clientStored When true (default), the API stores only parsed structure — not the file on disk.
+ *   The extension must cache the File (see resumeLocalCache) for apply-all.
+ */
+export async function uploadResume(file: File, clientStored = true): Promise<Resume> {
   const formData = new FormData();
   formData.append("file", file);
-  return request<Resume>("/resumes/upload", { method: "POST", body: formData });
+  const q = clientStored ? "?client_stored=true" : "";
+  return request<Resume>(`/resumes/upload${q}`, { method: "POST", body: formData });
 }
 
 export async function listResumes(): Promise<Resume[]> {
@@ -274,7 +279,16 @@ export async function applySection(draftId: number, sectionId: string): Promise<
   await request<void>(`/drafts/${draftId}/sections/${sectionId}/apply`, { method: "POST" });
 }
 
-export async function applyAllSections(draftId: number): Promise<Blob> {
+/**
+ * Rebuild the final .docx. Pass `resumeFile` when the resume was uploaded with client_stored=true
+ * (default); omit when the API still has the file on server storage.
+ */
+export async function applyAllSections(draftId: number, resumeFile?: File): Promise<Blob> {
+  if (resumeFile) {
+    const formData = new FormData();
+    formData.append("resume_file", resumeFile, resumeFile.name);
+    return fetchWithAuthBlob(`/drafts/${draftId}/apply-all`, { method: "POST", body: formData });
+  }
   return fetchWithAuthBlob(`/drafts/${draftId}/apply-all`, { method: "POST" });
 }
 

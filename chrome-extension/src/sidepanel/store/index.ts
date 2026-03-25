@@ -16,6 +16,7 @@ import type {
 } from "@/shared/types";
 import { STORAGE_KEYS } from "@/shared/constants";
 import { buildAutofillAnswersFromProfile } from "@/shared/autofill-answers";
+import { clearResumeFileCache } from "../resumeLocalCache";
 
 interface AppState {
   // Navigation
@@ -152,6 +153,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Reset workflow (keep auth)
   resetWorkflow: () => {
+    clearResumeFileCache();
     chrome.storage.local
       .remove([STORAGE_KEYS.AUTOFILL_PROGRESS])
       .catch(() => {});
