@@ -368,7 +368,9 @@ export default function AutoFillPage() {
     const { id: tabId } = await getActiveTab();
 
     await chrome.storage.session.set({ [STORAGE_KEYS.AUTOFILL_TRIGGER_TS]: Date.now() });
-    chrome.tabs.sendMessage(tabId, { action: "run_autofill" }).catch(() => {});
+    chrome.runtime
+      .sendMessage({ type: MSG.BROADCAST_RUN_AUTOFILL, data: { tabId } })
+      .catch(() => {});
 
     appendTimeline("Autofill trigger sent");
     scheduleStartedReset(2500);
