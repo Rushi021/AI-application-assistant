@@ -321,7 +321,6 @@ function emitAutofillProgress(progress: AutofillProgress): void {
   if (signature === lastProgressSignature) return;
   lastProgressSignature = signature;
   chrome.runtime.sendMessage({ type: MSG.AUTOFILL_PROGRESS, data: progress }).catch(() => {});
-  chrome.storage.local.set({ [STORAGE_KEYS.AUTOFILL_PROGRESS]: progress }).catch(() => {});
 }
 
 function buildProgress({

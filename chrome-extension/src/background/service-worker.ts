@@ -4,7 +4,7 @@
  */
 
 import { MSG, STORAGE_KEYS, API_BASE_URL } from "@/shared/constants";
-import type { AutofillSession, UserProfile } from "@/shared/types";
+import type { AutofillProgress, AutofillSession, UserProfile } from "@/shared/types";
 import { buildAutofillAnswersFromProfile } from "@/shared/autofill-answers";
 
 // Allow content scripts to read/write chrome.storage.session (answers, trigger, decisions)
@@ -49,6 +49,41 @@ function relayToExtensionViews(message: unknown): void {
     ...(message as Record<string, unknown>),
     __relayFromBackground: true,
   }).catch(() => {});
+}
+
+/** Multi-frame runs can emit "blocked" and "complete (0 fields)" in any order; last storage write must not drop an active upload gate. */
+function mergeAutofillProgress(prev: AutofillProgress | null | undefined, incoming: AutofillProgress): AutofillProgress {
+  if (incoming.state === "blocked" && incoming.activeBlocker) {
+    return incoming;
+  }
+  if (
+    prev?.state === "blocked" &&
+    prev.activeBlocker &&
+    incoming.state === "apply" &&
+    (incoming.total ?? 0) === 0 &&
+    (incoming.filled ?? 0) === 0
+  ) {
+    return prev;
+  }
+  if (
+    prev?.state === "blocked" &&
+    prev.activeBlocker &&
+    incoming.state === "complete" &&
+    (incoming.total ?? 0) === 0 &&
+    (incoming.filled ?? 0) === 0 &&
+    !incoming.activeBlocker
+  ) {
+    return prev;
+  }
+  return incoming;
+}
+
+async function persistMergedAutofillProgress(incoming: AutofillProgress): Promise<AutofillProgress> {
+  const result = await chrome.storage.local.get([STORAGE_KEYS.AUTOFILL_PROGRESS]);
+  const prev = result[STORAGE_KEYS.AUTOFILL_PROGRESS] as AutofillProgress | undefined;
+  const merged = mergeAutofillProgress(prev, incoming);
+  await chrome.storage.local.set({ [STORAGE_KEYS.AUTOFILL_PROGRESS]: merged });
+  return merged;
 }
 
 // ---------------------------------------------------------------------------
@@ -322,7 +357,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === MSG.AUTOFILL_PROGRESS) {
-    relayToExtensionViews(message);
+    const data = (message as { data?: AutofillProgress }).data;
+    if (!data || typeof data !== "object") {
+      return false;
+    }
+    void persistMergedAutofillProgress(data)
+      .then((merged) => {
+        relayToExtensionViews({ type: MSG.AUTOFILL_PROGRESS, data: merged });
+      })
+      .catch(() => {});
     return false;
   }
 });

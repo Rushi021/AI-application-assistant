@@ -90,7 +90,6 @@ export default function AutoFillPage() {
   const [sessionActive, setSessionActive] = useState(false);
   const previousProgressRef = useRef<AutofillProgress | null>(null);
   const handledUploadBlockerKeysRef = useRef<Set<string>>(new Set());
-  const triggerResetTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     chrome.storage.local.get(
@@ -136,14 +135,6 @@ export default function AutoFillPage() {
     setUploadedSameAsProfileResume(autofillContext.uploadedSameAsProfileResume);
   }, [autofillProgress?.activeBlocker?.selector, autofillContext.uploadedSameAsProfileResume]);
 
-  useEffect(() => {
-    return () => {
-      if (triggerResetTimerRef.current != null) {
-        window.clearTimeout(triggerResetTimerRef.current);
-      }
-    };
-  }, []);
-
   const effectiveProfile = profile ?? profileFromStorage;
   const canRunAutofill = !!effectiveProfile;
   const hasCompleteProfile = hasRequiredProfile(effectiveProfile);
@@ -151,16 +142,6 @@ export default function AutoFillPage() {
 
   const appendTimeline = useCallback((message: string, level: TimelineLevel = "info") => {
     setTimeline((prev) => [{ ts: Date.now(), level, message }, ...prev].slice(0, 20));
-  }, []);
-
-  const scheduleStartedReset = useCallback((delayMs = 2500) => {
-    if (triggerResetTimerRef.current != null) {
-      window.clearTimeout(triggerResetTimerRef.current);
-    }
-    triggerResetTimerRef.current = window.setTimeout(() => {
-      setStarted(false);
-      triggerResetTimerRef.current = null;
-    }, delayMs);
   }, []);
 
   const resetExecutionView = useCallback(() => {
@@ -171,6 +152,12 @@ export default function AutoFillPage() {
       .remove([STORAGE_KEYS.AUTOFILL_PROGRESS])
       .catch(() => {});
   }, [setAutofillProgress]);
+
+  useEffect(() => {
+    if (autofillProgress?.completed && autofillProgress.state !== "blocked") {
+      setStarted(false);
+    }
+  }, [autofillProgress?.completed, autofillProgress?.state]);
 
   useEffect(() => {
     const listener = (message: { type: string; data?: AutofillProgress | { step?: string; detail?: string; level?: TimelineLevel; source?: string; frameId?: number; reason?: string } | { ok?: boolean; error?: string | null; ts?: number } }) => {
@@ -373,13 +360,7 @@ export default function AutoFillPage() {
       .catch(() => {});
 
     appendTimeline("Autofill trigger sent");
-    scheduleStartedReset(2500);
-  }, [
-    appendTimeline,
-    effectiveProfile,
-    getActiveTab,
-    scheduleStartedReset,
-  ]);
+  }, [appendTimeline, effectiveProfile, getActiveTab]);
 
   const handleStartAutofill = useCallback(async () => {
     setError(null);
@@ -582,6 +563,21 @@ export default function AutoFillPage() {
                 Sign in and load your profile before starting auto-fill.
               </p>
             )}
+          </div>
+        )}
+
+        {started && !progress && (
+          <div className="text-center py-8">
+            <div className="w-16 h-16 mx-auto mb-4 bg-[#1c1208] border-2 border-primary-800/40 rounded-full flex items-center justify-center">
+              <span className="relative flex h-8 w-8">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary-400 opacity-40" />
+                <span className="relative inline-flex rounded-full h-8 w-8 bg-primary-500/90" />
+              </span>
+            </div>
+            <p className="text-sm font-medium text-wf-text">Waiting for autofill status…</p>
+            <p className="text-xs text-wf-muted mt-1">
+              Talking to the application tab. If this stays here, refresh the page and try again.
+            </p>
           </div>
         )}
 
