@@ -543,12 +543,12 @@ def get_draft(
     )
 
 
-@router.delete("/{draft_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{draft_id}")
 def delete_draft(
     draft_id: int,
     scope: RequestScope = Depends(get_request_scope),
     db: Session = Depends(get_db),
-) -> None:
+) -> Response:
     """Discard a draft and all of its section/chat history."""
     draft_repo = DraftRepo(db)
     draft = draft_repo.get_by_scope(scope.session_id, draft_id)
@@ -563,6 +563,7 @@ def delete_draft(
     ).delete(synchronize_session=False)
     db.delete(draft)
     db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/{draft_id}/sections/{section_id}/chat", response_model=SectionChatResponse)

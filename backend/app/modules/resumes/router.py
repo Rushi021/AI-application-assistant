@@ -4,6 +4,7 @@ import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -149,7 +150,7 @@ def get_resume(
     return _resume_to_read(item, storage)
 
 
-@router.delete("/{resume_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/{resume_id}")
 def delete_resume(
     resume_id: int,
     force: bool = Query(
@@ -159,7 +160,7 @@ def delete_resume(
     scope: RequestScope = Depends(get_request_scope),
     storage: ResumeStorage = Depends(get_resume_storage),
     db: Session = Depends(get_db),
-) -> None:
+) -> Response:
     """Remove a resume from the session. Frees the slot for a new upload."""
     repo = SqlAlchemyResumeRepo(db)
     item = repo.get_by_scope(scope.session_id, resume_id)
@@ -188,12 +189,14 @@ def delete_resume(
         db.query(ResumeDraft).filter(
             ResumeDraft.id.in_(draft_ids),
         ).delete(synchronize_session=False)
-    try:
-        storage.delete_file(item.file_key)
-    except Exception as e:
-        logger.warning("Failed to delete resume file %s: %s", item.file_key, e)
+    if not item.file_key.startswith("local:"):
+        try:
+            storage.delete_file(item.file_key)
+        except Exception as e:
+            logger.warning("Failed to delete resume file %s: %s", item.file_key, e)
     db.delete(item)
     db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # ---------------------------------------------------------------------------
