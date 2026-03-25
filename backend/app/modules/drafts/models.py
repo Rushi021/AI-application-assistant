@@ -42,8 +42,8 @@ class ResumeDraftSection(Base):
     draft_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("resume_drafts.id"), nullable=False, index=True,
     )
-    section_id: Mapped[str] = mapped_column(String(100), nullable=False)  # e.g. 'experience', 'projects'
-    section_title: Mapped[str] = mapped_column(String(255), nullable=False)
+    section_id: Mapped[str] = mapped_column(String(512), nullable=False)  # stable slug from parser
+    section_title: Mapped[str] = mapped_column(Text, nullable=False)  # can be a long first-line heading
     order_index: Mapped[int] = mapped_column(Integer, nullable=False)
     original_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
     current_text: Mapped[str] = mapped_column(Text, nullable=False, default="")
@@ -67,7 +67,7 @@ class SectionChatMessage(Base):
     draft_id: Mapped[int] = mapped_column(
         Integer, ForeignKey("resume_drafts.id"), nullable=False, index=True,
     )
-    section_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    section_id: Mapped[str] = mapped_column(String(512), nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False)  # user / assistant / system
     content: Mapped[str] = mapped_column(Text, nullable=False)
     turn_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

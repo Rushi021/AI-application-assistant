@@ -89,9 +89,15 @@ class Settings(BaseSettings):
     jwt_access_token_expire_minutes: int = 60 * 24  # 24 hours
     jwt_refresh_token_expire_minutes: int = 60 * 24 * 30  # 30 days
 
-    # LLM (Gemini / Google AI) — use real key in env
-    google_ai_api_key: str = "placeholder-api-key-replace-with-real"
-    gemini_model: str = "gemini-1.5-flash"
+    # LLM (Gemini / Google AI) — set GOOGLE_AI_API_KEY or GEMINI_API_KEY in env / .env
+    google_ai_api_key: str = Field(
+        default="placeholder-api-key-replace-with-real",
+        validation_alias=AliasChoices("GOOGLE_AI_API_KEY", "GEMINI_API_KEY"),
+    )
+    gemini_model: str = Field(
+        default="gemini-2.0-flash",
+        validation_alias=AliasChoices("GEMINI_MODEL", "GOOGLE_GEMINI_MODEL"),
+    )
 
     @property
     def allowed_extensions_list(self) -> List[str]:
