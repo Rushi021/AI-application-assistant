@@ -1,4 +1,4 @@
-﻿# AI Job Application Assistant - Implementation Guide
+# AI Job Application Assistant - Implementation Guide
 
 This document explains what is implemented in the backend today, how the architecture is organized, how users interact with the system, and how data flows across components.
 
@@ -214,6 +214,32 @@ All key repos and routers scope reads/writes by session. This is the core data i
   - create/list/get/update application
   - create/list application events
 - Purpose: keep application state and timeline in one place.
+
+### 6.8 Chrome Extension — In-page autofill
+
+The MV3 extension fills job application forms using profile-derived answers stored in **`chrome.storage.session`**, not by shipping answer payloads through `runtime.sendMessage`.
+
+**Trigger path**
+
+- Sidepanel (`AutoFillPage` → `triggerAutofill`) sets **`autofill_trigger_ts`** (`Date.now()`) in session storage, then asks the background to broadcast autofill to the tab.
+- Content scripts in **`src/content/autofill.ts`** register **`chrome.storage.onChanged`** for the **`session`** area and treat updates to **`autofill_trigger_ts`** as the **primary** start signal (works across main frame and iframes). A **`run_autofill`** message handler remains a **fallback** and skips activation if storage already activated the pipeline (`!autofillActivated`), avoiding double runs.
+
+**Data**
+
+- Flat answer map: **`autofill_answers`**, built from the user profile via **`buildAutofillAnswersFromProfile`** (`src/shared/autofill-answers.ts`), including ATS-oriented alias keys.
+- Service worker calls **`chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS" })`** so content scripts can read session keys.
+
+**Pipeline behavior**
+
+- **No autofill on load**: `autofillActivated` must be set by the trigger path before `runAutofill()` runs.
+- **Match**: token/word-boundary-aware **`isStrongMatch`**, explicit **`BLOCKED_MATCH_PAIRS`**, scoring that prefers exact normalized key equality.
+- **Fill**: native `<select>` (including **yes/no interpretation** via **`interpretAnswerForYesNoSelect`** and **`getFieldLabel`**), custom combobox containers (**`fillCustomDropdown`**), text/textarea/radio/checkbox, with `input`/`change`/`blur` where appropriate.
+- **Dynamic DOM**: **`MutationObserver`** only after a completed pipeline step (not when blocked on upload), **1500ms** debounced **`scheduleAutofill`**, **`blockedOnUpload`** while resume/cover upload is pending, and a **maximum run count per activation** to limit re-entrancy.
+- **Upload gate**: detects resume/cover file inputs without files, emits blocked progress; user resolution persists **`autofill_upload_decisions`** and **`AUTOFILL_UPLOAD_BLOCKER_DECISION`** messages.
+
+**Build**
+
+- Content bundle is built separately: **`vite build --config vite.content.config.ts`** → **`dist/content/content.js`** (IIFE from `src/content/autofill.ts`).
 
 ## 7. End-to-End Data Workflow
 

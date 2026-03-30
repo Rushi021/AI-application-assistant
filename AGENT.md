@@ -13,7 +13,7 @@ This repository is an AI job application assistant with three main parts: a Fast
 - `backend/data/resumes/`: Local file storage location used by the local storage adapter.
 - `chrome-extension/`: MV3 extension project (TypeScript + React + Vite).
 - `chrome-extension/src/background/`: Service worker for auth token retrieval, message routing, and application tracking writes.
-- `chrome-extension/src/content/`: Content script (`autofill.ts` only) — DOM scanning/matching/filling, upload blocker detection, and mutation-driven re-run.
+- `chrome-extension/src/content/`: Content script (`autofill.ts` only) — DOM scanning/matching/filling, upload blocker detection, and gated mutation-driven re-runs (not on raw page load).
 - `chrome-extension/src/sidepanel/`: React sidepanel app (pages, hooks, store, API client).
 - `chrome-extension/src/shared/`: Shared constants/types and answer-map builder (`autofill-answers.ts`). `constants.ts` exports `API_BASE_URL` (deployed FastAPI base URL; change per environment).
 - `chrome-extension/public/`: Static icons.
@@ -51,7 +51,7 @@ cd chrome-extension
 npm install
 npm run build
 ```
-Then load unpacked extension from `chrome-extension/dist` in Chrome.
+`npm run build` runs TypeScript (`tsc`), the sidepanel/service-worker Vite app, then **`vite build --config vite.content.config.ts`**, which emits **`dist/content/content.js`** (IIFE bundle from `src/content/autofill.ts`). Load the **unpacked** extension from `chrome-extension/dist` in Chrome.
 
 Watch-mode build command used by this repo:
 ```bash
@@ -100,11 +100,11 @@ Also present at repo root (`requirements.txt`):
 - Resume delete (`DELETE /resumes/{id}?force=true`): server clears linked draft rows, pipeline runs, and **nulls `applications.resume_id`** for that session so FK-safe deletes work when job-tracking rows reference the resume. **`DELETE` returns 204 No Content** (not 200).
 - Extension resume UI: after delete or upload, **keyword scoring** (`POST /resumes/score`) is treated as best-effort so a scoring failure does not look like delete/upload failure.
 - Autofill answer-source convention: sidepanel writes flat answer map to `chrome.storage.session[autofill_answers]` at login/profile save (via `buildAutofillAnswersFromProfile`), and content script reads it directly.
-- Autofill trigger convention: sidepanel sends one-way `{ action: "run_autofill" }` and updates `chrome.storage.session[autofill_trigger_ts]`; no answer payload is sent through runtime messages.
-- Autofill execution ownership: `src/content/autofill.ts` owns scan -> match -> fill lifecycle, including text/select/checkbox/radio handling and event dispatch (`input/change/blur`), plus `MutationObserver` re-runs for SPA or multi-step DOM changes.
+- Autofill trigger convention: sidepanel **writes** `chrome.storage.session[autofill_trigger_ts]` (timestamp, via `STORAGE_KEYS.AUTOFILL_TRIGGER_TS`) **before** `BROADCAST_RUN_AUTOFILL`. Content scripts use **`chrome.storage.onChanged` on the `session` area as the primary trigger** so every frame/iframe receives the same signal without relying on `runtime.sendMessage` delivery. The background still broadcasts `{ action: "run_autofill" }` to all frames as a **fallback** (handler only runs activation if `!autofillActivated` to avoid double pipeline runs). No answer payload is sent through runtime messages.
+- Autofill execution ownership: `src/content/autofill.ts` owns scan → match → fill → `AUTOFILL_PROGRESS`. **Activation** is gated (`autofillActivated`); the pipeline does **not** run on content script load. **`MutationObserver`** is attached only after a completed run (not on upload-blocker early exits), with **1500ms debounce**, **`blockedOnUpload`** guard while file upload is required, and a **max pipeline runs per user activation** to limit observer spam. Matching uses **`isStrongMatch`** (token/word-boundary-aware) plus **`BLOCKED_MATCH_PAIRS`** for known bad overlaps; scoring prefers exact key matches. Filling includes native `<select>` (with **`interpretAnswerForYesNoSelect`** for yes/no dropdowns using answer key + label context), **custom combobox-style dropdowns** (`fillCustomDropdown` / `fillTextLikeOrCustomDropdown`), and text/checkbox/radio with `input`/`change`/`blur` dispatch.
 - Upload pause gateway convention: content script detects actionable file inputs (resume/cover letter), emits blocked progress (`AUTOFILL_PROGRESS`), and waits for user decision. Sidepanel records decision in `chrome.storage.session[autofill_upload_decisions]` and sends `AUTOFILL_UPLOAD_BLOCKER_DECISION` to resume.
 - Progress/diagnostics convention: content script publishes `AUTOFILL_PROGRESS` and logs; sidepanel reads local progress/timeline state for UI. Background still relays cross-context messages and supports compatibility routes.
-- ATS coverage: generic DOM matching/fill is the current strategy; no ATS-specific adapters are active.
+- ATS coverage: generic DOM matching/fill with heuristics (custom combobox containers, yes/no `<select>` interpretation, profile answer aliases); no per-site ATS adapter modules are active.
 
 # Test commands
 Run backend parser tests from the backend directory:
@@ -135,7 +135,7 @@ No JavaScript/TypeScript test script is defined in `chrome-extension/package.jso
 1. Autofill data path is content-local: no message-based transfer of field mappings or answer payloads from sidepanel/background to content.
 2. `chrome.storage.session` is the source of truth for autofill inputs and trigger state:
    - `autofill_answers`
-   - `autofill_trigger_ts`
+   - `autofill_trigger_ts` (content scripts observe changes via `chrome.storage.onChanged` as the primary autofill start signal)
    - `autofill_upload_decisions`
 3. Sidepanel acts as a trigger and control surface; content script owns actual DOM mutation and paused/blocked decisions.
 4. Upload blockers are explicit gates for file-upload steps to prevent false progress and to support user-confirmed resume source behavior.
@@ -144,7 +144,7 @@ No JavaScript/TypeScript test script is defined in `chrome-extension/package.jso
 # Rules and non-negotiables
 - Do not reintroduce message-based answer transport for autofill payloads.
 - Do not make content autofill wait on callback acknowledgements from sidepanel/background.
-- Keep one-way trigger semantics (`run_autofill` + storage trigger stamp) for reliability.
+- Keep one-way trigger semantics: **session storage trigger stamp** (primary) plus optional **`run_autofill`** broadcast (fallback) for reliability across frames.
 - Keep upload-gate handling in place for resume/cover-letter file inputs before continuing fill.
 - Persist user profile updates back into `autofill_answers` so content autofill stays in sync.
 
@@ -157,5 +157,5 @@ No JavaScript/TypeScript test script is defined in `chrome-extension/package.jso
 - `chrome.storage.session` is ephemeral (cleared on browser restart or extension reload), so autofill answers must be rebuilt from the cached `USER_PROFILE` in `chrome.storage.local` on every service worker startup and sidepanel `initAuthState` call.
 - Dynamic DOMs and highly unstable selectors can cause blocker-decision key churn; decisions are reset on new autofill start to avoid stale gating.
 - Cross-origin iframe restrictions still apply to any extension content script strategy; reliability depends on content script presence in target frame.
-- Current matcher is intentionally simple (normalized contains/overlap). Accuracy is good for common fields, but long-tail custom questions may still need adapter/rule improvements.
+- Field matching uses token/word-boundary-aware logic and explicit blocked pairs (not raw bidirectional substring `includes`), but long-tail custom ATS questions may still miss or need more aliases in `autofill-answers.ts`.
 - Dead code from a prior "unified autofill engine" (dom-runtime, form-model, field-matcher, spa-observer, site-learning, ATS adapters, dom-control-engine) was removed; do not reintroduce those patterns.

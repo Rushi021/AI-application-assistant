@@ -4,6 +4,21 @@ import { deleteResume } from "../services/api";
 import { MSG, STORAGE_KEYS } from "@/shared/constants";
 import type { AutofillProgress, AutofillSession, FileUploadBlockerDecision, FormBlocker, UserProfile } from "@/shared/types";
 import WorkflowLayout from "../components/WorkflowLayout";
+import {
+  WORKFLOW_STEPS,
+  canNavigateToWorkflowStep,
+  navigateToWorkflowStep,
+  pageToWorkflowStepIndex,
+  type WorkflowStepIndex,
+} from "../workflowNavigation";
+
+type FieldResultItem = {
+  selector: string;
+  label: string;
+  action: "filled" | "skipped";
+  reason: "filled" | "no_answer_match" | "fill_failed";
+  answerKey?: string;
+};
 
 const STATE_LABELS: Record<string, string> = {
   intake: "Reading form...",
@@ -69,6 +84,121 @@ function formatTimelineTime(ts: number): string {
   return new Date(ts).toLocaleTimeString([], { hour12: false });
 }
 
+function BoltIcon({ size = 16, className = "text-primary-500" }: { size?: number; className?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <path d="M13 2L4.5 13.5H11L10 22L18.5 10.5H12L13 2Z" />
+    </svg>
+  );
+}
+
+function PulsingDot({ className = "" }: { className?: string }) {
+  return (
+    <span className={`relative inline-flex w-2 h-2 shrink-0 ${className}`}>
+      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary-500 opacity-40" />
+      <span className="relative inline-flex rounded-full w-2 h-2 bg-primary-500" />
+    </span>
+  );
+}
+
+function AutofillStepRail() {
+  const { currentPage, setPage, draft, autofillContext } = useAppStore();
+  const stepIndex = pageToWorkflowStepIndex(currentPage);
+  const isDirectMode = autofillContext.mode === "direct";
+  if (stepIndex === null) return null;
+
+  const handleStepClick = (i: number) => {
+    if (!canNavigateToWorkflowStep(i, stepIndex, isDirectMode)) return;
+    navigateToWorkflowStep(i as WorkflowStepIndex, { setPage, draft });
+  };
+
+  return (
+    <div className="px-[18px] pt-4 bg-[#0a0a0a] shrink-0">
+      <div className="flex items-center w-full">
+        {WORKFLOW_STEPS.map((label, i) => {
+          const done = i < stepIndex;
+          const active = i === stepIndex;
+          const skippedVisual = isDirectMode && i < 3 && stepIndex === 3;
+          const navigable = canNavigateToWorkflowStep(i, stepIndex, isDirectMode);
+          const lineDone = i < stepIndex && !isDirectMode;
+
+          return (
+            <div key={label} className={`flex items-center min-w-0 ${i < WORKFLOW_STEPS.length - 1 ? "flex-1" : ""}`}>
+              <div className="flex flex-col items-center shrink-0">
+                <button
+                  type="button"
+                  onClick={() => navigable && handleStepClick(i)}
+                  disabled={!navigable}
+                  title={
+                    navigable
+                      ? `Go back to ${label}`
+                      : skippedVisual
+                        ? "Skipped in direct autofill"
+                        : undefined
+                  }
+                  className={[
+                    "w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold transition-colors",
+                    skippedVisual && !active
+                      ? "bg-transparent border-2 border-transparent text-[#444444]"
+                      : done
+                        ? "bg-primary-500 border-2 border-primary-500 text-white"
+                        : active
+                          ? "bg-transparent border-2 border-primary-500 text-primary-500"
+                          : "bg-transparent border-2 border-white/[0.12] text-[#444444]",
+                  ].join(" ")}
+                >
+                  {skippedVisual && !active ? (
+                    "—"
+                  ) : done ? (
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M20 6L9 17l-5-5" />
+                    </svg>
+                  ) : (
+                    i + 1
+                  )}
+                </button>
+                <span
+                  className={[
+                    "mt-1 text-[10px] text-center max-w-[76px] leading-tight",
+                    active ? "text-primary-500 font-bold" : "text-[#a0a0a0] font-medium",
+                    navigable ? "cursor-pointer underline decoration-dotted underline-offset-2" : "",
+                  ].join(" ")}
+                  onClick={() => navigable && handleStepClick(i)}
+                  role={navigable ? "button" : undefined}
+                >
+                  {label}
+                </span>
+              </div>
+              {i < WORKFLOW_STEPS.length - 1 && (
+                <div
+                  className={["h-[1.5px] flex-1 mx-1.5 mb-3.5 rounded-sm min-w-[6px]", lineDone ? "bg-primary-500" : "bg-white/[0.07]"].join(" ")}
+                  aria-hidden
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {isDirectMode && stepIndex === 3 && (
+        <p className="text-[10px] text-[#a0a0a0] mt-2 px-0.5 leading-snug">
+          Direct autofill: tailoring steps were skipped. Use Back or finish and start a new application for the full workflow.
+        </p>
+      )}
+    </div>
+  );
+}
+
 export default function AutoFillPage() {
   const {
     autofillProgress,
@@ -80,6 +210,9 @@ export default function AutoFillPage() {
     autofillContext,
     setAutofillContext,
     resetWorkflow,
+    resumes,
+    selectedResumeId,
+    pipelineRun,
   } = useAppStore();
   const [error, setError] = useState<string | null>(null);
   const [started, setStarted] = useState(false);
@@ -88,6 +221,7 @@ export default function AutoFillPage() {
   const [timeline, setTimeline] = useState<TimelineEvent[]>([]);
   const [profileFromStorage, setProfileFromStorage] = useState<UserProfile | null>(null);
   const [sessionActive, setSessionActive] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
   const previousProgressRef = useRef<AutofillProgress | null>(null);
   const handledUploadBlockerKeysRef = useRef<Set<string>>(new Set());
 
@@ -139,6 +273,18 @@ export default function AutoFillPage() {
   const canRunAutofill = !!effectiveProfile;
   const hasCompleteProfile = hasRequiredProfile(effectiveProfile);
   const isDirectMode = autofillContext.mode === "direct";
+
+  const selectedResume = resumes.find((r) => r.id === (autofillContext.temporaryResumeId ?? selectedResumeId));
+  const resumeName = isDirectMode
+    ? autofillContext.considerResume
+      ? "Considered"
+      : "Not considered"
+    : selectedResume?.original_filename ?? autofillContext.temporaryResumeFilename ?? (draft ? "Ready" : "Not set");
+  const resumeSub = isDirectMode
+    ? "Direct autofill mode"
+    : pipelineRun?.tailored_resume || draft?.starting_source === "tailored"
+      ? "AI tailored"
+      : "Workflow mode";
 
   const appendTimeline = useCallback((message: string, level: TimelineLevel = "info") => {
     setTimeline((prev) => [{ ts: Date.now(), level, message }, ...prev].slice(0, 20));
@@ -507,111 +653,219 @@ export default function AutoFillPage() {
   const isPaused = progress?.paused ?? false;
   const state = progress?.state ?? "intake";
   const activeBlocker = progress?.activeBlocker ?? null;
-  console.log("RENDER: activeBlocker =", JSON.stringify(activeBlocker));
   const validationErrors = progress?.validationErrors ?? [];
+  const fieldResults = (progress?.fields ?? []) as unknown as FieldResultItem[];
+  const filledFieldResults = fieldResults.filter((f) => f && f.action === "filled");
+  const skippedFieldResults = fieldResults.filter((f) => f && f.action === "skipped");
+
+  const pageStatusMessage =
+    !started && !progress
+      ? "Navigate to the job application page, then tap Start."
+      : started && !progress
+        ? "Filling the current page. Waiting for status from the application tab..."
+        : activeBlocker
+          ? getBlockerMessage(activeBlocker)
+          : isComplete && sessionActive
+            ? "Page complete. Navigate to the next page - auto-fill will continue automatically."
+            : isSessionComplete
+              ? "All pages complete. Submit the employer form, then tap Done below."
+              : `Current step: ${STATE_LABELS[state] ?? state}`;
+
+  const pctNumeric =
+    progress && progress.total > 0
+      ? Math.round(((progress.filled + progress.manual + progress.skipped) / progress.total) * 100)
+      : isComplete
+        ? 100
+        : 0;
+
+  const progressBarWidthPct =
+    started && !progress
+      ? 0
+      : progress && progress.total > 0
+        ? ((progress.filled + progress.manual + progress.skipped) / progress.total) * 100
+        : isComplete
+          ? 100
+          : 0;
+
+  const showIdleHero = !started && !progress;
+  const pageNumForComplete = (progress?.stepIndex ?? 0) + 1;
+  const coverReady = !isDirectMode && !!coverLetter;
+
+  const endMultiPageSession = async () => {
+    chrome.runtime.sendMessage({ type: MSG.AUTOFILL_SESSION_CANCEL, data: { reason: "user_cancel_panel" } }).catch(() => {});
+    await persistAutofillProgress({
+      state: "stopped",
+      total: progress?.total ?? 0,
+      filled: progress?.filled ?? 0,
+      manual: progress?.manual ?? 0,
+      skipped: progress?.skipped ?? 0,
+      currentField: null,
+      currentAction: null,
+      paused: false,
+      completed: true,
+      sessionComplete: true,
+      stepIndex: progress?.stepIndex ?? 0,
+      fields: progress?.fields ?? [],
+      activeBlocker: null,
+      validationErrors: progress?.validationErrors ?? [],
+      lastFilledField: progress?.lastFilledField ?? null,
+    });
+    setStarted(false);
+    appendTimeline("Multi-page session cancelled", "warn");
+  };
 
   return (
-    <WorkflowLayout
-      title="Auto-fill application"
-      subtitle="Run on the employer's application page using your profile and saved materials."
-    >
-      <div className="flex flex-col flex-1 min-h-0 overflow-hidden">
-      {/* Summary */}
-      <div className="px-4 py-2 space-y-2 shrink-0">
-        <div className="bg-wf-surface border border-wf-border rounded-xl p-3 space-y-1">
-          <div className="flex items-center gap-2">
-            <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-            </svg>
-            <span className="text-xs text-wf-text">
-              Resume: {isDirectMode ? (autofillContext.considerResume ? "Considered" : "Not considered") : draft ? "Ready" : "Not set"}
-            </span>
+    <WorkflowLayout hideHeader hideTitleSection showWorkflowChrome={false} title="">
+      <div className="flex flex-col flex-1 min-h-0 overflow-hidden bg-[#0a0a0a] text-[#f5f5f5] font-sans antialiased">
+        <div className="shrink-0 flex items-center justify-between gap-3 px-[18px] py-[13px] border-b border-white/[0.07] bg-[#111111]">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-[22px] h-[22px] rounded-md bg-primary-500 flex items-center justify-center shrink-0">
+              <BoltIcon size={12} className="text-white" />
+            </div>
+            <span className="text-sm font-bold text-[#f5f5f5] truncate">AI Job Assistant</span>
           </div>
-          <div className="flex items-center gap-2">
-            <svg className="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          <div className="flex items-center gap-3.5 shrink-0 text-[#444444]" aria-hidden>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <title>Location</title>
+              <path d="M12 2a5 5 0 0 1 5 5c0 5-5 11-5 11S7 12 7 7a5 5 0 0 1 5-5z" />
             </svg>
-            <span className="text-xs text-wf-text">
-              Cover Letter: {isDirectMode ? "Not generated (no job description)" : coverLetter ? "Ready" : "Not set"}
-            </span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <title>Close</title>
+              <path d="M18 6L6 18M6 6l12 12" />
+            </svg>
           </div>
-          {isDirectMode && !autofillContext.hasStoredResume && (
-            <p className="text-xs text-amber-400/90">
-              No resume uploaded, please upload it on the application form.
-            </p>
-          )}
         </div>
-      </div>
 
-      {/* Progress */}
-      <div className="flex-1 px-4 py-2 overflow-auto min-h-0">
-        {!started && !progress && (
-          <div className="text-center py-8">
-            <div className="w-16 h-16 mx-auto mb-4 bg-[#1c1208] border-2 border-primary-900/50 rounded-full flex items-center justify-center text-2xl" aria-hidden>
-              ⚡
-            </div>
-            <p className="text-sm font-medium text-wf-text">Ready to auto-fill</p>
-            <p className="text-xs text-wf-muted mt-1">
-              Make sure you&apos;re on the job application page,<br />then click the button below.
-            </p>
-            {canRunAutofill && !hasCompleteProfile && (
-              <p className="text-xs text-amber-400/90 mt-2">
-                Profile is partially complete. Auto-fill can run, but completion quality may be lower.
-              </p>
-            )}
-            {!canRunAutofill && (
-              <p className="text-xs text-amber-400/90 mt-2">
-                Sign in and load your profile before starting auto-fill.
-              </p>
-            )}
-          </div>
-        )}
+        <AutofillStepRail />
 
-        {started && !progress && (
-          <div className="text-center py-8">
-            <div className="w-16 h-16 mx-auto mb-4 bg-[#1c1208] border-2 border-primary-800/40 rounded-full flex items-center justify-center">
-              <span className="relative flex h-8 w-8">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary-400 opacity-40" />
-                <span className="relative inline-flex rounded-full h-8 w-8 bg-primary-500/90" />
-              </span>
-            </div>
-            <p className="text-sm font-medium text-wf-text">Waiting for autofill status…</p>
-            <p className="text-xs text-wf-muted mt-1">
-              Talking to the application tab. If this stays here, refresh the page and try again.
-            </p>
-          </div>
-        )}
-
-        {progress && (
-          <div className="space-y-4">
-            {/* State indicator */}
-            <div className="text-xs font-medium text-wf-muted">
-              {STATE_LABELS[state] ?? state}
-            </div>
-
-            {/* Progress bar */}
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          <div className="flex-1 px-[18px] py-5 overflow-auto min-h-0 flex flex-col gap-4">
             <div>
-              <div className="flex justify-between text-xs text-wf-muted mb-1">
-                <span>Progress</span>
-                <span>
-                  {progress.filled + progress.manual + progress.skipped}/{progress.total > 0 ? progress.total : "—"}
-                </span>
+              <h2 className="text-xl font-bold text-[#f5f5f5] m-0 tracking-tight leading-tight">Auto-fill application</h2>
+              <p className="text-[13px] text-[#a0a0a0] mt-1.5 m-0 leading-relaxed">{pageStatusMessage}</p>
+            </div>
+
+            <div className="flex gap-2">
+              <div className="flex-1 rounded-[10px] border border-white/[0.07] bg-[#161616] px-3 py-2.5">
+                <div className="text-[10px] font-bold text-[#22c55e] tracking-[0.08em] mb-0.5">RESUME</div>
+                <div className="text-xs font-semibold text-[#f5f5f5]">{resumeName}</div>
+                <div className="text-[11px] text-[#a0a0a0] mt-0.5">{resumeSub}</div>
               </div>
-              <div className="w-full h-2 bg-wf-border rounded-full overflow-hidden">
+              <div className="flex-1 rounded-[10px] border border-white/[0.07] bg-[#161616] px-3 py-2.5">
                 <div
-                  className={`h-full rounded-full transition-all ${
-                    isComplete ? "bg-green-500" : isPaused ? "bg-yellow-500" : "bg-primary-500"
-                  }`}
-                  style={{
-                    width: `${
-                      progress.total > 0
-                        ? ((progress.filled + progress.manual + progress.skipped) / progress.total) * 100
-                        : 0
-                    }%`,
-                  }}
-                />
+                  className={`text-[10px] font-bold tracking-[0.08em] mb-0.5 ${coverReady ? "text-[#22c55e]" : "text-[#444444]"}`}
+                >
+                  COVER LETTER
+                </div>
+                <div className={`text-xs ${coverReady ? "font-semibold text-[#f5f5f5]" : "text-[#a0a0a0]"}`}>
+                  {isDirectMode ? "Not generated" : coverLetter ? "Ready" : "Not generated"}
+                </div>
+                <div className={`text-[11px] mt-0.5 ${coverReady ? "text-[#a0a0a0]" : "text-[#444444]"}`}>
+                  {isDirectMode ? "No JD provided" : "Based on workflow input"}
+                </div>
               </div>
             </div>
+            {showIdleHero && (
+              <div className="rounded-[14px] border border-white/[0.07] bg-[#161616] px-5 py-7 text-center">
+                <div className="w-[54px] h-[54px] mx-auto mb-3.5 rounded-full bg-[rgba(249,115,22,0.08)] border-[1.5px] border-primary-500/25 flex items-center justify-center">
+                  <BoltIcon size={24} className="text-primary-500" />
+                </div>
+                <div className="text-[15px] font-bold text-[#f5f5f5] mb-1">Ready to auto-fill</div>
+                <div className="text-xs text-[#a0a0a0] leading-relaxed">
+                  Make sure you&apos;re on the job application
+                  <br />
+                  page before starting.
+                </div>
+                {canRunAutofill && !hasCompleteProfile && (
+                  <p className="text-xs text-amber-500/95 mt-3">Profile is partially complete. Auto-fill can run, but completion quality may be lower.</p>
+                )}
+                {!canRunAutofill && (
+                  <p className="text-xs text-amber-500/95 mt-3">Sign in and load your profile before starting auto-fill.</p>
+                )}
+              </div>
+            )}
+
+            {started && !progress && (
+              <div className="rounded-[14px] border border-white/[0.07] bg-[#161616] px-4 py-4">
+                <div className="flex items-center justify-between mb-2.5">
+                  <div className="flex items-center gap-2 min-w-0 text-[13px]">
+                    <PulsingDot />
+                    <span className="text-[#a0a0a0] truncate">Waiting for autofill status…</span>
+                  </div>
+                  <span className="text-[15px] font-extrabold text-primary-500 shrink-0">0%</span>
+                </div>
+                <div className="h-[7px] rounded-md bg-[#1c1c1c] overflow-hidden mb-3">
+                  <div className="h-full w-0 rounded-md bg-primary-500 transition-[width] duration-150" />
+                </div>
+                <div className="flex gap-2">
+                  <div className="flex-1 rounded-[9px] border border-white/[0.07] bg-[#1c1c1c] py-2 text-center">
+                    <div className="text-lg font-extrabold text-[#22c55e] leading-none">0</div>
+                    <div className="text-[10px] text-[#a0a0a0] mt-1 font-medium">Filled</div>
+                  </div>
+                  <div className="flex-1 rounded-[9px] border border-white/[0.07] bg-[#1c1c1c] py-2 text-center">
+                    <div className="text-lg font-extrabold text-amber-500 leading-none">0</div>
+                    <div className="text-[10px] text-[#a0a0a0] mt-1 font-medium">Manual</div>
+                  </div>
+                  <div className="flex-1 rounded-[9px] border border-white/[0.07] bg-[#1c1c1c] py-2 text-center">
+                    <div className="text-lg font-extrabold text-[#444444] leading-none">0</div>
+                    <div className="text-[10px] text-[#a0a0a0] mt-1 font-medium">Skipped</div>
+                  </div>
+                </div>
+                <p className="text-[11px] text-[#a0a0a0] mt-3 leading-relaxed">
+                  Talking to the application tab. If this stays here, refresh the page and try again.
+                </p>
+              </div>
+            )}
+
+            {progress && (
+              <div className="space-y-4">
+                <div className="rounded-[14px] border border-white/[0.07] bg-[#161616] px-4 py-4">
+                  <div className="flex items-center justify-between mb-2.5 gap-2">
+                    <div className="flex items-center gap-2 min-w-0 text-[13px]">
+                      {activeBlocker ? (
+                        <span className="text-[#a0a0a0] truncate">{getBlockerMessage(activeBlocker)}</span>
+                      ) : isComplete && state === "stopped" ? (
+                        <span className="text-amber-500 font-semibold">Stopped</span>
+                      ) : isComplete && sessionActive && !isSessionComplete ? (
+                        <span className="text-[#22c55e] font-semibold">✓ Page {pageNumForComplete} complete</span>
+                      ) : isSessionComplete ? (
+                        <span className="text-[#22c55e] font-semibold">✓ All pages complete</span>
+                      ) : (
+                        <>
+                          <PulsingDot />
+                          <span className="text-[#a0a0a0] truncate">{STATE_LABELS[state] ?? state}</span>
+                        </>
+                      )}
+                    </div>
+                    <span
+                      className={`text-[15px] font-extrabold shrink-0 ${isSessionComplete ? "text-[#22c55e]" : "text-primary-500"}`}
+                    >
+                      {pctNumeric}%
+                    </span>
+                  </div>
+                  <div className="h-[7px] rounded-md bg-[#1c1c1c] overflow-hidden mb-3">
+                    <div
+                      className={`h-full rounded-md transition-[width] duration-150 ${
+                        isSessionComplete ? "bg-[#22c55e]" : isPaused ? "bg-amber-500" : "bg-primary-500"
+                      }`}
+                      style={{ width: `${progressBarWidthPct}%` }}
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <div className="flex-1 rounded-[9px] border border-white/[0.07] bg-[#1c1c1c] py-2 text-center">
+                      <div className="text-lg font-extrabold text-[#22c55e] leading-none">{progress.filled}</div>
+                      <div className="text-[10px] text-[#a0a0a0] mt-1 font-medium">Filled</div>
+                    </div>
+                    <div className="flex-1 rounded-[9px] border border-white/[0.07] bg-[#1c1c1c] py-2 text-center">
+                      <div className="text-lg font-extrabold text-amber-500 leading-none">{progress.manual}</div>
+                      <div className="text-[10px] text-[#a0a0a0] mt-1 font-medium">Manual</div>
+                    </div>
+                    <div className="flex-1 rounded-[9px] border border-white/[0.07] bg-[#1c1c1c] py-2 text-center">
+                      <div className="text-lg font-extrabold text-[#444444] leading-none">{progress.skipped}</div>
+                      <div className="text-[10px] text-[#a0a0a0] mt-1 font-medium">Skipped</div>
+                    </div>
+                  </div>
+                </div>
 
             {/* Active blocker */}
             {activeBlocker && (
@@ -730,224 +984,225 @@ export default function AutoFillPage() {
               </div>
             )}
 
-            {/* Complete */}
-            {isComplete && (
-              <div
-                className={`border rounded-xl p-3 ${
-                  !isSessionComplete && sessionActive
-                    ? "bg-blue-950/35 border-blue-900/50"
-                    : "bg-wf-tagGreen border-green-800/50"
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  {!isSessionComplete && sessionActive ? (
-                    <>
-                      <span className="relative flex h-2 w-2">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75" />
-                        <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500" />
-                      </span>
-                      <span className="text-xs font-medium text-blue-200">Page complete — watching for next page</span>
-                    </>
-                  ) : (
-                    <>
-                      <svg className="w-4 h-4 text-green-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                      </svg>
-                      <span className="text-xs font-medium text-green-300">Auto-fill complete</span>
-                    </>
-                  )}
-                </div>
-                {isSessionComplete && (
-                  <p className="text-xs text-green-200/80 mt-2">
-                    Auto-tracking runs when you tap <span className="font-semibold">Done — track application</span> below — that
-                    saves the entry to your account. Submit the employer&apos;s form in the tab first if you haven&apos;t already.
+            {isSessionComplete && (
+              <div className="rounded-xl border border-[rgba(34,197,94,0.2)] bg-[rgba(34,197,94,0.08)] px-3.5 py-3 flex gap-2.5 items-start">
+                <svg
+                  className="w-[15px] h-[15px] text-[#22c55e] shrink-0 mt-0.5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <path d="M9 12l2 2 4-4" />
+                </svg>
+                <div>
+                  <div className="text-xs font-semibold text-[#22c55e] mb-1">Submit the employer&apos;s form</div>
+                  <p className="text-xs text-[#a0a0a0] leading-relaxed m-0">
+                    Review any fields marked <strong className="text-amber-500 font-semibold">Manual</strong>, then submit on the employer&apos;s site. Tap{" "}
+                    <strong className="text-[#f5f5f5] font-semibold">Done — track application</strong> below to save this application to your tracker.
                   </p>
-                )}
-                {!isSessionComplete && sessionActive && (
-                  <div className="mt-2 flex items-center gap-2">
-                    <p className="text-xs text-blue-200/90 flex-1">
-                      Navigate to the next page and auto-fill will continue automatically.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        chrome.runtime.sendMessage({ type: MSG.AUTOFILL_SESSION_CANCEL, data: { reason: "user_cancel_panel" } }).catch(() => {});
-                        await persistAutofillProgress({
-                          state: "stopped",
-                          total: progress?.total ?? 0,
-                          filled: progress?.filled ?? 0,
-                          manual: progress?.manual ?? 0,
-                          skipped: progress?.skipped ?? 0,
-                          currentField: null,
-                          currentAction: null,
-                          paused: false,
-                          completed: true,
-                          sessionComplete: true,
-                          stepIndex: progress?.stepIndex ?? 0,
-                          fields: progress?.fields ?? [],
-                          activeBlocker: null,
-                          validationErrors: progress?.validationErrors ?? [],
-                          lastFilledField: progress?.lastFilledField ?? null,
-                        });
-                        setStarted(false);
-                        appendTimeline("Multi-page session cancelled", "warn");
-                      }}
-                      className="px-2 py-1 text-[10px] font-medium text-red-400 border border-red-900/50 rounded-lg hover:bg-red-950/40 whitespace-nowrap"
-                    >
-                      End session
-                    </button>
+                </div>
+              </div>
+            )}
+
+            {isComplete && sessionActive && !isSessionComplete && (
+              <div className="rounded-xl border border-amber-500/20 bg-[rgba(245,158,11,0.08)] px-3.5 py-3 flex gap-2.5 items-start">
+                <svg
+                  className="w-[15px] h-[15px] text-amber-500 shrink-0 mt-0.5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                <div className="min-w-0 flex-1">
+                  <div className="text-xs font-semibold text-amber-500 mb-1">Continue to next page</div>
+                  <p className="text-xs text-[#a0a0a0] leading-relaxed m-0">
+                    Click <strong className="text-[#f5f5f5] font-semibold">Next</strong> on the employer&apos;s form. Auto-fill will detect the new page and continue filling automatically.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void endMultiPageSession()}
+                    className="mt-2 text-[11px] font-medium text-red-400/95 hover:text-red-300 underline decoration-dotted underline-offset-2"
+                  >
+                    End multi-page session
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Details (user-facing) */}
+            {(skippedFieldResults.length > 0 || filledFieldResults.length > 0 || validationErrors.length > 0 || timeline.length > 0) && (
+              <div className="bg-wf-surface border border-wf-border rounded-xl p-3">
+                <button
+                  type="button"
+                  onClick={() => setShowDetails((v) => !v)}
+                  className="w-full flex items-center justify-between text-xs font-semibold text-wf-text"
+                >
+                  <span>Details</span>
+                  <span className="text-wf-muted">{showDetails ? "Hide" : "Show"}</span>
+                </button>
+
+                {showDetails && (
+                  <div className="mt-3 space-y-3">
+                    {skippedFieldResults.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-wf-text">
+                          Skipped fields <span className="text-wf-muted">({skippedFieldResults.length})</span>
+                        </p>
+                        <div className="mt-2 space-y-1">
+                          {skippedFieldResults.slice(0, 12).map((f) => (
+                            <div key={f.selector} className="text-xs text-wf-muted flex items-start justify-between gap-2">
+                              <span className="truncate">
+                                <span className="text-wf-text">{f.label || f.selector}</span>
+                                {f.reason === "no_answer_match" ? (
+                                  <span className="text-wf-dim"> — no matching answer</span>
+                                ) : (
+                                  <span className="text-wf-dim"> — could not fill</span>
+                                )}
+                              </span>
+                              <span className="text-wf-dim shrink-0">{f.reason === "no_answer_match" ? "no-match" : "failed"}</span>
+                            </div>
+                          ))}
+                          {skippedFieldResults.length > 12 && (
+                            <p className="text-[11px] text-wf-dim mt-1">Showing 12 of {skippedFieldResults.length} skipped fields.</p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {filledFieldResults.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-wf-text">
+                          Filled fields <span className="text-wf-muted">({filledFieldResults.length})</span>
+                        </p>
+                        <div className="mt-2 space-y-1">
+                          {filledFieldResults.slice(0, 8).map((f) => (
+                            <div key={f.selector} className="text-xs text-wf-muted truncate">
+                              <span className="text-wf-text">{f.label || f.selector}</span>
+                              {f.answerKey ? <span className="text-wf-dim"> — {f.answerKey}</span> : null}
+                            </div>
+                          ))}
+                          {filledFieldResults.length > 8 && (
+                            <p className="text-[11px] text-wf-dim mt-1">Showing 8 of {filledFieldResults.length} filled fields.</p>
+                          )}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Keep validation errors visible here too */}
+                    {validationErrors.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-wf-text">
+                          Validation errors <span className="text-wf-muted">({validationErrors.length})</span>
+                        </p>
+                        <div className="mt-2 space-y-1">
+                          {validationErrors.slice(0, 6).map((err, i) => (
+                            <p key={i} className="text-xs text-red-300/90">
+                              {err.fieldLabel || err.fieldSelector ? `Field: ${err.fieldLabel || err.fieldSelector} — ${err.message}` : err.message}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Developer timeline moved under details */}
+                    {timeline.length > 0 && (
+                      <div>
+                        <p className="text-xs font-semibold text-wf-text">Execution timeline</p>
+                        <div className="mt-2 space-y-1">
+                          {timeline.slice(0, 8).map((evt, idx) => (
+                            <p key={`${evt.ts}-${idx}`} className="text-xs text-wf-muted">
+                              <span className="text-wf-dim">[{formatTimelineTime(evt.ts)}]</span>{" "}
+                              <span
+                                className={
+                                  evt.level === "error"
+                                    ? "text-red-700 font-semibold"
+                                    : evt.level === "warn"
+                                      ? "text-amber-700 font-semibold"
+                                      : "text-green-700 font-semibold"
+                                }
+                              >
+                                {evt.level.toUpperCase()}
+                              </span>{" "}
+                              {evt.message}
+                            </p>
+                          ))}
+                          {timeline.length > 8 && <p className="text-[11px] text-wf-dim mt-1">Showing 8 of {timeline.length} events.</p>}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
             )}
-
-            {/* Stats */}
-            <div className="grid grid-cols-3 gap-2">
-              <StatCard label="Filled" value={progress.filled} color="text-green-400" bg="bg-wf-tagGreen" />
-              <StatCard label="Manual" value={progress.manual} color="text-amber-400" bg="bg-amber-950/30" />
-              <StatCard label="Skipped" value={progress.skipped} color="text-wf-muted" bg="bg-wf-surface" />
-            </div>
-
-            {/* Current field / action */}
-            {progress.currentField && !isPaused && (
-              <p className="text-xs text-wf-muted">
-                Filling: <span className="font-medium text-wf-text">{progress.currentField}</span>
-              </p>
-            )}
-            {progress.currentAction && !isPaused && (
-              <p className="text-xs text-wf-muted">
-                Action: <span className="font-medium text-wf-text">{progress.currentAction}</span>
-              </p>
-            )}
           </div>
         )}
 
-        {timeline.length > 0 && (
-          <div className="mt-4 bg-wf-surface border border-wf-border rounded-xl p-3">
-            <p className="text-xs font-semibold text-wf-text mb-2">Execution timeline</p>
-            <div className="space-y-1">
-              {timeline.map((evt, idx) => (
-                <p key={`${evt.ts}-${idx}`} className="text-xs text-wf-muted">
-                  <span className="text-wf-dim">[{formatTimelineTime(evt.ts)}]</span>{" "}
-                  <span
-                    className={
-                      evt.level === "error"
-                        ? "text-red-700 font-semibold"
-                        : evt.level === "warn"
-                          ? "text-amber-700 font-semibold"
-                          : "text-green-700 font-semibold"
-                    }
-                  >
-                    {evt.level.toUpperCase()}
-                  </span>{" "}
-                  {evt.message}
-                </p>
-              ))}
-            </div>
           </div>
-        )}
-      </div>
 
-      {/* Footer */}
-      <div className="px-4 py-3 border-t border-wf-border bg-wf-bg space-y-2 shrink-0">
-        {error && <p className="text-xs text-red-400">{error}</p>}
-        <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={() => setPage(isDirectMode ? "job-description" : "cover-letter")}
-            className="px-4 py-2.5 text-sm font-medium text-wf-text border border-wf-border rounded-[10px] hover:bg-wf-surfaceHover shrink-0"
-          >
-            ← Back
-          </button>
-          {isSessionComplete ? (
-            <button
-              type="button"
-              onClick={handleDoneAndStartNewApplication}
-              className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-green-600 rounded-[10px] hover:bg-green-700 transition-colors"
-            >
-              Done — track application ✓
-            </button>
-          ) : isComplete && sessionActive ? (
-            <>
-              <button
-                type="button"
-                onClick={async () => {
-                  chrome.runtime.sendMessage({ type: MSG.AUTOFILL_SESSION_CANCEL, data: { reason: "user_cancel_panel" } }).catch(() => {});
-                  await persistAutofillProgress({
-                    state: "stopped",
-                    total: progress?.total ?? 0,
-                    filled: progress?.filled ?? 0,
-                    manual: progress?.manual ?? 0,
-                    skipped: progress?.skipped ?? 0,
-                    currentField: null,
-                    currentAction: null,
-                    paused: false,
-                    completed: true,
-                    sessionComplete: true,
-                    stepIndex: progress?.stepIndex ?? 0,
-                    fields: progress?.fields ?? [],
-                    activeBlocker: null,
-                    validationErrors: progress?.validationErrors ?? [],
-                    lastFilledField: progress?.lastFilledField ?? null,
-                  });
-                  setStarted(false);
-                  appendTimeline("Multi-page session cancelled", "warn");
-                }}
-                className="px-4 py-2.5 text-sm text-red-400 border border-red-900/50 rounded-[10px] hover:bg-red-950/40"
-              >
-                End session
-              </button>
-              <button
-                type="button"
-                disabled
-                className="flex-1 px-4 py-2.5 text-sm font-medium text-wf-dim bg-wf-surface border border-wf-border rounded-[10px] cursor-not-allowed"
-              >
-                Waiting for next step…
-              </button>
-            </>
-          ) : (
-            <>
-              {started && (
+          <div className="shrink-0 px-[18px] py-3 border-t border-white/[0.07] bg-[#0a0a0a] space-y-2">
+            {error && <p className="text-xs text-red-400">{error}</p>}
+            <div className="flex gap-2 items-stretch">
+              {!isSessionComplete && (
+                <button
+                  type="button"
+                  onClick={() => setPage(isDirectMode ? "job-description" : "cover-letter")}
+                  className="w-[72px] shrink-0 py-2.5 text-[13px] font-medium text-[#a0a0a0] border border-white/[0.07] rounded-[11px] hover:bg-[#161616] transition-colors"
+                >
+                  ← Back
+                </button>
+              )}
+              {isSessionComplete ? (
+                <button
+                  type="button"
+                  onClick={handleDoneAndStartNewApplication}
+                  className="flex-1 py-3 text-sm font-bold text-white bg-[#22c55e] rounded-[11px] hover:bg-[#16a34a] transition-colors"
+                >
+                  Done — track application ✓
+                </button>
+              ) : isComplete && sessionActive ? (
+                <button
+                  type="button"
+                  disabled
+                  className="flex-1 flex items-center justify-center gap-2 py-3 text-[13px] font-semibold text-[#a0a0a0] bg-[#161616] border border-white/[0.12] rounded-[11px] cursor-not-allowed"
+                >
+                  <PulsingDot />
+                  Watching for next page…
+                </button>
+              ) : started ? (
                 <button
                   type="button"
                   onClick={handleStopAutofill}
-                  className="px-4 py-2.5 text-sm text-red-400 border border-red-900/50 rounded-[10px] hover:bg-red-950/40"
+                  className="flex-1 py-3 text-[13px] font-semibold text-red-500 border border-red-500/30 rounded-[11px] hover:bg-red-500/5 transition-colors"
                 >
                   Stop
                 </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleStartAutofill}
+                  disabled={!canRunAutofill}
+                  className="flex-1 flex items-center justify-center gap-2 py-3 text-sm font-bold text-white bg-primary-500 rounded-[11px] hover:bg-primary-600 disabled:opacity-50 transition-colors"
+                >
+                  <BoltIcon size={15} className="text-white" />
+                  Start auto-fill
+                </button>
               )}
-              <button
-                type="button"
-                onClick={handleStartAutofill}
-                disabled={!canRunAutofill || started}
-                className="flex-1 px-4 py-2.5 text-sm font-semibold text-white bg-primary-500 rounded-[10px] hover:bg-primary-600 disabled:opacity-50 transition-colors"
-              >
-                {started ? "Filling…" : "Start auto-fill ⚡"}
-              </button>
-            </>
-          )}
+            </div>
+          </div>
         </div>
       </div>
-    </div>
     </WorkflowLayout>
-  );
-}
-
-function StatCard({
-  label,
-  value,
-  color,
-  bg,
-}: {
-  label: string;
-  value: number;
-  color: string;
-  bg: string;
-}) {
-  return (
-    <div className={`${bg} border border-wf-border/80 rounded-lg p-2 text-center`}>
-      <p className={`text-lg font-bold ${color}`}>{value}</p>
-      <p className="text-[10px] text-wf-muted">{label}</p>
-    </div>
   );
 }

@@ -17,6 +17,7 @@ type ScannedField = {
 type FieldMatch = {
   element: FillableElement;
   answerValue: string;
+  answerKey?: string;
 };
 
 type UploadDecisionEntry = {
@@ -26,14 +27,42 @@ type UploadDecisionEntry = {
 
 type UploadDecisionMap = Record<string, UploadDecisionEntry>;
 
-const filledElements = new WeakSet<Element>();
+let filledElements = new WeakSet<Element>();
 let observerStarted = false;
+let autofillActivated = false;
+let blockedOnUpload = false;
+let pipelineRunCount = 0;
+const MAX_PIPELINE_RUNS_PER_ACTIVATION = 5;
 let autofillRunning = false;
 let debounceTimer: number | null = null;
 let lastBlockedKey: string | null = null;
 let lastProgressSignature: string | null = null;
 
 const UPLOAD_DECISION_TTL_MS = 20 * 60 * 1000;
+
+/** Pairs that must NEVER match despite substring overlap */
+const BLOCKED_MATCH_PAIRS: ReadonlySet<string> = new Set([
+  "city|ethnicity",
+  "ethnicity|city",
+  "state|veteran_status",
+  "veteran_status|state",
+  "state|disability_status",
+  "disability_status|state",
+  "postal_code|address_line1",
+  "address_line1|postal_code",
+  "postal_code|address_line2",
+  "address_line2|postal_code",
+  "zip_code|address_line1",
+  "address_line1|zip_code",
+  "zip_code|address_line2",
+  "address_line2|zip_code",
+  "address_line_2|address_line1",
+  "address_line1|address_line_2",
+  "name|phone_number",
+  "phone_number|name",
+  "email|female",
+  "phone|sponsorship",
+]);
 
 function normalizeText(value: string): string {
   return value
@@ -147,6 +176,29 @@ function dedupeIdentifiers(values: string[]): string[] {
 function getParentLabel(element: FillableElement): string {
   return element.parentElement?.querySelector("label")?.textContent?.trim() ?? "";
 }
+
+function getBestFieldLabel(element: FillableElement): string {
+  return (
+    getLabelByFor(element) ||
+    getAncestorLabel(element) ||
+    getParentLabel(element) ||
+    getPreviousSiblingLabelLikeText(element) ||
+    element.getAttribute("aria-label") ||
+    element.getAttribute("placeholder") ||
+    element.name ||
+    element.id ||
+    element.getAttribute("autocomplete") ||
+    ""
+  ).trim();
+}
+
+type FieldResultItem = {
+  selector: string;
+  label: string;
+  action: "filled" | "skipped";
+  reason: "filled" | "no_answer_match" | "fill_failed";
+  answerKey?: string;
+};
 
 function getPreviousSiblingLabelLikeText(element: FillableElement): string {
   const previous = element.previousElementSibling;
@@ -513,6 +565,35 @@ function findEducationEntryByUniversity(
   return null;
 }
 
+function isStrongMatch(identifier: string, answerKey: string): boolean {
+  if (identifier === answerKey) return true;
+
+  const idTokens = identifier.split(/[_\s]+/).filter((t) => t.length > 0);
+  const keyTokens = answerKey.split(/[_\s]+/).filter((t) => t.length > 0);
+
+  if (idTokens.length === 1 && idTokens[0].length <= 6) {
+    return keyTokens.includes(idTokens[0]) || answerKey === identifier;
+  }
+  if (keyTokens.length === 1 && keyTokens[0].length <= 6) {
+    return idTokens.includes(keyTokens[0]) || answerKey === identifier;
+  }
+
+  const shorter = idTokens.length <= keyTokens.length ? idTokens : keyTokens;
+  const longer = idTokens.length <= keyTokens.length ? keyTokens : idTokens;
+
+  const allTokensFound = shorter.every((st) =>
+    longer.some((lt) => lt === st || lt.startsWith(st) || st.startsWith(lt))
+  );
+
+  if (!allTokensFound) return false;
+
+  const matchCount = shorter.filter((st) =>
+    longer.some((lt) => lt === st || lt.startsWith(st) || st.startsWith(lt))
+  ).length;
+
+  return matchCount / Math.max(shorter.length, 1) >= 0.5;
+}
+
 function findUniversityValueInContainer(
   container: HTMLElement,
   identifiersCache: Map<FillableElement, string[]>
@@ -573,31 +654,40 @@ function matchFieldsToAnswers(fields: ScannedField[], answers: AutofillAnswerMap
           scopedEntry?.[educationFieldType] ??
           null;
         if (educationValue && educationValue.trim()) {
-          matches.push({ element: field.element, answerValue: educationValue });
+          matches.push({ element: field.element, answerValue: educationValue, answerKey: `education_history:${educationFieldType}` });
           continue;
         }
       }
     }
 
-    let best: { score: number; answerValue: string } | null = null;
+    let best: { score: number; answerValue: string; answerKey: string } | null = null;
     const normalizedIdentifiers = field.identifiers.map(normalizeText).filter((id) => id.length > 1);
 
     for (const identifier of normalizedIdentifiers) {
       for (const answerEntry of answerEntries) {
-        const isMatch =
-          identifier.includes(answerEntry.keyNorm) ||
-          answerEntry.keyNorm.includes(identifier);
+        const pairKey = `${identifier}|${answerEntry.keyNorm}`;
+        if (BLOCKED_MATCH_PAIRS.has(pairKey)) continue;
+
+        const isMatch = isStrongMatch(identifier, answerEntry.keyNorm);
         if (!isMatch) continue;
 
-        const score = Math.max(identifier.length, answerEntry.keyNorm.length);
+        let score = 0;
+        if (identifier === answerEntry.keyNorm) {
+          score = 1000;
+        } else {
+          const idTokens = identifier.split(/[_\s]+/).filter((t) => t.length > 0);
+          const keyTokens = answerEntry.keyNorm.split(/[_\s]+/).filter((t) => t.length > 0);
+          const matchingTokens = idTokens.filter((t) => keyTokens.includes(t)).length;
+          score = matchingTokens * 100 + Math.min(identifier.length, answerEntry.keyNorm.length);
+        }
         if (!best || score > best.score) {
-          best = { score, answerValue: answerEntry.value };
+          best = { score, answerValue: answerEntry.value, answerKey: answerEntry.key };
         }
       }
     }
 
     if (best) {
-      matches.push({ element: field.element, answerValue: best.answerValue });
+      matches.push({ element: field.element, answerValue: best.answerValue, answerKey: best.answerKey });
     }
   }
 
@@ -705,8 +795,129 @@ function tokenOverlapScore(a: string[], b: string[]): number {
   return overlap / Math.max(a.length, b.length);
 }
 
-function fillSelect(element: HTMLSelectElement, answerValue: string): boolean {
+function getFieldLabel(element: HTMLElement): string {
+  const ariaLabel = element.getAttribute("aria-label");
+  if (ariaLabel) return ariaLabel.trim();
+
+  const id = element.id;
+  if (id) {
+    try {
+      const label = document.querySelector<HTMLLabelElement>(`label[for="${CSS.escape(id)}"]`);
+      if (label) return label.textContent?.trim() ?? "";
+    } catch {
+      const safeId = id.replace(/"/g, '\\"');
+      const label = document.querySelector<HTMLLabelElement>(`label[for="${safeId}"]`);
+      if (label) return label.textContent?.trim() ?? "";
+    }
+  }
+
+  const parentLabel = element.closest("label");
+  if (parentLabel) return parentLabel.textContent?.trim() ?? "";
+
+  const prev = element.previousElementSibling;
+  if (prev?.tagName === "LABEL") return prev.textContent?.trim() ?? "";
+
+  const legend = element.closest("fieldset")?.querySelector("legend");
+  if (legend) return legend.textContent?.trim() ?? "";
+
+  return "";
+}
+
+/**
+ * For select/dropdown fields with Yes/No options, interpret the stored answer
+ * based on the question context rather than trying to substring-match the raw value.
+ */
+function interpretAnswerForYesNoSelect(
+  answerValue: string,
+  answerKey: string,
+  options: string[]
+): string | null {
+  const normalizedOptions = options.map((o) => normalizeText(o));
+  const isYesNo = normalizedOptions.some((o) => o === "yes") && normalizedOptions.some((o) => o === "no");
+
+  if (!isYesNo) return null;
+
+  const norm = normalizeText(answerValue);
+
+  const YES_SIGNALS = ["yes", "true", "1", "y"];
+  const NO_SIGNALS = ["no", "false", "0", "n", "none", "n_a", "na"];
+
+  if (YES_SIGNALS.includes(norm)) return "Yes";
+  if (NO_SIGNALS.includes(norm)) return "No";
+
+  const keyNorm = normalizeText(answerKey);
+
+  if (
+    keyNorm.includes("authorized") ||
+    keyNorm.includes("authorization") ||
+    keyNorm.includes("eligible") ||
+    keyNorm.includes("right_to_work") ||
+    keyNorm.includes("legally_authorized")
+  ) {
+    const authorizedValues = [
+      "us_citizen",
+      "citizen",
+      "permanent_resident",
+      "green_card",
+      "authorized",
+      "h1b",
+      "h4_ead",
+      "ead",
+      "opt",
+      "cpt",
+      "work_visa",
+      "tn_visa",
+      "l1",
+      "o1",
+      "e2",
+    ];
+    if (authorizedValues.some((v) => norm.includes(v)) || norm.includes("yes")) {
+      return "Yes";
+    }
+    if (norm.includes("no") || norm.includes("unauthorized") || norm === "") {
+      return "No";
+    }
+    if (norm.length > 0) return "Yes";
+  }
+
+  if (keyNorm.includes("sponsorship") || keyNorm.includes("sponsor")) {
+    const needsSponsor = ["yes", "true", "required", "needed", "need", "will_need"];
+    const noSponsor = ["no", "false", "not_required", "not_needed", "do_not", "dont"];
+    if (needsSponsor.some((v) => norm.includes(v))) return "Yes";
+    if (noSponsor.some((v) => norm.includes(v))) return "No";
+    if (norm.includes("citizen") || norm.includes("permanent_resident") || norm.includes("green_card")) {
+      return "No";
+    }
+  }
+
+  if (keyNorm.includes("18") || keyNorm.includes("age") || keyNorm.includes("legal_age")) {
+    return "Yes";
+  }
+
+  return null;
+}
+
+function fillSelect(element: HTMLSelectElement, answerValue: string, answerKey?: string): boolean {
   const options = Array.from(element.options);
+  const fieldLabel = getFieldLabel(element);
+  const interpreted = interpretAnswerForYesNoSelect(
+    answerValue,
+    (answerKey || fieldLabel || "").trim(),
+    options.map((o) => o.textContent?.trim() || o.value)
+  );
+  if (interpreted) {
+    const matchedOption = options.find(
+      (o) =>
+        normalizeText(o.textContent ?? "") === normalizeText(interpreted) ||
+        normalizeText(o.value) === normalizeText(interpreted)
+    );
+    if (matchedOption) {
+      element.value = matchedOption.value;
+      dispatchFieldEvents(element);
+      return true;
+    }
+  }
+
   const findOption = (rawAnswer: string): HTMLOptionElement | undefined => {
     const answerNorm = normalizeText(rawAnswer);
     const answerCandidates = new Set<string>([
@@ -805,6 +1016,81 @@ function fillSelect(element: HTMLSelectElement, answerValue: string): boolean {
   element.value = option.value;
   dispatchFieldEvents(element);
   return true;
+}
+
+const CUSTOM_DROPDOWN_CONTAINER_SELECTOR =
+  '.iCIMS_InfoMsg_Job, .icims-dropdown, [class*="dropdown"], [class*="Dropdown"], [role="combobox"], [role="listbox"]';
+
+function fillCustomDropdown(element: HTMLElement, answerValue: string): boolean {
+  const container = element.closest(CUSTOM_DROPDOWN_CONTAINER_SELECTOR);
+  if (!container) return false;
+
+  const searchInput = container.querySelector<HTMLInputElement>(
+    'input[type="text"]:not([type="hidden"]), input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"])'
+  );
+  if (!searchInput) return false;
+
+  setNativeValue(searchInput, answerValue);
+  searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+  searchInput.dispatchEvent(new Event("keyup", { bubbles: true }));
+  searchInput.dispatchEvent(
+    new KeyboardEvent("keyup", { bubbles: true, key: answerValue.slice(-1) || " " })
+  );
+
+  setTimeout(() => {
+    const optionElements = container.querySelectorAll<HTMLElement>(
+      '[role="option"], .icims-option, .dropdown-option, li[class*="option"], li[class*="Option"], .searchDropdown_option'
+    );
+
+    if (optionElements.length === 0) return;
+
+    const answerNorm = normalizeText(answerValue);
+    let bestOption: HTMLElement | null = null;
+    let bestScore = 0;
+
+    for (const opt of optionElements) {
+      const optText = normalizeText(opt.textContent ?? "");
+      if (!optText || /^select(\s+one)?$/i.test(optText)) continue;
+
+      let score = 0;
+      if (optText === answerNorm) {
+        score = 100;
+      } else if (optText.includes(answerNorm) || answerNorm.includes(optText)) {
+        score = 50;
+      } else {
+        score = tokenOverlapScore(phraseTokens(answerValue), phraseTokens(opt.textContent ?? "")) * 30;
+      }
+
+      if (score > bestScore) {
+        bestScore = score;
+        bestOption = opt;
+      }
+    }
+
+    if (bestOption && bestScore > 0) {
+      bestOption.click();
+      bestOption.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+      bestOption.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    }
+  }, 600);
+
+  return true;
+}
+
+function fillTextLikeOrCustomDropdown(
+  element: HTMLInputElement | HTMLTextAreaElement,
+  answerValue: string
+): boolean {
+  if (element instanceof HTMLInputElement) {
+    const type = element.type.toLowerCase();
+    if (isTextLikeInput(type) && element.closest(CUSTOM_DROPDOWN_CONTAINER_SELECTOR)) {
+      return fillCustomDropdown(element, answerValue);
+    }
+  } else if (element.closest(CUSTOM_DROPDOWN_CONTAINER_SELECTOR)) {
+    const filled = fillCustomDropdown(element, answerValue);
+    if (filled) return true;
+  }
+  return fillTextLike(element, answerValue);
 }
 
 function getRadioLabel(input: HTMLInputElement): string {
@@ -949,12 +1235,12 @@ function fillTextLike(element: HTMLInputElement | HTMLTextAreaElement, answerVal
 function fillFields(matches: FieldMatch[]): number {
   let filledCount = 0;
 
-  for (const { element, answerValue } of matches) {
+  for (const { element, answerValue, answerKey } of matches) {
     if (filledElements.has(element)) continue;
 
     let filled = false;
     if (element instanceof HTMLSelectElement) {
-      filled = fillSelect(element, answerValue);
+      filled = fillSelect(element, answerValue, answerKey);
     } else if (element instanceof HTMLInputElement) {
       const type = element.type.toLowerCase();
       if (type === "checkbox") {
@@ -962,10 +1248,10 @@ function fillFields(matches: FieldMatch[]): number {
       } else if (type === "radio") {
         filled = fillRadio(element, answerValue);
       } else if (isTextLikeInput(type)) {
-        filled = fillTextLike(element, answerValue);
+        filled = fillTextLikeOrCustomDropdown(element, answerValue);
       }
     } else {
-      filled = fillTextLike(element, answerValue);
+      filled = fillTextLikeOrCustomDropdown(element, answerValue);
     }
 
     if (filled) {
@@ -975,6 +1261,58 @@ function fillFields(matches: FieldMatch[]): number {
   }
 
   return filledCount;
+}
+
+function applyMatchesAndCollectResults(
+  fields: ScannedField[],
+  matches: FieldMatch[]
+): { filledCount: number; results: FieldResultItem[] } {
+  const matchedByElement = new Map<FillableElement, FieldMatch>();
+  for (const match of matches) {
+    matchedByElement.set(match.element, match);
+  }
+
+  const results: FieldResultItem[] = [];
+  let filledCount = 0;
+
+  for (const field of fields) {
+    const element = field.element;
+    const selector = buildElementSelector(element);
+    const label = getBestFieldLabel(element) || selector;
+    const match = matchedByElement.get(element) ?? null;
+
+    if (!match) {
+      results.push({ selector, label, action: "skipped", reason: "no_answer_match" });
+      continue;
+    }
+
+    // Reuse fillFields logic for a single element
+    const before = filledElements.has(element);
+    const filledNow = (() => {
+      if (before) return true;
+      if (element instanceof HTMLSelectElement) return fillSelect(element, match.answerValue, match.answerKey);
+      if (element instanceof HTMLInputElement) {
+        const type = element.type.toLowerCase();
+        if (type === "checkbox") return fillCheckbox(element, match.answerValue);
+        if (type === "radio") return fillRadio(element, match.answerValue);
+        if (isTextLikeInput(type)) return fillTextLikeOrCustomDropdown(element, match.answerValue);
+        return false;
+      }
+      return fillTextLikeOrCustomDropdown(element, match.answerValue);
+    })();
+
+    if (filledNow) {
+      if (!before) {
+        filledElements.add(element);
+        filledCount += 1;
+      }
+      results.push({ selector, label, action: "filled", reason: "filled", answerKey: match.answerKey });
+    } else {
+      results.push({ selector, label, action: "skipped", reason: "fill_failed", answerKey: match.answerKey });
+    }
+  }
+
+  return { filledCount, results };
 }
 
 async function getAutofillAnswers(): Promise<AutofillAnswerMap> {
@@ -1058,8 +1396,22 @@ function detectPendingUploadBlocker(decisions: UploadDecisionMap): FormBlocker |
   return blockers[0] ?? null;
 }
 
+function maybeStartMutationObserverAfterRun(): void {
+  if (!autofillActivated || observerStarted || !document.body) return;
+  observerStarted = true;
+  const observer = new MutationObserver(() => {
+    scheduleAutofill();
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
+}
+
 async function runAutofill(): Promise<void> {
   if (autofillRunning) return;
+  if (pipelineRunCount >= MAX_PIPELINE_RUNS_PER_ACTIVATION) {
+    console.log("[Autofill] Max pipeline runs reached. Stopping observer retriggers.");
+    return;
+  }
+  pipelineRunCount += 1;
   autofillRunning = true;
 
   try {
@@ -1084,6 +1436,7 @@ async function runAutofill(): Promise<void> {
     const uploadDecisions = await getUploadDecisions();
     const pendingUploadBlocker = detectPendingUploadBlocker(uploadDecisions);
     if (pendingUploadBlocker) {
+      blockedOnUpload = true;
       const blockerKey = toBlockerDecisionKey(
         pendingUploadBlocker.selector,
         pendingUploadBlocker.subType ?? "generic"
@@ -1104,6 +1457,7 @@ async function runAutofill(): Promise<void> {
       console.log(`[Autofill] Blocked on upload requirement (${pendingUploadBlocker.subType ?? "generic"})`);
       return;
     }
+    blockedOnUpload = false;
     lastBlockedKey = null;
     emitAutofillProgress(buildProgress({ state: "apply", total: 0, filled: 0, completed: false }));
 
@@ -1115,35 +1469,42 @@ async function runAutofill(): Promise<void> {
     );
     if (fields.length === 0) {
       emitAutofillProgress(buildProgress({ state: "complete", total: 0, filled: 0, completed: true }));
+      maybeStartMutationObserverAfterRun();
       return;
     }
 
     const matches = matchFieldsToAnswers(fields, answers);
     console.log(`[Autofill] Step 3: Matched ${matches.length} fields`);
     if (matches.length === 0) {
-      emitAutofillProgress(
-        buildProgress({
-          state: "complete",
-          total: fields.length,
-          filled: 0,
-          skipped: fields.length,
-          completed: true,
-        })
-      );
+      const progress = buildProgress({
+        state: "complete",
+        total: fields.length,
+        filled: 0,
+        skipped: fields.length,
+        completed: true,
+      });
+      progress.fields = fields.map((f) => {
+        const selector = buildElementSelector(f.element);
+        const label = getBestFieldLabel(f.element) || selector;
+        return { selector, label, action: "skipped", reason: "no_answer_match" } satisfies FieldResultItem;
+      });
+      emitAutofillProgress(progress);
+      maybeStartMutationObserverAfterRun();
       return;
     }
 
-    const filled = fillFields(matches);
+    const { filledCount: filled, results } = applyMatchesAndCollectResults(fields, matches);
     console.log(`[Autofill] Step 4: Filled ${filled} fields`);
-    emitAutofillProgress(
-      buildProgress({
-        state: "complete",
-        total: fields.length,
-        filled,
-        skipped: Math.max(0, fields.length - filled),
-        completed: true,
-      })
-    );
+    const progress = buildProgress({
+      state: "complete",
+      total: fields.length,
+      filled,
+      skipped: Math.max(0, fields.length - filled),
+      completed: true,
+    });
+    progress.fields = results;
+    emitAutofillProgress(progress);
+    maybeStartMutationObserverAfterRun();
   } catch (err) {
     console.warn("AUTOFILL: runAutofill failed", err);
     emitAutofillProgress(buildProgress({ state: "stopped", total: 0, filled: 0, completed: true }));
@@ -1153,60 +1514,75 @@ async function runAutofill(): Promise<void> {
 }
 
 function scheduleAutofill(): void {
+  if (!autofillActivated) return;
+  if (blockedOnUpload) return;
   if (debounceTimer != null) {
     window.clearTimeout(debounceTimer);
   }
   debounceTimer = window.setTimeout(() => {
     void runAutofill();
-  }, 500);
+  }, 1500);
 }
-
-function startObserver(): void {
-  if (observerStarted) return;
-  if (!document.body) return;
-  observerStarted = true;
-
-  const observer = new MutationObserver(() => {
-    scheduleAutofill();
-  });
-
-  observer.observe(document.body, { childList: true, subtree: true });
-}
-
-chrome.runtime.onMessage.addListener((message: unknown) => {
-  const action = (message as { action?: string } | null)?.action;
-  if (action === "run_autofill") {
-    console.log("[Autofill] Trigger message received (run_autofill)");
-    lastProgressSignature = null;
-    void runAutofill();
-    return;
-  }
-
-  const typed = message as {
-    type?: string;
-    data?: {
-      selector?: string;
-      subType?: FileUploadBlockerSubType | string;
-      decision?: FileUploadBlockerDecision;
-    };
-  } | null;
-
-  if (typed?.type === MSG.AUTOFILL_UPLOAD_BLOCKER_DECISION) {
-    const selector = typed.data?.selector?.trim();
-    const subType = typed.data?.subType ?? "generic";
-    const decision = typed.data?.decision;
-    if (!selector || (decision !== "resolved_by_user" && decision !== "skipped_by_user")) {
-      return;
-    }
-    console.log(`[Autofill] Upload blocker decision received: ${decision} (${subType})`);
-    void persistUploadDecision(selector, subType, decision);
-  }
-});
 
 function initialize(): void {
-  console.log("[Autofill] Content script initialized");
-  void runAutofill();
-  startObserver();
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName === "session" && changes[STORAGE_KEYS.AUTOFILL_TRIGGER_TS]) {
+      const newVal = changes[STORAGE_KEYS.AUTOFILL_TRIGGER_TS].newValue;
+      if (newVal && typeof newVal === "number") {
+        autofillActivated = true;
+        blockedOnUpload = false;
+        pipelineRunCount = 0;
+        filledElements = new WeakSet();
+        lastProgressSignature = null;
+        console.log("[Autofill] Trigger received via storage change");
+        void runAutofill();
+      }
+    }
+  });
+
+  chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
+    const action = (message as { action?: string } | null)?.action;
+    if (action === "run_autofill") {
+      if (!autofillActivated) {
+        autofillActivated = true;
+        blockedOnUpload = false;
+        pipelineRunCount = 0;
+        filledElements = new WeakSet();
+        lastProgressSignature = null;
+        console.log("[Autofill] Trigger received via message (fallback)");
+        void runAutofill();
+      }
+      sendResponse({ ok: true });
+      return true;
+    }
+
+    const typed = message as {
+      type?: string;
+      data?: {
+        selector?: string;
+        subType?: FileUploadBlockerSubType | string;
+        decision?: FileUploadBlockerDecision;
+      };
+    } | null;
+
+    if (typed?.type === MSG.AUTOFILL_UPLOAD_BLOCKER_DECISION) {
+      const selector = typed.data?.selector?.trim();
+      const subType = typed.data?.subType ?? "generic";
+      const decision = typed.data?.decision;
+      if (!selector || (decision !== "resolved_by_user" && decision !== "skipped_by_user")) {
+        return false;
+      }
+      blockedOnUpload = false;
+      pipelineRunCount = 0;
+      console.log(`[Autofill] Upload blocker decision received: ${decision} (${subType})`);
+      void persistUploadDecision(selector, subType, decision);
+      return false;
+    }
+
+    return false;
+  });
+
+  console.log("[Autofill] Content script initialized (waiting for user trigger)");
 }
 
 if (document.readyState === "loading") {

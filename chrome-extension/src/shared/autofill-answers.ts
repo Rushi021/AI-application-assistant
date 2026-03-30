@@ -117,13 +117,69 @@ export function buildAutofillAnswersFromProfile(profile: UserProfile | null | un
   setAnswer(answers, "are_you_authorized_to_work", profile.work_authorization);
   if (profile.sponsorship_needed != null) {
     setAnswer(answers, "do_you_require_sponsorship", profile.sponsorship_needed ? "Yes" : "No");
+    addAliases(answers, "do_you_require_sponsorship", [
+      "require_sponsorship",
+      "need_sponsorship",
+      "visa_sponsorship",
+      "immigration_sponsorship",
+      "sponsorship_required",
+      "require_visa_sponsorship",
+      "need_visa_sponsorship",
+    ]);
   }
 
   addAliases(answers, "linkedin_url", ["linkedin", "linkedin_profile"]);
   addAliases(answers, "github_url", ["github", "github_profile"]);
   addAliases(answers, "portfolio_url", ["portfolio", "website"]);
-  addAliases(answers, "phone", ["phone_number", "mobile_number"]);
-  addAliases(answers, "work_authorization", ["authorized_to_work"]);
+  addAliases(answers, "phone", [
+    "phone_number",
+    "mobile_number",
+    "telephone",
+    "cell_phone",
+    "mobile",
+    "contact_number",
+  ]);
+  addAliases(answers, "email", ["email_address", "contact_email"]);
+  addAliases(answers, "work_authorization", [
+    "authorized_to_work",
+    "legally_authorized_to_work",
+    "authorized_to_work_in_the_united_states",
+    "legally_authorized",
+    "work_eligibility",
+    "employment_eligibility",
+    "right_to_work",
+  ]);
+  addAliases(answers, "are_you_authorized_to_work", [
+    "legally_authorized_to_work",
+    "authorized_to_work_in_the_united_states",
+    "legally_authorized",
+    "work_eligibility",
+    "employment_eligibility",
+    "right_to_work",
+  ]);
+
+  addAliases(answers, "full_name", ["legal_name", "preferred_name", "name"]);
+  addAliases(answers, "first_name", ["given_name"]);
+  addAliases(answers, "last_name", ["family_name", "surname"]);
+  addAliases(answers, "address_line1", ["street_address", "address"]);
+  addAliases(answers, "zip_code", ["zip", "zipcode"]);
+  addAliases(answers, "university", ["school", "school_name", "college", "institution"]);
+  addAliases(answers, "field_of_study", ["major"]);
+  addAliases(answers, "degree", ["degree_type", "education_level"]);
+  addAliases(answers, "expected_salary", [
+    "desired_salary",
+    "salary_expectation",
+    "compensation",
+    "desired_compensation",
+    "salary_requirement",
+  ]);
+  addAliases(answers, "ethnicity", ["race", "race_ethnicity"]);
+  addAliases(answers, "gender", ["sex"]);
+  addAliases(answers, "veteran_status", ["veteran"]);
+  addAliases(answers, "disability_status", ["disability"]);
+  addAliases(answers, "years_of_experience", ["total_experience", "experience"]);
+  addAliases(answers, "current_title", ["job_title", "title"]);
+  addAliases(answers, "current_company", ["company", "employer", "current_employer"]);
 
   const custom = profile.custom_fields;
   if (custom && typeof custom === "object") {

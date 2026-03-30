@@ -15,6 +15,10 @@ interface WorkflowLayoutProps {
   footer?: ReactNode;
   /** When false, only renders brand header (no step rail). */
   showWorkflowChrome?: boolean;
+  /** Hide the default title/subtitle block (e.g. when the page renders its own heading). */
+  hideTitleSection?: boolean;
+  /** Hide the top brand bar (e.g. autofill page full chrome). */
+  hideHeader?: boolean;
 }
 
 export default function WorkflowLayout({
@@ -23,6 +27,8 @@ export default function WorkflowLayout({
   children,
   footer,
   showWorkflowChrome = true,
+  hideTitleSection = false,
+  hideHeader = false,
 }: WorkflowLayoutProps) {
   const { currentPage, setPage, draft, autofillContext } = useAppStore();
   const stepIndex = pageToWorkflowStepIndex(currentPage);
@@ -36,17 +42,19 @@ export default function WorkflowLayout({
 
   return (
     <div className="flex flex-col h-screen bg-wf-bg text-wf-text antialiased">
-      <header className="shrink-0 flex items-center justify-between gap-3 px-4 pt-3 pb-2 border-b border-wf-border bg-wf-surface">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="w-5 h-5 rounded bg-primary-500 shrink-0" aria-hidden />
-          <span className="text-sm font-semibold text-wf-text truncate">AI Job Assistant</span>
-        </div>
-        <div className="flex items-center gap-1 text-wf-muted shrink-0" aria-hidden>
-          <span className="text-base leading-none opacity-70 cursor-default" title="Keep the side panel open">
-            📌
-          </span>
-        </div>
-      </header>
+      {!hideHeader && (
+        <header className="shrink-0 flex items-center justify-between gap-3 px-4 pt-3 pb-2 border-b border-wf-border bg-wf-surface">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="w-5 h-5 rounded bg-primary-500 shrink-0" aria-hidden />
+            <span className="text-sm font-semibold text-wf-text truncate">AI Job Assistant</span>
+          </div>
+          <div className="flex items-center gap-1 text-wf-muted shrink-0" aria-hidden>
+            <span className="text-base leading-none opacity-70 cursor-default" title="Keep the side panel open">
+              📌
+            </span>
+          </div>
+        </header>
+      )}
 
       {showWorkflowChrome && stepIndex !== null && (
         <WorkflowStepRail
@@ -56,10 +64,12 @@ export default function WorkflowLayout({
         />
       )}
 
-      <div className="shrink-0 px-4 pt-3 pb-1">
-        <h1 className="text-lg font-bold text-wf-text leading-tight">{title}</h1>
-        {subtitle && <p className="text-xs text-wf-muted mt-1">{subtitle}</p>}
-      </div>
+      {!hideTitleSection && (
+        <div className="shrink-0 px-4 pt-3 pb-1">
+          <h1 className="text-lg font-bold text-wf-text leading-tight">{title}</h1>
+          {subtitle && <p className="text-xs text-wf-muted mt-1">{subtitle}</p>}
+        </div>
+      )}
 
       <div className="flex-1 flex flex-col min-h-0">{children}</div>
 

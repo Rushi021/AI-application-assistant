@@ -1,6 +1,10 @@
 # AI Job Application Assistant — Backend Foundation
 
-This repository contains a modular FastAPI backend designed to start with local-only development (hardcoded test auth + local file storage) and later swap to AWS (RDS Postgres + S3) with minimal refactor. The code follows a **ports and adapters** style so storage and database layers remain swappable.
+This repository also includes a **Chrome extension** (`chrome-extension/`) and optional **Streamlit** demo client (`streamlit_app/`) in addition to the backend described below. For a full repo map, extension autofill behavior, and build commands, see **[AGENT.md](AGENT.md)** and **[implementation.md](implementation.md)**.
+
+---
+
+This document focuses on the modular **FastAPI backend** designed to start with local-only development (hardcoded test auth + local file storage) and later swap to AWS (RDS Postgres + S3) with minimal refactor. The code follows a **ports and adapters** style so storage and database layers remain swappable.
 
 ## What This Provides (MVP)
 - Working FastAPI server with a clean, modular monolith structure.

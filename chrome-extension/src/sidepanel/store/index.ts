@@ -127,10 +127,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   // Autofill
   autofillProgress: null,
-  setAutofillProgress: (p) => {
-    console.log("STORE: autofillProgress updated", JSON.stringify(p));
-    set({ autofillProgress: p });
-  },
+  setAutofillProgress: (p) => set({ autofillProgress: p }),
 
   // Workflow context
   autofillContext: {
