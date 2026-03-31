@@ -99,11 +99,40 @@ def inject_styles() -> None:
     st.markdown(
         """
         <style>
-        /* ── base ── */
+        :root {
+            color-scheme: dark !important;
+        }
+
+        /* ── base + global enforcement ── */
         .stApp {
             background: #09090b !important;
             color: #fafafa;
         }
+        .main .block-container,
+        section[data-testid="stMain"],
+        div[data-testid="stAppViewBlockContainer"],
+        .stMainBlockContainer {
+            background-color: #09090b !important;
+            color: #fafafa !important;
+        }
+
+        /* ── header/top chrome fixes ── */
+        header[data-testid="stHeader"] {
+            background-color: #09090b !important;
+            border-bottom: none !important;
+        }
+        .stApp > header {
+            background-color: #09090b !important;
+        }
+        [data-testid="stToolbar"] {
+            background-color: #09090b !important;
+        }
+        [data-testid="stDecoration"],
+        .stDeployButton {
+            display: none !important;
+        }
+
+        /* ── sidebar ── */
         [data-testid="stSidebar"] {
             background: #0f0f12 !important;
             border-right: 1px solid #1c1c22 !important;
@@ -277,39 +306,143 @@ def inject_styles() -> None:
             margin: 0 0 16px;
         }
 
-        /* ── streamlit overrides ── */
-        .stTextInput > div > div > input,
-        .stSelectbox > div > div > div {
-            background: #18181b !important;
+        /* ── text inputs (streamlit + baseweb) ── */
+        input,
+        .stTextInput input,
+        [data-testid="stTextInput"] input,
+        div[data-baseweb="input"],
+        div[data-baseweb="input"] > div,
+        div[data-baseweb="input"] input {
+            background-color: #18181b !important;
+            color: #e4e4e7 !important;
             border: 1px solid #27272a !important;
             border-radius: 10px !important;
-            color: #d4d4d8 !important;
         }
-        .stTextInput > div > div > input:focus {
+        input::placeholder,
+        .stTextInput input::placeholder,
+        [data-testid="stTextInput"] input::placeholder {
+            color: #52525b !important;
+            opacity: 1 !important;
+        }
+        input:focus,
+        .stTextInput input:focus,
+        [data-testid="stTextInput"] input:focus,
+        div[data-baseweb="input"] input:focus {
             border-color: #22c55e !important;
-            box-shadow: 0 0 0 3px rgba(34,197,94,0.12) !important;
+            box-shadow: 0 0 0 3px rgba(34,197,94,0.15) !important;
+            outline: none !important;
         }
+
+        /* ── select dropdowns (streamlit + baseweb) ── */
+        div[data-baseweb="select"],
+        div[data-baseweb="select"] > div,
+        .stSelectbox [data-baseweb="select"],
+        .stSelectbox [data-baseweb="select"] > div,
+        .stSelectbox div[role="combobox"],
+        .stSelectbox div[role="combobox"] * {
+            background-color: #18181b !important;
+            color: #e4e4e7 !important;
+            border-color: #27272a !important;
+        }
+        .stSelectbox div[role="combobox"] {
+            border: 1px solid #27272a !important;
+            border-radius: 10px !important;
+        }
+        [data-baseweb="popover"],
+        [data-baseweb="popover"] > div,
+        ul[role="listbox"],
+        ul[role="listbox"] li,
+        div[data-baseweb="menu"] {
+            background: #18181b !important;
+            color: #e4e4e7 !important;
+            border-color: #27272a !important;
+        }
+        ul[role="listbox"] li:hover {
+            background: rgba(34,197,94,0.12) !important;
+            color: #22c55e !important;
+        }
+
+        /* ── buttons ── */
+        .stButton > button,
+        button[kind="secondary"] {
+            background-color: #18181b !important;
+            color: #d4d4d8 !important;
+            border: 1px solid #27272a !important;
+            border-radius: 10px !important;
+            font-weight: 600 !important;
+        }
+        .stButton > button:hover {
+            border-color: #22c55e !important;
+            color: #22c55e !important;
+            background-color: rgba(34,197,94,0.06) !important;
+        }
+
+        /* ── primary / submit ── */
         .stCheckbox label span {
             color: #d4d4d8 !important;
         }
         div[data-testid="stFormSubmitButton"] button,
-        .stButton > button[kind="primary"] {
+        button[kind="primary"] {
             background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%) !important;
             color: #fff !important;
             border: none !important;
             border-radius: 10px !important;
-            font-weight: 600 !important;
+            font-weight: 700 !important;
             box-shadow: 0 4px 14px rgba(34,197,94,0.25);
         }
-        .stButton > button {
-            border-radius: 10px !important;
+
+        /* ── checkboxes ── */
+        .stCheckbox label,
+        .stCheckbox label span,
+        .stCheckbox label p {
+            color: #d4d4d8 !important;
         }
+
+        /* ── forms ── */
+        [data-testid="stForm"],
+        [data-testid="stForm"] > div {
+            background-color: #0f0f12 !important;
+            border: 1px solid #1c1c22 !important;
+            border-radius: 14px !important;
+        }
+
+        /* ── expander ── */
+        [data-testid="stExpander"],
+        [data-testid="stExpander"] summary,
+        [data-testid="stExpander"] > div {
+            background-color: transparent !important;
+            border-color: #1c1c22 !important;
+            color: #71717a !important;
+        }
+
+        /* ── dataframe ── */
+        [data-testid="stDataFrame"],
+        [data-testid="stDataFrame"] * {
+            background-color: #0f0f12 !important;
+            color: #d4d4d8 !important;
+            border-color: #1c1c22 !important;
+        }
+
+        /* ── radio ── */
+        .stRadio label span,
+        div[role="radiogroup"] label span {
+            color: #a1a1aa !important;
+        }
+
         h1, h2, h3, h4 {
             color: #fafafa !important;
         }
         .stCaption, .stMarkdown p {
             color: #71717a !important;
         }
+
+        /* ── scrollbar ── */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #27272a; border-radius: 3px; }
+
+        /* ── cleanup ── */
+        #MainMenu, footer { visibility: hidden; }
         </style>
         """,
         unsafe_allow_html=True,
