@@ -12,6 +12,7 @@ import {
 } from "../services/api";
 import WorkflowLayout from "../components/WorkflowLayout";
 import { forgetResumeFile, rememberResumeFile } from "../resumeLocalCache";
+import { MAX_RESUMES_PER_SESSION } from "@/shared/constants";
 
 async function runCoverLetterFromResume(
   jobDescriptionText: string,
@@ -142,9 +143,9 @@ export default function TemporaryResumeUploadPage() {
       setError("Paste a job description (or role summary) before uploading a resume.");
       return;
     }
-    if (resumes.length >= 2) {
+    if (resumes.length >= MAX_RESUMES_PER_SESSION) {
       setError(
-        "Maximum 2 resumes per session. Select one of your uploaded resumes above, or remove a resume from the Resume step and try again."
+        `Maximum ${MAX_RESUMES_PER_SESSION} resumes per session. Select one of your uploaded resumes above, or remove a resume from the Resume step and try again.`
       );
       return;
     }
@@ -244,7 +245,7 @@ export default function TemporaryResumeUploadPage() {
         <div className="rounded-xl border border-wf-borderBright bg-wf-surface p-3 text-xs text-wf-muted leading-relaxed">
           <p className="font-semibold text-wf-text mb-2">Use an uploaded resume</p>
           <p className="mb-2">
-            You can have up to 2 resumes in this session. Pick one to generate the cover letter without uploading again.
+            You can have up to {MAX_RESUMES_PER_SESSION} resumes in this session. Pick one to generate the cover letter without uploading again.
           </p>
           {resumes.length === 0 ? (
             <p className="text-wf-muted">No resumes loaded yet. Upload one below (if under the limit).</p>
@@ -283,7 +284,7 @@ export default function TemporaryResumeUploadPage() {
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            disabled={busy || resumes.length >= 2}
+                disabled={busy || resumes.length >= MAX_RESUMES_PER_SESSION}
             className="w-full px-4 py-3 text-sm font-semibold text-primary-400 border border-wf-border rounded-[10px] hover:bg-wf-surfaceHover disabled:opacity-50 transition-colors"
           >
             {uploading ? "Uploading and generating…" : "Upload temporary resume"}

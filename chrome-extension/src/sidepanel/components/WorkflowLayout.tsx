@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { useAppStore } from "../store";
+import AccountMenu from "./AccountMenu";
 import {
   WORKFLOW_STEPS,
   canNavigateToWorkflowStep,
@@ -48,10 +49,8 @@ export default function WorkflowLayout({
             <div className="w-5 h-5 rounded bg-primary-500 shrink-0" aria-hidden />
             <span className="text-sm font-semibold text-wf-text truncate">AI Job Assistant</span>
           </div>
-          <div className="flex items-center gap-1 text-wf-muted shrink-0" aria-hidden>
-            <span className="text-base leading-none opacity-70 cursor-default" title="Keep the side panel open">
-              📌
-            </span>
+          <div className="flex items-center gap-1 shrink-0">
+            <AccountMenu />
           </div>
         </header>
       )}

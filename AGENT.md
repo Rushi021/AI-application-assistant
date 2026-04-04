@@ -1,161 +1,114 @@
-# Project overview
-This repository is an AI job application assistant with three main parts: a FastAPI backend, a Chrome extension, and a Streamlit workflow UI. The backend manages auth, profile/resume/job/application/draft APIs and uses session-scoped data access with `X-Session-Id`, while the extension drives login, resume workflow, and in-page autofill automation. The Streamlit app is a separate client for testing the backend workflow end-to-end.
+# AI Job Application Assistant — agent context
 
-# Repo structure
-- `backend/`: FastAPI service, SQLAlchemy models/repos, Alembic migrations, and backend tests.
-- `backend/app/main.py`: App entrypoint; mounts auth, admin, users, resumes, jobs, pipeline, applications, drafts, and `me` routers.
-- `backend/app/core/`: Settings, dependency wiring, logging, auth/security helpers.
-- `backend/app/common/`: Shared ports/adapters, errors, utilities, resume parsing/docx services.
-- `backend/app/db/`: SQLAlchemy session/base and Alembic environment/versions.
-- `backend/app/modules/`: Domain modules (`auth`, `admin`, `users`, `resumes`, `jobs`, `pipeline`, `applications`, `drafts`, `me`, `ai`; section chat endpoints live under the drafts router).
-- `backend/tests/`: Python tests — `test_resume_parser.py` (resume parsing), `test_api_integration.py` (end-to-end HTTP checks against a live API), plus `conftest.py` shared fixtures.
-- `backend/pytest.ini`: Pytest config (e.g. `integration` marker, `testpaths`).
-- `backend/data/resumes/`: Local file storage location used by the local storage adapter.
-- `chrome-extension/`: MV3 extension project (TypeScript + React + Vite).
-- `chrome-extension/src/background/`: Service worker for auth token retrieval, message routing, and application tracking writes.
-- `chrome-extension/src/content/`: Content script (`autofill.ts` only) — DOM scanning/matching/filling, upload blocker detection, and gated mutation-driven re-runs (not on raw page load).
-- `chrome-extension/src/sidepanel/`: React sidepanel app (pages, hooks, store, API client).
-- `chrome-extension/src/shared/`: Shared constants/types and answer-map builder (`autofill-answers.ts`). `constants.ts` exports `API_BASE_URL` (deployed FastAPI base URL; change per environment).
-- `chrome-extension/public/`: Static icons.
-- `chrome-extension/dist/`: Built extension output for loading unpacked.
-- `streamlit_app/`: Standalone Streamlit client app (`app.py`) and its own requirements file.
-- `.venv/`: Local virtual environment in repo root.
-- `.cursor/`: Optional Cursor/IDE project settings (if present).
+Monorepo for an AI-assisted job application flow: users sign in, save profile and resume, run a tailoring pipeline (job + resume → draft sections + cover letter), then use a Chrome extension side panel to drive in-browser autofill on application sites. A FastAPI backend owns persistence and LLM-backed generation; the MV3 extension is the primary UI and automation client. An optional Streamlit app (`streamlit_app/`) exercises the same HTTP API for manual testing.
 
-# How to run each part
-## Backend (local)
-```bash
-cd backend
-python -m venv venv
-.\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-alembic upgrade head
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+## Stack
+
+**Backend:** Python 3.11, FastAPI, Uvicorn, SQLAlchemy 2, Alembic, Pydantic v2 + pydantic-settings, PyJWT, httpx, boto3, python-docx, google-generativeai, pytest.
+
+**Chrome extension:** TypeScript (strict), React 19, Vite 6, Tailwind CSS 3 + PostCSS, Zustand, lucide-react, `@types/chrome`, MV3 service worker + side panel + content scripts.
+
+**Streamlit client:** streamlit, requests.
+
+**Build:** `chrome-extension`: `tsc` + Vite (sidepanel + service worker bundles) + separate Vite config for content IIFE → `dist/content/content.js`.
+
+## Repo tree (where to edit)
+
+```
+backend/app/
+  main.py                 # FastAPI app, CORS + chrome-extension middleware, router mounts
+  core/                   # settings, logging, security, deps
+  db/                     # engine, session, Alembic
+  common/                 # shared adapters, errors, resume parsing helpers
+  modules/
+    auth users admin resumes jobs pipeline applications drafts me
+    ai/                   # LLM providers, prompts, orchestrator — used by pipeline/drafts, no standalone router
+backend/tests/
+streamlit_app/            # app.py + requirements (API smoke / workflow testing)
+chrome-extension/src/
+  background/service-worker.ts
+  content/autofill.ts     # DOM autofill only; content.css
+  sidepanel/
+    App.tsx main.tsx index.html
+    pages/                # workflow screens (default-export *Page components)
+    components/           # layout, cards, chat, etc.
+    hooks/                # useAuth.ts
+    services/api.ts       # fetch client + JWT refresh + X-Session-Id
+    store/index.ts        # Zustand useAppStore
+    utils/                # sectionText, filename helpers
+    workflowNavigation.ts # step rail + back-nav rules
+    resumeLocalCache.ts
+  shared/constants.ts     # API_BASE_URL, USER_APP_URL, STORAGE_KEYS, MSG
+  shared/types.ts
+  shared/autofill-answers.ts
+chrome-extension/tailwind.config.js
+chrome-extension/manifest.json
 ```
 
-## Backend (container)
-```bash
-cd backend
-docker compose up --build
-```
+Skip `node_modules/`, `chrome-extension/dist/`, `backend/venv/`, `.venv/`, build caches.
 
-## Backend (start script)
-```bash
-cd backend
-bash start.sh
-```
+## Rules (hard constraints)
 
-## Chrome extension
-```bash
-cd chrome-extension
-npm install
-npm run build
-```
-`npm run build` runs TypeScript (`tsc`), the sidepanel/service-worker Vite app, then **`vite build --config vite.content.config.ts`**, which emits **`dist/content/content.js`** (IIFE bundle from `src/content/autofill.ts`). Load the **unpacked** extension from `chrome-extension/dist` in Chrome.
+- Do not pass autofill **answer maps** through `runtime.sendMessage`. Flat answers come from `chrome.storage.local` (`AUTOFILL_ANSWERS`), built via `buildAutofillAnswersFromProfile(profile)`; SW also refreshes local answers from `USER_PROFILE` on startup.
+- One-way autofill start: sidepanel sets `AUTOFILL_TRIGGER_TS` in **`chrome.storage.session`** (content listens on the **session** `onChanged` for this key), then may send `BROADCAST_RUN_AUTOFILL`. Upload decisions use **`local`** (`AUTOFILL_UPLOAD_DECISIONS`) — same pattern: no answer payload in messages.
+- Keep upload-blocker gating and user decisions intact before continuing fills.
+- Single source for deploy API URL: `chrome-extension/src/shared/constants.ts` (`API_BASE_URL`, `USER_APP_URL`). Keep backend integration test default in sync when that host changes.
+- Use `STORAGE_KEYS` / `MSG` from `shared/constants.ts` — no ad-hoc storage key strings.
+- UI colors: Tailwind theme `wf.*` and `primary.*` from `chrome-extension/tailwind.config.js` — avoid arbitrary hex classes for product chrome.
+- TypeScript `strict`; avoid `any` unless unavoidable with Chrome APIs — prefer `unknown` + narrowing.
+- Do not add new npm or Python dependencies without explicit approval.
+- Do not resurrect removed “unified autofill engine” layers (dom-runtime, form-model, site-learning, ATS adapter modules, etc.).
+- Backend resume delete: `DELETE /resumes/{id}` returns **204** (no JSON body); extension must handle empty response.
 
-Watch-mode build command used by this repo:
-```bash
-cd chrome-extension
-npm run dev
-```
+## How things connect
 
-## Streamlit app
-```bash
-pip install -r streamlit_app/requirements.txt
-streamlit run streamlit_app/app.py
-```
-The Streamlit client defaults to backend URL `http://localhost:8000`.
+**HTTP:** Extension `sidepanel/services/api.ts` is the only API surface for the panel: `fetch` to `API_BASE_URL`, attaches `Authorization` + `X-Session-Id` from `chrome.storage.local`, retries 401 via `/auth/refresh`. Pages and `useAuth` import `api.ts` directly (no separate hook layer required for every call).
 
-# Tech stack
-## Python / backend
-- Runtime base image: `python:3.11-slim` (from `backend/Dockerfile`).
-- Web/API: `fastapi==0.111.0`, `uvicorn==0.30.1`.
-- Data: `SQLAlchemy==2.0.30`, `alembic==1.13.1`.
-- Validation/settings: `pydantic==2.7.1`, `pydantic-settings==2.2.1`.
-- Auth/network/utilities: `PyJWT>=2.8.0`, `httpx>=0.27.0`, `python-dotenv==1.0.1`, `python-multipart==0.0.9`, `boto3>=1.34.0`.
-- Document processing: `python-docx>=1.1.0`.
-- LLM SDK: `google-generativeai>=0.8.0`.
-- Tests: `pytest>=8.0.0` (see `backend/requirements.txt`).
+**State:** `useAppStore` holds navigation (`PageId`), auth flags, profile, job, resumes, pipeline run, draft, cover letter, autofill progress, `autofillContext`. Workflow chrome (`WorkflowLayout`, `workflowNavigation.ts`) maps `PageId` ↔ step rail and enforces limited back navigation.
 
-Also present at repo root (`requirements.txt`):
-- `fastapi>=0.115.0`, `uvicorn[standard]>=0.32.0`, `sqlalchemy>=2.0.0`, `pydantic>=2.0.0`, `pydantic-settings>=2.0.0`, `python-docx>=1.0.0`, `PyJWT>=2.8.0`, `httpx>=0.27.0`, `alembic>=1.13.0`, `google-generativeai>=0.8.0`, `streamlit>=1.40.0`, `requests>=2.31.0`.
+**Background:** Service worker opens side panel, relays messages, merges/persists `AUTOFILL_PROGRESS`, manages multi-page `AUTOFILL_SESSION` (URL success heuristics, `webNavigation`), rebuilds `AUTOFILL_ANSWERS` from `USER_PROFILE` on startup, calls `chrome.storage.session.setAccessLevel`, may POST application tracking — it does **not** own field-level autofill.
 
-## Streamlit app requirements
-- `streamlit>=1.28.0`
-- `requests>=2.28.0`
+**Content:** `content/autofill.ts` owns scan → match → fill → progress; observes session storage for triggers; respects activation gating, upload blockers, debounced `MutationObserver`, and max runs per activation.
 
-## Chrome extension (`chrome-extension/package.json`)
-- App deps: `react^19.0.0`, `react-dom^19.0.0`, `zustand^5.0.0`, `lucide-react^0.468.0`.
-- Tooling/dev: `typescript^5.6.0`, `vite^6.0.0`, `@vitejs/plugin-react^4.3.0`, `tailwindcss^3.4.17`, `postcss^8.4.49`, `autoprefixer^10.4.20`, `@types/chrome^0.0.287`, `@types/react^19.0.0`, `@types/react-dom^19.0.0`.
+**Backend:** Routers per domain in `modules/*/router.py`, mounted in `main.py`. Session-scoped rows use `X-Session-Id`. LLM logic lives under `modules/ai/` and is invoked from pipeline/drafts services — there is no top-level `/ai` router.
 
-# Code patterns and conventions you observe
-- Backend routing is module-based with `APIRouter(prefix=..., tags=[...])`, mounted centrally in `app/main.py`.
-- Backend dependencies are injected via `Depends(...)`; common dependencies include `get_db`, `get_request_scope`, `get_current_user`, `get_current_user_model`, `get_resume_storage`, and `get_llm_provider`.
-- Session scoping is a core convention: stateful domain queries are scoped by `session_id` (from `X-Session-Id` header), and repository interfaces enforce scoped methods like `get_by_scope`/`list_by_session`.
-- Auth currently supports both JWT and a legacy test token path: JWT access/refresh token creation/validation in `core/security.py`, OAuth/dev login in `modules/auth/router.py`, and fallback test-token compatibility in auth deps.
-- Error handling pattern: routers raise `HTTPException` (including `not_found(...)` helper usage) and serialize ORM objects through Pydantic response schemas.
-- Resume/draft flow convention: resume is parsed to canonical JSON at upload, draft sections are generated from that JSON, section edits are tracked separately, and `apply-all` reconstructs a `.docx` while preserving formatting.
-- Extension communication uses a shared message contract in `src/shared/constants.ts` (`MSG` keys).
-- Extension auth/session storage convention: `access_token`, `refresh_token`, and `session_id` are stored in `chrome.storage.local`; API client attaches `Authorization` and `X-Session-Id` and retries 401 via `/auth/refresh`.
-- Resume delete (`DELETE /resumes/{id}?force=true`): server clears linked draft rows, pipeline runs, and **nulls `applications.resume_id`** for that session so FK-safe deletes work when job-tracking rows reference the resume. **`DELETE` returns 204 No Content** (not 200).
-- Extension resume UI: after delete or upload, **keyword scoring** (`POST /resumes/score`) is treated as best-effort so a scoring failure does not look like delete/upload failure.
-- Autofill answer-source convention: sidepanel writes flat answer map to `chrome.storage.session[autofill_answers]` at login/profile save (via `buildAutofillAnswersFromProfile`), and content script reads it directly.
-- Autofill trigger convention: sidepanel **writes** `chrome.storage.session[autofill_trigger_ts]` (timestamp, via `STORAGE_KEYS.AUTOFILL_TRIGGER_TS`) **before** `BROADCAST_RUN_AUTOFILL`. Content scripts use **`chrome.storage.onChanged` on the `session` area as the primary trigger** so every frame/iframe receives the same signal without relying on `runtime.sendMessage` delivery. The background still broadcasts `{ action: "run_autofill" }` to all frames as a **fallback** (handler only runs activation if `!autofillActivated` to avoid double pipeline runs). No answer payload is sent through runtime messages.
-- Autofill execution ownership: `src/content/autofill.ts` owns scan → match → fill → `AUTOFILL_PROGRESS`. **Activation** is gated (`autofillActivated`); the pipeline does **not** run on content script load. **`MutationObserver`** is attached only after a completed run (not on upload-blocker early exits), with **1500ms debounce**, **`blockedOnUpload`** guard while file upload is required, and a **max pipeline runs per user activation** to limit observer spam. Matching uses **`isStrongMatch`** (token/word-boundary-aware) plus **`BLOCKED_MATCH_PAIRS`** for known bad overlaps; scoring prefers exact key matches. Filling includes native `<select>` (with **`interpretAnswerForYesNoSelect`** for yes/no dropdowns using answer key + label context), **custom combobox-style dropdowns** (`fillCustomDropdown` / `fillTextLikeOrCustomDropdown`), and text/checkbox/radio with `input`/`change`/`blur` dispatch.
-- Upload pause gateway convention: content script detects actionable file inputs (resume/cover letter), emits blocked progress (`AUTOFILL_PROGRESS`), and waits for user decision. Sidepanel records decision in `chrome.storage.session[autofill_upload_decisions]` and sends `AUTOFILL_UPLOAD_BLOCKER_DECISION` to resume.
-- Progress/diagnostics convention: content script publishes `AUTOFILL_PROGRESS` and logs; sidepanel reads local progress/timeline state for UI. Background still relays cross-context messages and supports compatibility routes.
-- ATS coverage: generic DOM matching/fill with heuristics (custom combobox containers, yes/no `<select>` interpretation, profile answer aliases); no per-site ATS adapter modules are active.
+**Streamlit:** Standalone script using `requests` against the same REST API (tokens in session state).
 
-# Test commands
-Run backend parser tests from the backend directory:
-```bash
-cd backend
-python -m pytest tests/test_resume_parser.py
-```
+## Critical paths (read before adding code)
 
-Run the full backend test suite (`tests/`):
-```bash
-cd backend
-python -m pytest tests
-```
-Without `RUN_INTEGRATION_TESTS=1` or `API_INTEGRATION_BASE_URL`, `tests/test_api_integration.py` **skips** so default runs stay fast.
+| Concern | Path |
+|--------|------|
+| API base + storage/message contract | `chrome-extension/src/shared/constants.ts` |
+| DTOs / `PageId` / autofill types | `chrome-extension/src/shared/types.ts` |
+| Profile → flat answers for content | `chrome-extension/src/shared/autofill-answers.ts` |
+| Global UI state | `chrome-extension/src/sidepanel/store/index.ts` |
+| HTTP client | `chrome-extension/src/sidepanel/services/api.ts` |
+| Step rail behavior | `chrome-extension/src/sidepanel/workflowNavigation.ts` |
+| Theme tokens | `chrome-extension/tailwind.config.js` |
+| Backend env + CORS | `backend/app/core/config.py` |
+| App wiring | `backend/app/main.py` |
 
-**API integration tests** (hits a real deployed API — e.g. Render). Default base URL when `RUN_INTEGRATION_TESTS=1` matches `chrome-extension/src/shared/constants.ts` (`API_BASE_URL`); override with `API_INTEGRATION_BASE_URL` for local `uvicorn`.
-```bash
-cd backend
-pip install -r requirements.txt
-$env:RUN_INTEGRATION_TESTS="1"   # PowerShell; use export RUN_INTEGRATION_TESTS=1 on bash
-python -m pytest tests/test_api_integration.py -v
-```
-Optional: `API_INTEGRATION_BASE_URL=http://127.0.0.1:8000` to point at a local `uvicorn` without changing the extension default. To force-skip integration, leave both env vars unset or set `RUN_INTEGRATION_TESTS=0` / `false` / `off`.
+## Feature status
 
-No JavaScript/TypeScript test script is defined in `chrome-extension/package.json`.
+- [done] FastAPI: auth (JWT + refresh + Google OAuth path), users, resumes (upload/score/delete), jobs, pipeline, applications, drafts (sections, chat, apply-all docx), `me`.
+- [done] Extension: login → profile → JD → resume (select or temp client-stored upload) → section editor → cover letter → autofill page; content autofill + upload blockers + multi-page session in background.
+- [done] Streamlit API playground.
+- [wip] Side panel workflow chrome / account menu (see `WorkflowLayout`, `AccountMenu`).
+- [planned] Replace manifest OAuth `client_id` placeholder for production Chrome Identity sign-in.
 
-# Architectural decisions
-1. Autofill data path is content-local: no message-based transfer of field mappings or answer payloads from sidepanel/background to content.
-2. `chrome.storage.session` is the source of truth for autofill inputs and trigger state:
-   - `autofill_answers`
-   - `autofill_trigger_ts` (content scripts observe changes via `chrome.storage.onChanged` as the primary autofill start signal)
-   - `autofill_upload_decisions`
-3. Sidepanel acts as a trigger and control surface; content script owns actual DOM mutation and paused/blocked decisions.
-4. Upload blockers are explicit gates for file-upload steps to prevent false progress and to support user-confirmed resume source behavior.
-5. Background remains orchestration/relay infrastructure (auth, message forwarding, track application API writes), not field-level autofill execution.
+## Gotchas
 
-# Rules and non-negotiables
-- Do not reintroduce message-based answer transport for autofill payloads.
-- Do not make content autofill wait on callback acknowledgements from sidepanel/background.
-- Keep one-way trigger semantics: **session storage trigger stamp** (primary) plus optional **`run_autofill`** broadcast (fallback) for reliability across frames.
-- Keep upload-gate handling in place for resume/cover-letter file inputs before continuing fill.
-- Persist user profile updates back into `autofill_answers` so content autofill stays in sync.
+- `chrome.storage.session` is ephemeral (multi-page session + trigger stamp). **`AUTOFILL_ANSWERS` / upload decisions are in `local`** in current code — if `constants.ts` comments still say “session” for those keys, trust the read/write sites in `autofill.ts` / `AutoFillPage.tsx`.
+- SW repopulates local `AUTOFILL_ANSWERS` from `USER_PROFILE` on each startup; auth/init paths must stay consistent.
+- `chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS" })` is required so content scripts can use session area (trigger + `AUTOFILL_SESSION`).
+- Background **merges** incoming `AUTOFILL_PROGRESS` so a late “complete with 0 fields” does not clear an active upload `blocked` state.
+- CORS: custom middleware allows `chrome-extension://` origins; web origins use `ALLOWED_ORIGINS` from settings.
+- `manifest.json` ships `oauth2.client_id` as `YOUR_GOOGLE_OAUTH_CLIENT_ID...` — real deployments must replace it.
+- Cross-origin iframes: autofill only runs where the content script is injected; reliability varies by site.
 
-# Off-limits files
-<!-- Intentionally left blank for manual authoring. -->
+## Naming conventions
 
-# Known issues and decisions made through debugging
-- Deployed backend URL for the extension is the single source in `chrome-extension/src/shared/constants.ts` (`API_BASE_URL`). Keep the integration test default in `backend/tests/test_api_integration.py` (`EXTENSION_API_BASE_URL`) in sync when that host changes.
-- `chrome.storage.session` requires `setAccessLevel({ accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS" })` in the service worker so content scripts can read autofill answers/trigger/decisions.
-- `chrome.storage.session` is ephemeral (cleared on browser restart or extension reload), so autofill answers must be rebuilt from the cached `USER_PROFILE` in `chrome.storage.local` on every service worker startup and sidepanel `initAuthState` call.
-- Dynamic DOMs and highly unstable selectors can cause blocker-decision key churn; decisions are reset on new autofill start to avoid stale gating.
-- Cross-origin iframe restrictions still apply to any extension content script strategy; reliability depends on content script presence in target frame.
-- Field matching uses token/word-boundary-aware logic and explicit blocked pairs (not raw bidirectional substring `includes`), but long-tail custom ATS questions may still miss or need more aliases in `autofill-answers.ts`.
-- Dead code from a prior "unified autofill engine" (dom-runtime, form-model, field-matcher, spa-observer, site-learning, ATS adapters, dom-control-engine) was removed; do not reintroduce those patterns.
+- **Extension files:** Components `PascalCase.tsx` (usually `export default function …`). Pages end with `*Page.tsx`. Hooks: `useThing.ts` with **named** export `useThing`. Utilities: `camelCase.ts`.
+- **Imports:** Use `@/` alias → `src/` (`"@/shared/types"`, etc.).
+- **Python:** modules snake_case; routers `router.py`; Pydantic schemas in `schemas.py`.
+- **CSS:** Tailwind utilities; shared palette under `wf` and `primary` in `tailwind.config.js`.

@@ -4,6 +4,7 @@ import { updateProfile } from "../services/api";
 import { STORAGE_KEYS } from "@/shared/constants";
 import { buildAutofillAnswersFromProfile } from "@/shared/autofill-answers";
 import type { EducationHistoryEntry, UserProfile, WorkExperienceEntry } from "@/shared/types";
+import AccountMenu from "../components/AccountMenu";
 
 const STEPS = ["Basic Info", "Professional", "Education", "Work Auth", "Demographics", "Salary"];
 
@@ -208,10 +209,15 @@ export default function ProfileSetupPage() {
     <div className="flex flex-col h-screen bg-wf-bg text-wf-text">
       {/* Header */}
       <div className="px-4 pt-4 pb-2 border-b border-wf-border">
-        <h1 className="text-lg font-bold text-wf-text">Complete your profile</h1>
-        <p className="text-xs text-wf-muted mt-1">
-          This info will be used to auto-fill job applications.
-        </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-lg font-bold text-wf-text">Complete your profile</h1>
+            <p className="text-xs text-wf-muted mt-1">
+              This info will be used to auto-fill job applications.
+            </p>
+          </div>
+          <AccountMenu />
+        </div>
         {/* Step indicator */}
         <div className="flex gap-1 mt-3">
           {STEPS.map((s, i) => (

@@ -26,7 +26,7 @@ from app.modules.resumes.scoring import score_resume_against_jd
 
 logger = logging.getLogger(__name__)
 
-MAX_RESUMES_PER_SESSION = 2
+MAX_RESUMES_PER_SESSION = 7
 
 router = APIRouter(prefix="/resumes", tags=["resumes"])
 

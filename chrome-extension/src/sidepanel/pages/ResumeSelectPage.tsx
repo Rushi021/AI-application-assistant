@@ -12,6 +12,7 @@ import {
 import ResumeCard from "../components/ResumeCard";
 import WorkflowLayout from "../components/WorkflowLayout";
 import { forgetResumeFile, rememberResumeFile } from "../resumeLocalCache";
+import { MAX_RESUMES_PER_SESSION } from "@/shared/constants";
 
 function formatApiError(err: unknown, fallback: string): string {
   if (err instanceof ApiError) {
@@ -68,7 +69,6 @@ export default function ResumeSelectPage() {
   const [instructions, setInstructions] = useState("");
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const fileInputRef2 = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     (async () => {
@@ -119,7 +119,6 @@ export default function ResumeSelectPage() {
     } finally {
       setUploading(false);
       fileInputRef.current!.value = "";
-      fileInputRef2.current!.value = "";
     }
   };
 
@@ -300,7 +299,7 @@ export default function ResumeSelectPage() {
               >
                 ← Back
               </button>
-              {resumes.length < 2 && (
+              {resumes.length < MAX_RESUMES_PER_SESSION && (
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
@@ -313,13 +312,6 @@ export default function ResumeSelectPage() {
             </div>
             <input
               ref={fileInputRef}
-              type="file"
-              accept=".docx,.doc,.pdf"
-              onChange={handleUpload}
-              className="hidden"
-            />
-            <input
-              ref={fileInputRef2}
               type="file"
               accept=".docx,.doc,.pdf"
               onChange={handleUpload}
@@ -392,19 +384,7 @@ export default function ResumeSelectPage() {
         </div>
       ) : (
         <div className="flex-1 overflow-y-auto px-4 py-2 space-y-3">
-          {resumes[0] ? (
-            <ResumeCard
-              key={resumes[0].id}
-              resume={resumes[0]}
-              score={resumeScores.find((s) => s.resume_id === resumes[0].id)}
-              selected={selectedResumeId === resumes[0].id}
-              onSelect={() => setSelectedResumeId(resumes[0].id)}
-              onUse={() => handleUse(resumes[0].id)}
-              onTailor={() => handleTailorClick(resumes[0].id)}
-              onRemove={() => handleRemove(resumes[0].id)}
-              tailoring={tailoring}
-            />
-          ) : (
+          {resumes.length === 0 ? (
             <button
               type="button"
               onClick={() => !uploading && fileInputRef.current?.click()}
@@ -420,38 +400,42 @@ export default function ResumeSelectPage() {
               </span>
               <p className="text-sm text-wf-muted">Upload resume (.docx, .pdf)</p>
             </button>
+          ) : (
+            <>
+              {resumes.map((r) => (
+                <ResumeCard
+                  key={r.id}
+                  resume={r}
+                  score={resumeScores.find((s) => s.resume_id === r.id)}
+                  selected={selectedResumeId === r.id}
+                  onSelect={() => setSelectedResumeId(r.id)}
+                  onUse={() => handleUse(r.id)}
+                  onTailor={() => handleTailorClick(r.id)}
+                  onRemove={() => handleRemove(r.id)}
+                  tailoring={tailoring}
+                />
+              ))}
+              {resumes.length < MAX_RESUMES_PER_SESSION && (
+                <button
+                  type="button"
+                  onClick={() => !uploading && fileInputRef.current?.click()}
+                  disabled={uploading}
+                  className={`w-full flex flex-col items-center justify-center py-6 rounded-xl border-2 border-dashed transition-colors ${
+                    uploading
+                      ? "border-wf-border bg-wf-surface/50 cursor-not-allowed opacity-60"
+                      : "border-wf-borderBright hover:border-primary-500/60 bg-wf-surface/40 hover:bg-wf-surface cursor-pointer"
+                  }`}
+                >
+                  <span className="text-2xl mb-1" aria-hidden>
+                    +
+                  </span>
+                  <p className="text-sm text-wf-muted">
+                    Upload another resume (max {MAX_RESUMES_PER_SESSION})
+                  </p>
+                </button>
+              )}
+            </>
           )}
-
-          {resumes.length >= 1 &&
-            (resumes[1] ? (
-              <ResumeCard
-                key={resumes[1].id}
-                resume={resumes[1]}
-                score={resumeScores.find((s) => s.resume_id === resumes[1].id)}
-                selected={selectedResumeId === resumes[1].id}
-                onSelect={() => setSelectedResumeId(resumes[1].id)}
-                onUse={() => handleUse(resumes[1].id)}
-                onTailor={() => handleTailorClick(resumes[1].id)}
-                onRemove={() => handleRemove(resumes[1].id)}
-                tailoring={tailoring}
-              />
-            ) : (
-              <button
-                type="button"
-                onClick={() => !uploading && fileInputRef2.current?.click()}
-                disabled={uploading}
-                className={`w-full flex flex-col items-center justify-center py-6 rounded-xl border-2 border-dashed transition-colors ${
-                  uploading
-                    ? "border-wf-border bg-wf-surface/50 cursor-not-allowed opacity-60"
-                    : "border-wf-borderBright hover:border-primary-500/60 bg-wf-surface/40 hover:bg-wf-surface cursor-pointer"
-                }`}
-              >
-                <span className="text-2xl mb-1" aria-hidden>
-                  +
-                </span>
-                <p className="text-sm text-wf-muted">Upload another resume (max 2)</p>
-              </button>
-            ))}
         </div>
       )}
     </WorkflowLayout>

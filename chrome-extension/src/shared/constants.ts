@@ -1,5 +1,10 @@
 /** Backend API base URL. Change in production. */
 export const API_BASE_URL = "https://ai-job-assistant-api-a3c1.onrender.com";
+/** User-facing web app URL */
+export const USER_APP_URL = "https://ai-job-assistant-app.onrender.com";
+
+/** Must match backend `MAX_RESUMES_PER_SESSION` (resumes router). */
+export const MAX_RESUMES_PER_SESSION = 7;
 
 /** Chrome storage keys */
 export const STORAGE_KEYS = {

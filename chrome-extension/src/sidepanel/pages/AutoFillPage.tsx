@@ -4,6 +4,7 @@ import { deleteResume } from "../services/api";
 import { MSG, STORAGE_KEYS } from "@/shared/constants";
 import type { AutofillProgress, AutofillSession, FileUploadBlockerDecision, FormBlocker, UserProfile } from "@/shared/types";
 import WorkflowLayout from "../components/WorkflowLayout";
+import AccountMenu from "../components/AccountMenu";
 import {
   WORKFLOW_STEPS,
   canNavigateToWorkflowStep,
@@ -724,7 +725,9 @@ export default function AutoFillPage() {
             </div>
             <span className="text-sm font-bold text-[#f5f5f5] truncate">AI Job Assistant</span>
           </div>
-          <div className="flex items-center gap-3.5 shrink-0 text-[#444444]" aria-hidden>
+          <div className="flex items-center gap-3 shrink-0">
+            <AccountMenu />
+            <div className="flex items-center gap-3.5 text-[#444444]" aria-hidden>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <title>Location</title>
               <path d="M12 2a5 5 0 0 1 5 5c0 5-5 11-5 11S7 12 7 7a5 5 0 0 1 5-5z" />
@@ -733,6 +736,7 @@ export default function AutoFillPage() {
               <title>Close</title>
               <path d="M18 6L6 18M6 6l12 12" />
             </svg>
+            </div>
           </div>
         </div>
 
