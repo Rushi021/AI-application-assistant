@@ -5,8 +5,8 @@ wired to the same FastAPI backend as the Chrome extension.
 
 from __future__ import annotations
 
-import json
 import os
+import uuid
 from datetime import datetime
 from html import escape
 from typing import Any
@@ -91,6 +91,7 @@ def clear_auth_state() -> None:
     st.session_state["access_token"] = None
     st.session_state["refresh_token"] = None
     st.session_state["profile"] = None
+    st.session_state.pop("session_id", None)
     for k in list(st.session_state.keys()):
         if (
             k.startswith("pf_")
@@ -107,7 +108,11 @@ def clear_auth_state() -> None:
 
 
 def auth_headers_json() -> dict[str, str]:
+    """Include X-Session-Id for routes that use get_request_scope (/resumes, pipeline, etc.)."""
     headers: dict[str, str] = {"Content-Type": "application/json"}
+    sid = st.session_state.get("session_id")
+    if sid:
+        headers["X-Session-Id"] = sid
     if st.session_state.get("access_token"):
         headers["Authorization"] = f"Bearer {st.session_state['access_token']}"
     return headers
@@ -115,9 +120,18 @@ def auth_headers_json() -> dict[str, str]:
 
 def auth_headers_bare() -> dict[str, str]:
     headers: dict[str, str] = {}
+    sid = st.session_state.get("session_id")
+    if sid:
+        headers["X-Session-Id"] = sid
     if st.session_state.get("access_token"):
         headers["Authorization"] = f"Bearer {st.session_state['access_token']}"
     return headers
+
+
+def ensure_session_id() -> None:
+    """Backend requires a UUID in X-Session-Id for session-scoped APIs (e.g. GET /resumes)."""
+    if st.session_state.get("access_token") and not st.session_state.get("session_id"):
+        st.session_state["session_id"] = str(uuid.uuid4())
 
 
 def refresh_access_token(backend_url: str) -> bool:
@@ -214,6 +228,7 @@ def exchange_web_login_code(backend_url: str, code: str) -> bool:
     payload = response.json()
     st.session_state["access_token"] = payload.get("access_token")
     st.session_state["refresh_token"] = payload.get("refresh_token")
+    st.session_state["session_id"] = str(uuid.uuid4())
     st.query_params.clear()
     return True
 
@@ -635,12 +650,51 @@ def inject_styles() -> None:
   }
   .muted { color: #a1a1aa; font-size: 13px; }
   .dim { color: #52525b; font-size: 11px; }
-  input, textarea, select {
-    background: #18181b !important; border-color: #27272a !important; color: #fafafa !important;
-  }
-  input:focus, textarea:focus, [data-baseweb="select"] > div {
+
+  /* Unified field chrome: thin border, no harsh white rings (Base Web / Streamlit defaults). */
+  [data-testid="stTextInput"] input,
+  [data-testid="stNumberInput"] input {
+    background: #18181b !important;
+    color: #fafafa !important;
+    border: 1px solid #27272a !important;
+    border-radius: 10px !important;
+    box-shadow: none !important;
     outline: none !important;
   }
+  [data-testid="stTextInput"] input:focus,
+  [data-testid="stNumberInput"] input:focus {
+    border-color: rgba(34, 197, 94, 0.55) !important;
+    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.12) !important;
+    outline: none !important;
+  }
+  [data-testid="stTextArea"] textarea {
+    background: #18181b !important;
+    color: #fafafa !important;
+    border: 1px solid #27272a !important;
+    border-radius: 10px !important;
+    box-shadow: none !important;
+  }
+  [data-testid="stTextArea"] textarea:focus {
+    border-color: rgba(34, 197, 94, 0.55) !important;
+    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.12) !important;
+    outline: none !important;
+  }
+
+  [data-testid="stSelectbox"] [data-baseweb="select"] > div {
+    background-color: #18181b !important;
+    border: 1px solid #27272a !important;
+    border-radius: 10px !important;
+    box-shadow: none !important;
+    min-height: 2.5rem !important;
+  }
+  [data-testid="stSelectbox"] [data-baseweb="select"] > div:focus-within {
+    border-color: rgba(34, 197, 94, 0.55) !important;
+    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.12) !important;
+  }
+  [data-testid="stSelectbox"] [data-baseweb="select"] svg {
+    fill: #71717a !important;
+  }
+
   [data-testid="stExpander"] details {
     background: #0f0f12 !important;
     border: 1px solid #1c1c22 !important;
@@ -656,10 +710,6 @@ def inject_styles() -> None:
     color: #22c55e !important; font-weight: 700 !important;
     border-bottom: 2px solid #22c55e !important;
   }
-  div[data-testid="stVerticalBlock"] [data-testid="stSelectbox"] > div > div {
-    border-radius: 20px !important;
-    min-height: 2rem !important;
-  }
   button[kind="primary"] {
     background: linear-gradient(135deg, #22c55e, #16a34a) !important;
     color: #fff !important;
@@ -669,9 +719,8 @@ def inject_styles() -> None:
   button[kind="secondary"] {
     background: transparent !important;
     color: #a1a1aa !important;
-    border: 1px solid transparent !important;
+    border: 1px solid #27272a !important;
   }
-  .nav-active button { background: rgba(34,197,94,0.08) !important; color: #22c55e !important; border: 1px solid rgba(34,197,94,0.15) !important; }
 </style>
 """,
         unsafe_allow_html=True,
@@ -993,8 +1042,6 @@ def render_profile_form(backend_url: str, profile: dict[str, Any]) -> None:
 
 
 def render_resume_page(backend_url: str) -> None:
-    st.caption(f"Manage your uploaded resumes. Upload up to {MAX_RESUMES}.")
-
     r = api_request(backend_url, "/resumes")
     if not r.ok:
         st.error(f"Failed to list resumes: {r.text}")
@@ -1225,6 +1272,8 @@ def main() -> None:
     if not st.session_state.get("access_token"):
         render_login(backend_url, app_url)
         return
+
+    ensure_session_id()
 
     if st.session_state.get("profile") is None:
         st.session_state["profile"] = fetch_profile(backend_url)
