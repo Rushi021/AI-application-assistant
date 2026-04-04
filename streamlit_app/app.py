@@ -620,111 +620,426 @@ def inject_styles() -> None:
     st.markdown(
         """
 <style>
-  .stApp [data-testid="stAppViewContainer"] {
-    background: #09090b;
-    color: #fafafa;
-  }
-  .stApp [data-testid="stHeader"] { background: #09090b; }
-  .stMarkdown, .stText, label { color: #e4e4e7 !important; }
-  div[data-testid="stVerticalBlock"] > div { gap: 0.4rem; }
-  .nav-wrap { background: #0f0f12; border: 1px solid #1c1c22; border-radius: 12px; padding: 12px; margin-bottom: 8px; }
-  .nav-title { font-size: 9px; letter-spacing: 0.1em; color: #52525b; font-weight: 700; margin-bottom: 8px; }
-  .stat-card {
-    background: #0f0f12; border: 1px solid #1c1c22; border-radius: 13px; padding: 18px 16px;
-    position: relative; overflow: hidden;
-  }
-  .stat-card .bar { position: absolute; top: 0; left: 0; right: 0; height: 2px; opacity: 0.6; border-radius: 13px 13px 0 0; }
-  .stat-card .num { font-size: 28px; font-weight: 800; line-height: 1; }
-  .stat-card .lbl { font-size: 11px; color: #52525b; font-weight: 600; letter-spacing: 0.04em; margin-top: 6px; text-transform: uppercase; }
-  .app-row {
-    background: #0f0f12; border: 1px solid #1c1c22; border-radius: 12px; padding: 12px 16px;
-    margin-bottom: 8px; transition: border-color 0.15s;
-  }
-  .app-row:hover { border-color: #27272a; }
-  .eeo-q { font-size: 13px; color: #a1a1aa; margin: 0; padding: 10px 0 6px 0; line-height: 1.4; }
-  .eeo-row-hr { border: none; border-top: 1px solid #1c1c22; margin: 0 0 4px 0; }
-  .logo-pill {
-    width: 32px; height: 32px; border-radius: 10px;
-    background: linear-gradient(135deg, #22c55e, #16a34a);
-    display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0;
-  }
-  .muted { color: #a1a1aa; font-size: 13px; }
-  .dim { color: #52525b; font-size: 11px; }
+/* ══════════════════════════════════════════════════════════════
+   0. ROOT + GLOBAL DARK MODE
+   ══════════════════════════════════════════════════════════════ */
+:root { color-scheme: dark !important; }
 
-  /* Unified field chrome: thin border, no harsh white rings (Base Web / Streamlit defaults). */
-  [data-testid="stTextInput"] input,
-  [data-testid="stNumberInput"] input {
-    background: #18181b !important;
+.stApp,
+.stApp > header,
+.main .block-container,
+section[data-testid="stMain"],
+div[data-testid="stAppViewBlockContainer"],
+.stMainBlockContainer,
+.stApp [data-testid="stAppViewContainer"] {
+    background-color: #09090b !important;
     color: #fafafa !important;
-    border: 1px solid #27272a !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   1. KILL WHITE TOP BAR + STREAMLIT CHROME
+   ══════════════════════════════════════════════════════════════ */
+header[data-testid="stHeader"],
+.stApp > header,
+[data-testid="stToolbar"] {
+    background-color: #09090b !important;
+    border-bottom: none !important;
+}
+[data-testid="stDecoration"],
+.stDeployButton {
+    display: none !important;
+}
+#MainMenu, footer { visibility: hidden !important; }
+
+/* ══════════════════════════════════════════════════════════════
+   2. TEXT INPUTS — ultra-aggressive selectors
+   Every layer of BaseWeb's input wrapper must be hit.
+   ══════════════════════════════════════════════════════════════ */
+
+/* Outer wrapper */
+div[data-baseweb="input"] {
+    background-color: #111114 !important;
+    border: 1px solid rgba(255,255,255,0.06) !important;
+    border-radius: 10px !important;
+    box-shadow: none !important;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+}
+/* Inner div that BaseWeb nests */
+div[data-baseweb="input"] > div {
+    background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+/* The actual <input> element */
+div[data-baseweb="input"] input,
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input {
+    background-color: transparent !important;
+    color: #e4e4e7 !important;
+    border: none !important;
+    box-shadow: none !important;
+    outline: none !important;
+    caret-color: #22c55e !important;
+    font-size: 14px !important;
+}
+/* Hover state — subtle border lift */
+div[data-baseweb="input"]:hover {
+    border-color: rgba(255,255,255,0.12) !important;
+}
+/* Focus state — green glow */
+div[data-baseweb="input"]:focus-within {
+    border-color: rgba(34,197,94,0.5) !important;
+    box-shadow: 0 0 0 3px rgba(34,197,94,0.08) !important;
+}
+/* Placeholder */
+div[data-baseweb="input"] input::placeholder {
+    color: #3f3f46 !important;
+}
+/* Autofill override */
+input:-webkit-autofill,
+input:-webkit-autofill:focus {
+    -webkit-box-shadow: 0 0 0 30px #111114 inset !important;
+    -webkit-text-fill-color: #e4e4e7 !important;
+    transition: background-color 5000s ease-in-out 0s !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   3. TEXTAREA
+   ══════════════════════════════════════════════════════════════ */
+div[data-baseweb="textarea"],
+[data-testid="stTextArea"] textarea {
+    background-color: #111114 !important;
+    color: #e4e4e7 !important;
+    border: 1px solid rgba(255,255,255,0.06) !important;
     border-radius: 10px !important;
     box-shadow: none !important;
     outline: none !important;
-  }
-  [data-testid="stTextInput"] input:focus,
-  [data-testid="stNumberInput"] input:focus {
-    border-color: rgba(34, 197, 94, 0.55) !important;
-    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.12) !important;
-    outline: none !important;
-  }
-  [data-testid="stTextArea"] textarea {
-    background: #18181b !important;
-    color: #fafafa !important;
-    border: 1px solid #27272a !important;
-    border-radius: 10px !important;
-    box-shadow: none !important;
-  }
-  [data-testid="stTextArea"] textarea:focus {
-    border-color: rgba(34, 197, 94, 0.55) !important;
-    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.12) !important;
-    outline: none !important;
-  }
+    caret-color: #22c55e !important;
+}
+div[data-baseweb="textarea"]:hover,
+[data-testid="stTextArea"] textarea:hover {
+    border-color: rgba(255,255,255,0.12) !important;
+}
+div[data-baseweb="textarea"]:focus-within,
+[data-testid="stTextArea"] textarea:focus {
+    border-color: rgba(34,197,94,0.5) !important;
+    box-shadow: 0 0 0 3px rgba(34,197,94,0.08) !important;
+}
 
-  [data-testid="stSelectbox"] [data-baseweb="select"] > div {
-    background-color: #18181b !important;
-    border: 1px solid #27272a !important;
+/* ══════════════════════════════════════════════════════════════
+   4. SELECT / DROPDOWN
+   ══════════════════════════════════════════════════════════════ */
+[data-testid="stSelectbox"] [data-baseweb="select"] > div,
+div[data-baseweb="select"] > div {
+    background-color: #111114 !important;
+    border: 1px solid rgba(255,255,255,0.06) !important;
     border-radius: 10px !important;
     box-shadow: none !important;
     min-height: 2.5rem !important;
-  }
-  [data-testid="stSelectbox"] [data-baseweb="select"] > div:focus-within {
-    border-color: rgba(34, 197, 94, 0.55) !important;
-    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.12) !important;
-  }
-  [data-testid="stSelectbox"] [data-baseweb="select"] svg {
-    fill: #71717a !important;
-  }
+    color: #e4e4e7 !important;
+    transition: border-color 0.2s ease !important;
+}
+[data-testid="stSelectbox"] [data-baseweb="select"] > div:hover,
+div[data-baseweb="select"] > div:hover {
+    border-color: rgba(255,255,255,0.12) !important;
+}
+[data-testid="stSelectbox"] [data-baseweb="select"] > div:focus-within,
+div[data-baseweb="select"] > div:focus-within {
+    border-color: rgba(34,197,94,0.5) !important;
+    box-shadow: 0 0 0 3px rgba(34,197,94,0.08) !important;
+}
+/* Text color inside select */
+[data-testid="stSelectbox"] [data-baseweb="select"] span,
+div[data-baseweb="select"] span,
+.stSelectbox div[role="combobox"],
+.stSelectbox div[role="combobox"] * {
+    color: #e4e4e7 !important;
+}
+/* Arrow icon */
+[data-testid="stSelectbox"] svg,
+div[data-baseweb="select"] svg {
+    fill: #3f3f46 !important;
+}
+/* Dropdown popover menu */
+[data-baseweb="popover"],
+[data-baseweb="popover"] > div,
+ul[role="listbox"],
+div[data-baseweb="menu"] {
+    background-color: #111114 !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
+    border-radius: 10px !important;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5) !important;
+}
+ul[role="listbox"] li {
+    color: #a1a1aa !important;
+    background: transparent !important;
+}
+ul[role="listbox"] li:hover {
+    background-color: rgba(255,255,255,0.04) !important;
+    color: #e4e4e7 !important;
+}
+ul[role="listbox"] li[aria-selected="true"] {
+    background-color: rgba(34,197,94,0.1) !important;
+    color: #22c55e !important;
+}
 
-  [data-testid="stExpander"] details {
-    background: #0f0f12 !important;
-    border: 1px solid #1c1c22 !important;
-    border-radius: 12px !important;
-  }
-  [data-testid="stExpander"] summary {
-    font-weight: 600 !important;
+/* ══════════════════════════════════════════════════════════════
+   5. INPUT LABELS — softer, not bright white
+   ══════════════════════════════════════════════════════════════ */
+.stMarkdown, .stText, label,
+[data-testid="stWidgetLabel"] label,
+[data-testid="stWidgetLabel"] p {
+    color: #a1a1aa !important;
     font-size: 13px !important;
-  }
-  .stTabs [data-baseweb="tab-list"] { gap: 0 !important; border-bottom: 1px solid #1c1c22 !important; }
-  .stTabs [data-baseweb="tab"] { color: #52525b !important; font-weight: 500 !important; padding: 10px 20px !important; }
-  .stTabs [aria-selected="true"] {
-    color: #22c55e !important; font-weight: 700 !important;
-    border-bottom: 2px solid #22c55e !important;
-  }
-  button[kind="primary"] {
-    background: linear-gradient(135deg, #22c55e, #16a34a) !important;
+}
+/* Bold labels inside markdown (e.g. "Email (from Google)") */
+.stMarkdown b, .stMarkdown strong {
+    color: #d4d4d8 !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   6. EXPANDER — smooth dark cards
+   ══════════════════════════════════════════════════════════════ */
+[data-testid="stExpander"] details {
+    background: #0c0c0f !important;
+    border: 1px solid rgba(255,255,255,0.05) !important;
+    border-radius: 12px !important;
+    overflow: hidden !important;
+}
+[data-testid="stExpander"] details[open] {
+    border-color: rgba(255,255,255,0.08) !important;
+}
+[data-testid="stExpander"] summary {
+    font-weight: 600 !important;
+    font-size: 14px !important;
+    color: #e4e4e7 !important;
+    padding: 14px 16px !important;
+}
+[data-testid="stExpander"] summary:hover {
+    background: rgba(255,255,255,0.02) !important;
+}
+/* Expander content area */
+[data-testid="stExpander"] details > div {
+    border-top: 1px solid rgba(255,255,255,0.04) !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   7. BORDERED CONTAINERS (Experience/School cards)
+   ══════════════════════════════════════════════════════════════ */
+div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] {
+    border: 1px solid rgba(255,255,255,0.05) !important;
+    border-radius: 10px !important;
+    background: rgba(255,255,255,0.015) !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   8. BUTTONS
+   ══════════════════════════════════════════════════════════════ */
+button[kind="primary"],
+div[data-testid="stFormSubmitButton"] button {
+    background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%) !important;
     color: #fff !important;
     border: none !important;
-    box-shadow: 0 4px 14px rgba(34, 197, 94, 0.25) !important;
-  }
-  button[kind="secondary"] {
+    border-radius: 10px !important;
+    font-weight: 700 !important;
+    box-shadow: 0 4px 14px rgba(34,197,94,0.2) !important;
+    transition: box-shadow 0.2s ease !important;
+}
+button[kind="primary"]:hover {
+    box-shadow: 0 6px 20px rgba(34,197,94,0.35) !important;
+}
+button[kind="secondary"],
+.stButton > button {
     background: transparent !important;
     color: #a1a1aa !important;
-    border: 1px solid #27272a !important;
-  }
+    border: 1px solid rgba(255,255,255,0.08) !important;
+    border-radius: 10px !important;
+    transition: all 0.15s ease !important;
+}
+button[kind="secondary"]:hover,
+.stButton > button:hover {
+    border-color: rgba(34,197,94,0.4) !important;
+    color: #22c55e !important;
+    background: rgba(34,197,94,0.04) !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   9. TABS
+   ══════════════════════════════════════════════════════════════ */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 0 !important;
+    border-bottom: 1px solid rgba(255,255,255,0.06) !important;
+    background: transparent !important;
+}
+.stTabs [data-baseweb="tab"] {
+    color: #52525b !important;
+    font-weight: 500 !important;
+    padding: 10px 20px !important;
+    background: transparent !important;
+    border: none !important;
+}
+.stTabs [data-baseweb="tab"]:hover {
+    color: #a1a1aa !important;
+    background: rgba(255,255,255,0.02) !important;
+}
+.stTabs [aria-selected="true"] {
+    color: #22c55e !important;
+    font-weight: 700 !important;
+    border-bottom: 2px solid #22c55e !important;
+}
+.stTabs [data-baseweb="tab-highlight"] {
+    background-color: #22c55e !important;
+}
+.stTabs [data-baseweb="tab-border"] {
+    display: none !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   10. CHECKBOXES
+   ══════════════════════════════════════════════════════════════ */
+.stCheckbox label,
+.stCheckbox label span,
+.stCheckbox label p {
+    color: #d4d4d8 !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   11. FILE UPLOADER
+   ══════════════════════════════════════════════════════════════ */
+[data-testid="stFileUploader"],
+[data-testid="stFileUploader"] > div,
+[data-testid="stFileUploader"] section {
+    background-color: transparent !important;
+    border: none !important;
+    color: #a1a1aa !important;
+}
+[data-testid="stFileUploader"] button {
+    background: #111114 !important;
+    border: 1px solid rgba(255,255,255,0.08) !important;
+    color: #a1a1aa !important;
+    border-radius: 10px !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   12. FORM CONTAINER
+   ══════════════════════════════════════════════════════════════ */
+[data-testid="stForm"],
+[data-testid="stForm"] > div {
+    background-color: #0c0c0f !important;
+    border: 1px solid rgba(255,255,255,0.05) !important;
+    border-radius: 14px !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   13. ALERTS / INFO / SUCCESS / ERROR
+   ══════════════════════════════════════════════════════════════ */
+[data-testid="stAlert"] > div,
+.stAlert > div {
+    background-color: #0f0f12 !important;
+    border-radius: 10px !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   14. RADIO (sidebar nav)
+   ══════════════════════════════════════════════════════════════ */
+.stRadio label span,
+div[role="radiogroup"] label span {
+    color: #a1a1aa !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   15. SIDEBAR
+   ══════════════════════════════════════════════════════════════ */
+[data-testid="stSidebar"],
+[data-testid="stSidebar"] > div,
+[data-testid="stSidebar"] > div > div {
+    background-color: #0f0f12 !important;
+    border-right: 1px solid rgba(255,255,255,0.04) !important;
+}
+[data-testid="stSidebar"] * { color: #a1a1aa !important; }
+
+/* ══════════════════════════════════════════════════════════════
+   16. DATAFRAME
+   ══════════════════════════════════════════════════════════════ */
+[data-testid="stDataFrame"],
+[data-testid="stDataFrame"] * {
+    background-color: #0f0f12 !important;
+    color: #d4d4d8 !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   17. TYPOGRAPHY
+   ══════════════════════════════════════════════════════════════ */
+h1, h2, h3, h4, h5, h6 { color: #fafafa !important; }
+h5 { font-size: 13px !important; color: #e4e4e7 !important; }
+a { color: #22c55e !important; }
+
+/* ══════════════════════════════════════════════════════════════
+   18. SPACING — reduce Streamlit's oversized vertical gaps
+   ══════════════════════════════════════════════════════════════ */
+div[data-testid="stVerticalBlock"] > div {
+    gap: 0.35rem !important;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   19. SCROLLBAR
+   ══════════════════════════════════════════════════════════════ */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #27272a; border-radius: 3px; }
+
+/* ══════════════════════════════════════════════════════════════
+   20. CUSTOM CLASSES (used in st.markdown)
+   ══════════════════════════════════════════════════════════════ */
+.nav-wrap {
+    background: #0c0c0f;
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 12px;
+    padding: 12px;
+    margin-bottom: 8px;
+}
+.nav-title {
+    font-size: 9px;
+    letter-spacing: 0.1em;
+    color: #52525b;
+    font-weight: 700;
+    margin-bottom: 8px;
+}
+.stat-card {
+    background: #0c0c0f;
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 13px;
+    padding: 18px 16px;
+    position: relative;
+    overflow: hidden;
+}
+.stat-card .bar { position: absolute; top: 0; left: 0; right: 0; height: 2px; opacity: 0.6; border-radius: 13px 13px 0 0; }
+.stat-card .num { font-size: 28px; font-weight: 800; line-height: 1; }
+.stat-card .lbl { font-size: 11px; color: #52525b; font-weight: 600; letter-spacing: 0.04em; margin-top: 6px; text-transform: uppercase; }
+.app-row {
+    background: #0c0c0f;
+    border: 1px solid rgba(255,255,255,0.05);
+    border-radius: 12px;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    transition: border-color 0.15s;
+}
+.app-row:hover { border-color: rgba(255,255,255,0.1); }
+.eeo-q { font-size: 13px; color: #a1a1aa; margin: 0; padding: 10px 0 6px 0; line-height: 1.4; }
+.eeo-row-hr { border: none; border-top: 1px solid rgba(255,255,255,0.04); margin: 0 0 4px 0; }
+.logo-pill {
+    width: 32px; height: 32px; border-radius: 10px;
+    background: linear-gradient(135deg, #22c55e, #16a34a);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; flex-shrink: 0;
+}
+.muted { color: #a1a1aa; font-size: 13px; }
+.dim { color: #52525b; font-size: 11px; }
 </style>
 """,
         unsafe_allow_html=True,
     )
+
 
 
 # ── UI bits ───────────────────────────────────────────────────────────────────
