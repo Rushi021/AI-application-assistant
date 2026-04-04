@@ -83,6 +83,7 @@ def init_state() -> None:
     st.session_state.setdefault("dash_tab", "profile")
     st.session_state.setdefault("apps_search", "")
     st.session_state.setdefault("apps_filter", "all")
+    st.session_state.setdefault("resume_uploader_nonce", 0)
     st.session_state.setdefault("backend_url", os.environ.get("BACKEND_URL", "http://localhost:8000").rstrip("/"))
     st.session_state.setdefault("app_url", os.environ.get("STREAMLIT_APP_URL", "http://localhost:8501").rstrip("/"))
 
@@ -92,6 +93,7 @@ def clear_auth_state() -> None:
     st.session_state["refresh_token"] = None
     st.session_state["profile"] = None
     st.session_state.pop("session_id", None)
+    st.session_state.pop("resume_uploader_nonce", None)
     for k in list(st.session_state.keys()):
         if (
             k.startswith("pf_")
@@ -814,9 +816,22 @@ ul[role="listbox"] li[aria-selected="true"] {
     font-size: 14px !important;
     color: #e4e4e7 !important;
     padding: 14px 16px !important;
+    background: transparent !important;
+    outline: none !important;
+    box-shadow: none !important;
 }
 [data-testid="stExpander"] summary:hover {
-    background: rgba(255,255,255,0.02) !important;
+    background: transparent !important;
+    color: #e4e4e7 !important;
+}
+[data-testid="stExpander"] summary:focus,
+[data-testid="stExpander"] summary:focus-visible,
+[data-testid="stExpander"] summary:active,
+[data-testid="stExpander"] details[open] > summary {
+    background: transparent !important;
+    color: #e4e4e7 !important;
+    outline: none !important;
+    box-shadow: none !important;
 }
 /* Expander content area */
 [data-testid="stExpander"] details > div {
@@ -1397,19 +1412,27 @@ def render_resume_page(backend_url: str) -> None:
             '<p class="dim" style="margin:6px 0 0 0;font-size:10px;">.docx, .doc, or .pdf</p></div>',
             unsafe_allow_html=True,
         )
+        uploader_key = f"resume_uploader_{st.session_state.get('resume_uploader_nonce', 0)}"
         up = st.file_uploader(
             "Browse files",
             type=["docx", "doc", "pdf"],
             label_visibility="collapsed",
+            key=uploader_key,
         )
         if up is not None:
-            data = up.getvalue()
-            with st.spinner("Uploading…"):
-                resp = api_upload_resume(backend_url, data, up.name)
-            if resp.ok:
-                st.rerun()
-            else:
-                st.error(f"Upload failed: {resp.text}")
+            st.caption(f"Ready to upload: {up.name}")
+            if st.button("Upload selected resume", type="primary", key="btn_upload_resume"):
+                data = up.getvalue()
+                with st.spinner("Uploading…"):
+                    resp = api_upload_resume(backend_url, data, up.name)
+                if resp.ok:
+                    # Rotate uploader widget key to clear selected file chip post-upload.
+                    st.session_state["resume_uploader_nonce"] = int(
+                        st.session_state.get("resume_uploader_nonce", 0)
+                    ) + 1
+                    st.rerun()
+                else:
+                    st.error(f"Upload failed: {resp.text}")
     else:
         st.info(f"Maximum of {MAX_RESUMES} resumes reached. Remove one to upload another.")
 
