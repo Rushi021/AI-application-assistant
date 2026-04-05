@@ -414,13 +414,31 @@ async function handleStartAutofill() {
 // Google OAuth via Chrome Identity API
 // ---------------------------------------------------------------------------
 
+/** If the OAuth client ID / extension ID mismatch, `getAuthToken` may never invoke the callback — unblocks the UI. */
+const GET_AUTH_TOKEN_TIMEOUT_MS = 120_000;
+
 async function handleGetAuthToken(): Promise<{ token: string } | { error: string }> {
   return new Promise((resolve) => {
+    let settled = false;
+    const finish = (result: { token: string } | { error: string }) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
+
+    const timeout = setTimeout(() => {
+      finish({
+        error:
+          "Sign-in timed out waiting for Google. Often caused by a wrong OAuth client ID in manifest.json or this extension ID not being registered in Google Cloud Console. Fix the Chrome extension OAuth client, reload the extension, and try again.",
+      });
+    }, GET_AUTH_TOKEN_TIMEOUT_MS);
+
     chrome.identity.getAuthToken({ interactive: true }, (token) => {
+      clearTimeout(timeout);
       if (chrome.runtime.lastError || !token) {
-        resolve({ error: chrome.runtime.lastError?.message ?? "Failed to get token" });
+        finish({ error: chrome.runtime.lastError?.message ?? "Failed to get token" });
       } else {
-        resolve({ token });
+        finish({ token });
       }
     });
   });

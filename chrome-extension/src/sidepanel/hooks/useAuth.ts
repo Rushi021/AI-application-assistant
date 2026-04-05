@@ -85,7 +85,21 @@ export function useAuth() {
     setError(null);
 
     try {
-      const response = await chrome.runtime.sendMessage({ type: MSG.GET_AUTH_TOKEN });
+      // Belt-and-suspenders: if the background never calls sendResponse (e.g. SW bug), don't hang forever.
+      const response = await Promise.race([
+        chrome.runtime.sendMessage({ type: MSG.GET_AUTH_TOKEN }),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () =>
+              reject(
+                new Error(
+                  "The extension did not get a response from Google sign-in in time. Reload the extension, confirm oauth2.client_id in manifest.json matches Google Cloud Console for this extension ID, then try again."
+                )
+              ),
+            125_000
+          )
+        ),
+      ]);
       if (response && typeof response === "object" && "error" in response && response.error) {
         throw new Error(mapChromeIdentityError(String(response.error)));
       }
