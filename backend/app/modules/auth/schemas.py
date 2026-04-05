@@ -41,6 +41,13 @@ class WebBridgeResponse(BaseModel):
     code: str
 
 
+class ExtensionGoogleAuthRequest(BaseModel):
+    """Authorization code from chrome.identity.launchWebAuthFlow, plus the redirect_uri used."""
+
+    code: str
+    redirect_uri: str
+
+
 # ---------------------------------------------------------------------------
 # Dev login (for development without Google OAuth setup)
 # ---------------------------------------------------------------------------

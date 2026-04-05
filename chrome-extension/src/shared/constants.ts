@@ -3,6 +3,14 @@ export const API_BASE_URL = "https://ai-job-assistant-api-a3c1.onrender.com";
 /** User-facing web app URL */
 export const USER_APP_URL = "https://ai-job-assistant-app.onrender.com";
 
+/**
+ * Google Web Application OAuth Client ID — same value as GOOGLE_CLIENT_ID in backend/.env.
+ * Set VITE_GOOGLE_CLIENT_ID in chrome-extension/.env before building.
+ * In Google Cloud Console, add https://<extension-id>.chromiumapp.org/ to the client's
+ * "Authorized redirect URIs". Find the extension ID at chrome://extensions.
+ */
+export const GOOGLE_CLIENT_ID: string = (import.meta.env.VITE_GOOGLE_CLIENT_ID as string | undefined) ?? "";
+
 /** Must match backend `MAX_RESUMES_PER_SESSION` (resumes router). */
 export const MAX_RESUMES_PER_SESSION = 7;
 

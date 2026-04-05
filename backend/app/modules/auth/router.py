@@ -23,6 +23,7 @@ from app.modules.auth.schemas import (
     LoginRequest,
     RefreshTokenRequest,
     TokenResponse,
+    ExtensionGoogleAuthRequest,
     WebBridgeResponse,
     WebExchangeRequest,
 )
@@ -98,6 +99,46 @@ async def google_auth(payload: GoogleAuthRequest, db: Session = Depends(get_db))
         refresh_token=refresh_token,
         is_new_user=False,
     )
+
+
+@router.post("/extension/google", response_model=TokenResponse)
+async def extension_google_auth(payload: ExtensionGoogleAuthRequest, db: Session = Depends(get_db)) -> TokenResponse:
+    """
+    Exchange a Google authorization code (from chrome.identity.launchWebAuthFlow) for app JWT tokens.
+    The backend holds the client_secret and does the server-side code → access_token exchange,
+    matching the same web callback flow and enforcing the same admin whitelist.
+    """
+    settings = get_settings()
+    if not settings.google_client_id.strip() or not settings.google_client_secret.strip():
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Google OAuth not configured on server")
+
+    async with httpx.AsyncClient(timeout=20.0) as client:
+        token_resp = await client.post(
+            GOOGLE_TOKEN_URL,
+            data={
+                "code": payload.code,
+                "client_id": settings.google_client_id,
+                "client_secret": settings.google_client_secret,
+                "redirect_uri": payload.redirect_uri,
+                "grant_type": "authorization_code",
+            },
+        )
+
+    if token_resp.status_code != 200:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Google token exchange failed")
+
+    google_access_token = token_resp.json().get("access_token")
+    if not google_access_token:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Google access token missing")
+
+    google_user = await verify_google_access_token(google_access_token)
+    user = get_active_whitelisted_google_user(db, google_user)
+    if not user:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    access_token = create_access_token(user.id, user.email or user.username)
+    refresh_token = create_refresh_token(user.id)
+    return TokenResponse(access_token=access_token, refresh_token=refresh_token, is_new_user=False)
 
 
 @router.get("/web/google/start")

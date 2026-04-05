@@ -1,38 +1,28 @@
 import { useCallback, useState } from "react";
 import { STORAGE_KEYS, MSG } from "@/shared/constants";
 import { buildAutofillAnswersFromProfile } from "@/shared/autofill-answers";
-import { ApiError, authGoogle, getProfile } from "../services/api";
+import { ApiError, getProfile } from "../services/api";
 import { useAppStore } from "../store";
 
-function mapChromeIdentityError(message: string): string {
-  const m = message.toLowerCase();
-  if (m.includes("did not approve") || m.includes("canceled") || m.includes("cancelled") || m.includes("user closed")) {
-    return "Sign-in was cancelled. Try again and approve access when Google asks.";
-  }
-  if (m.includes("blocked") || m.includes("popup")) {
-    return "The sign-in window was blocked. Allow popups for this extension and try again.";
-  }
-  if (m.includes("network") || m.includes("failed to fetch") || m.includes("internet")) {
-    return "Network error while contacting Google. Check your connection and try again.";
-  }
-  if (m.includes("oauth2") || m.includes("token")) {
-    return `Google sign-in failed: ${message}`;
-  }
-  return message || "Google sign-in failed. Please try again.";
-}
-
 function mapAuthError(err: unknown): string {
+  // Service worker passes { error, status? } but they arrive as plain objects after message passing.
+  // Handle the two known status codes explicitly.
   if (err instanceof ApiError) {
     if (err.status === 403) {
-      return "Access denied. Your email is not activated by an administrator yet. Ask an admin to activate your account.";
+      return "Access denied. Your email is not activated by an administrator yet.";
     }
     if (err.status === 401) {
-      return "Session expired or invalid. Try signing in again.";
+      return "Session expired. Try signing in again.";
     }
     return err.message || `Sign-in failed (${err.status}).`;
   }
   if (err instanceof Error) {
-    return mapChromeIdentityError(err.message);
+    const m = err.message;
+    if (m.includes("Access denied") || m.includes("access denied")) {
+      return "Access denied. Your email is not activated by an administrator yet.";
+    }
+    if (m.includes("not configured")) return m; // surface config errors directly
+    return m || "Sign-in failed. Please try again.";
   }
   return "Sign-in failed. Please try again.";
 }
@@ -42,9 +32,6 @@ export function useAuth() {
   const [error, setError] = useState<string | null>(null);
   const { setAuthenticated, setProfile, setPage } = useAppStore();
 
-  /**
-   * Complete the login flow after receiving JWT tokens from any auth method.
-   */
   const completeLogin = useCallback(
     async (tokens: { access_token: string; refresh_token?: string; is_new_user: boolean }) => {
       await chrome.storage.local.set({
@@ -77,38 +64,36 @@ export function useAuth() {
   );
 
   /**
-   * Sign in with Google via Chrome Identity API.
-   * Requires a valid OAuth2 client_id in manifest.json.
+   * Sign in with Google.
+   * The service worker opens Google's consent screen via chrome.identity.launchWebAuthFlow,
+   * exchanges the auth code with the backend, and returns app JWT tokens directly.
+   * No Google client secret ever touches the extension.
    */
   const signInWithGoogle = useCallback(async () => {
     setLoading(true);
     setError(null);
 
     try {
-      // Belt-and-suspenders: if the background never calls sendResponse (e.g. SW bug), don't hang forever.
-      const response = await Promise.race([
-        chrome.runtime.sendMessage({ type: MSG.GET_AUTH_TOKEN }),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () =>
-              reject(
-                new Error(
-                  "The extension did not get a response from Google sign-in in time. Reload the extension, confirm oauth2.client_id in manifest.json matches Google Cloud Console for this extension ID, then try again."
-                )
-              ),
-            125_000
-          )
-        ),
-      ]);
-      if (response && typeof response === "object" && "error" in response && response.error) {
-        throw new Error(mapChromeIdentityError(String(response.error)));
-      }
-      if (!response || typeof response !== "object" || !("token" in response) || !response.token) {
-        throw new Error("Google sign-in did not return a token. Try again.");
+      const response: { tokens?: { access_token: string; refresh_token?: string; is_new_user: boolean }; error?: string; status?: number } =
+        await chrome.runtime.sendMessage({ type: MSG.GET_AUTH_TOKEN });
+
+      if (!response) {
+        throw new Error("No response from extension background. Try reloading the extension.");
       }
 
-      const tokens = await authGoogle(response.token as string, "access_token");
-      await completeLogin(tokens);
+      if (response.error) {
+        // Surface 403 with admin-specific copy; everything else passes through.
+        if (response.status === 403 || response.error.toLowerCase().includes("access denied")) {
+          throw new ApiError(403, response.error);
+        }
+        throw new Error(response.error);
+      }
+
+      if (!response.tokens?.access_token) {
+        throw new Error("Sign-in did not return valid tokens. Try again.");
+      }
+
+      await completeLogin(response.tokens);
     } catch (err) {
       setError(mapAuthError(err));
     } finally {

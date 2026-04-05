@@ -3,7 +3,7 @@
  * Handles: side panel open, message routing, auth, session management, application tracking.
  */
 
-import { MSG, STORAGE_KEYS, API_BASE_URL } from "@/shared/constants";
+import { MSG, STORAGE_KEYS, API_BASE_URL, GOOGLE_CLIENT_ID } from "@/shared/constants";
 import type { AutofillProgress, AutofillSession, UserProfile } from "@/shared/types";
 import { buildAutofillAnswersFromProfile } from "@/shared/autofill-answers";
 
@@ -181,7 +181,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === MSG.GET_AUTH_TOKEN) {
-    handleGetAuthToken().then(sendResponse).catch((err) => sendResponse({ error: String(err) }));
+    handleSignInWithGoogle().then(sendResponse).catch((err) => sendResponse({ error: String(err) }));
     return true;
   }
 
@@ -411,34 +411,97 @@ async function handleStartAutofill() {
 }
 
 // ---------------------------------------------------------------------------
-// Google OAuth via Chrome Identity API
+// Google OAuth via launchWebAuthFlow (auth-code flow, works without Chrome Web Store listing)
 // ---------------------------------------------------------------------------
 
-/** If the OAuth client ID / extension ID mismatch, `getAuthToken` may never invoke the callback — unblocks the UI. */
-const GET_AUTH_TOKEN_TIMEOUT_MS = 120_000;
+interface AppTokens {
+  access_token: string;
+  refresh_token?: string;
+  is_new_user: boolean;
+}
 
-async function handleGetAuthToken(): Promise<{ token: string } | { error: string }> {
-  return new Promise((resolve) => {
-    let settled = false;
-    const finish = (result: { token: string } | { error: string }) => {
-      if (settled) return;
-      settled = true;
-      resolve(result);
+/**
+ * Full Google sign-in flow:
+ * 1. chrome.identity.launchWebAuthFlow → Google consent screen → auth code
+ * 2. Send auth code to backend POST /auth/extension/google
+ * 3. Backend exchanges code for Google access token, checks whitelist, returns app JWT
+ *
+ * Returns { tokens } on success or { error, status? } on failure.
+ */
+async function handleSignInWithGoogle(): Promise<{ tokens: AppTokens } | { error: string; status?: number }> {
+  if (!GOOGLE_CLIENT_ID) {
+    return {
+      error:
+        "Google OAuth client ID is not configured. " +
+        "Set VITE_GOOGLE_CLIENT_ID in chrome-extension/.env (same value as GOOGLE_CLIENT_ID in backend/.env), rebuild the extension, and reload.",
     };
+  }
 
-    const timeout = setTimeout(() => {
-      finish({
-        error:
-          "Sign-in timed out waiting for Google. Often caused by a wrong OAuth client ID in manifest.json or this extension ID not being registered in Google Cloud Console. Fix the Chrome extension OAuth client, reload the extension, and try again.",
-      });
-    }, GET_AUTH_TOKEN_TIMEOUT_MS);
+  const redirectUri = chrome.identity.getRedirectURL();
 
-    chrome.identity.getAuthToken({ interactive: true }, (token) => {
-      clearTimeout(timeout);
-      if (chrome.runtime.lastError || !token) {
-        finish({ error: chrome.runtime.lastError?.message ?? "Failed to get token" });
-      } else {
-        finish({ token });
+  const authUrl =
+    "https://accounts.google.com/o/oauth2/v2/auth?" +
+    new URLSearchParams({
+      client_id: GOOGLE_CLIENT_ID,
+      redirect_uri: redirectUri,
+      response_type: "code",
+      scope: "openid email profile",
+      access_type: "offline",
+      prompt: "select_account",
+    }).toString();
+
+  return new Promise((resolve) => {
+    chrome.identity.launchWebAuthFlow({ url: authUrl, interactive: true }, async (redirectUrl) => {
+      if (chrome.runtime.lastError || !redirectUrl) {
+        const msg = chrome.runtime.lastError?.message ?? "";
+        // "The user did not approve access." or "cancelled" mean the user closed the popup
+        if (
+          msg.toLowerCase().includes("did not approve") ||
+          msg.toLowerCase().includes("cancel") ||
+          msg.toLowerCase().includes("closed")
+        ) {
+          resolve({ error: "Sign-in was cancelled. Try again and approve access when Google asks." });
+        } else {
+          resolve({ error: msg || "Google sign-in failed. Try again." });
+        }
+        return;
+      }
+
+      try {
+        const url = new URL(redirectUrl);
+        const errorParam = url.searchParams.get("error");
+        if (errorParam) {
+          resolve({ error: `Google sign-in error: ${errorParam}` });
+          return;
+        }
+
+        const code = url.searchParams.get("code");
+        if (!code) {
+          resolve({ error: "Google sign-in did not return an authorization code. Try again." });
+          return;
+        }
+
+        // Exchange authorization code on the backend (backend holds the client_secret)
+        const resp = await fetch(`${API_BASE_URL}/auth/extension/google`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ code, redirect_uri: redirectUri }),
+        });
+
+        if (!resp.ok) {
+          let detail = `Server error (${resp.status})`;
+          try {
+            const body = await resp.json() as { detail?: string };
+            if (body.detail) detail = body.detail;
+          } catch { /* ignore */ }
+          resolve({ error: detail, status: resp.status });
+          return;
+        }
+
+        const tokens = await resp.json() as AppTokens;
+        resolve({ tokens });
+      } catch (err) {
+        resolve({ error: err instanceof Error ? err.message : "Unexpected error during sign-in." });
       }
     });
   });
