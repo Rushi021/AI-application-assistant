@@ -23,7 +23,7 @@ from app.common.errors import not_found
 from app.common.ports import LLMProvider, ResumeStorage
 from app.common.resume_parser import parse_resume_to_json
 from app.core.config import get_settings
-from app.core.deps import get_db, get_llm_provider, get_request_scope, get_resume_storage
+from app.core.deps import get_db, get_llm_provider_for_request, get_request_scope, get_resume_storage
 from app.core.security import RequestScope
 from app.modules.ai.prompts.pipeline import build_cover_letter_prompt
 from app.modules.ai.prompts.section_chat import build_section_chat_prompt
@@ -573,7 +573,7 @@ def chat_section(
     payload: SectionChatRequest,
     scope: RequestScope = Depends(get_request_scope),
     db: Session = Depends(get_db),
-    llm: LLMProvider = Depends(get_llm_provider),
+    llm: LLMProvider = Depends(get_llm_provider_for_request),
 ) -> SectionChatResponse:
     """Per-section chat: user sends instruction, LLM returns revised text."""
     draft_repo = DraftRepo(db)
@@ -763,7 +763,7 @@ def generate_cover_letter(
     payload: GenerateCoverLetterRequest = GenerateCoverLetterRequest(),
     scope: RequestScope = Depends(get_request_scope),
     db: Session = Depends(get_db),
-    llm: LLMProvider = Depends(get_llm_provider),
+    llm: LLMProvider = Depends(get_llm_provider_for_request),
     resume_storage: ResumeStorage = Depends(get_resume_storage),
 ) -> GenerateCoverLetterResponse:
     """

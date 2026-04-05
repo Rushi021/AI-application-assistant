@@ -9,7 +9,7 @@ from app.common.adapters.sqlalchemy_repos import SqlAlchemyPipelineRunRepo, SqlA
 from app.common.errors import not_found
 from app.common.ports import LLMProvider, ResumeStorage
 from app.common.resume_parser import get_full_text, parse_resume_to_json
-from app.core.deps import get_db, get_llm_provider, get_request_scope, get_resume_storage
+from app.core.deps import get_db, get_llm_provider_for_request, get_request_scope, get_resume_storage
 from app.core.security import RequestScope
 from app.modules.ai.orchestrator import run_tailor_only
 from app.modules.pipeline.models import PipelineRun
@@ -68,7 +68,7 @@ def create_run(
     payload: PipelineRunCreate,
     scope: RequestScope = Depends(get_request_scope),
     db: Session = Depends(get_db),
-    llm: LLMProvider = Depends(get_llm_provider),
+    llm: LLMProvider = Depends(get_llm_provider_for_request),
     resume_storage: ResumeStorage = Depends(get_resume_storage),
 ) -> PipelineRunRead:
     resume_repo = SqlAlchemyResumeRepo(db)

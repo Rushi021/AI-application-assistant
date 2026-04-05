@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Generator, Optional
 
 from fastapi import Depends, Header, HTTPException, status
@@ -169,3 +170,74 @@ def get_resume_storage() -> ResumeStorage:
 def get_llm_provider() -> LLMProvider:
     """Return the configured LLM provider (Gemini for now). Swap via config later if needed."""
     return GeminiProvider()
+
+
+def _get_user_api_key_from_profile(user: User | None) -> str | None:
+    if user is None or not user.custom_fields:
+        return None
+    raw = user.custom_fields
+    data: dict[str, object] | None = None
+    if isinstance(raw, str):
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, dict):
+                data = parsed
+        except (json.JSONDecodeError, TypeError):
+            data = None
+    elif isinstance(raw, dict):
+        data = raw
+    if not data:
+        return None
+    for key in ("llm_api_key", "gemini_api_key"):
+        v = data.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()
+    return None
+
+
+def _resolve_user_from_authorization(
+    authorization: str | None,
+    db: Session,
+) -> User | None:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+
+    token = authorization.split(" ", 1)[1].strip()
+    settings = get_settings()
+
+    # Legacy test token support
+    if token == settings.test_token:
+        user = db.query(User).filter(User.username == settings.test_username).first()
+        if not user:
+            user = User(username=settings.test_username)
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+        return user
+
+    try:
+        payload = decode_jwt_token(token)
+        if payload.get("type") != "access":
+            return None
+        user_id = int(payload["sub"])
+    except Exception:
+        return None
+
+    user = db.query(User).filter(User.id == user_id).first()
+    if not user or not user.is_active:
+        return None
+    return user
+
+
+def get_llm_provider_for_request(
+    authorization: str | None = Header(default=None),
+    db: Session = Depends(get_db),
+) -> LLMProvider:
+    """
+    Resolve LLM provider for the request.
+    - Prefer per-user API key from profile custom_fields (llm_api_key / gemini_api_key).
+    - Fall back to server-level GOOGLE_AI_API_KEY/GEMINI_API_KEY.
+    """
+    user = _resolve_user_from_authorization(authorization, db)
+    user_api_key = _get_user_api_key_from_profile(user)
+    return GeminiProvider(api_key=user_api_key)

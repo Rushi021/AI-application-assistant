@@ -1396,37 +1396,50 @@ def render_resume_page(backend_url: str) -> None:
         st.info(f"Maximum of {MAX_RESUMES} resumes reached. Remove one to upload another.")
 
 
-def render_settings_page(backend_url: str, app_url: str) -> None:
+def render_settings_page(backend_url: str, profile: dict[str, Any]) -> None:
     st.markdown(
-        '<p style="font-size:14px;font-weight:700;margin:0 0 14px 0;">Connection</p>',
+        '<p style="font-size:14px;font-weight:700;margin:0 0 6px 0;">AI Model</p>'
+        '<p style="font-size:12px;color:#6B7280;margin:0 0 14px 0;">'
+        "Provide your own Gemini API key for resume tailoring and cover letter generation."
+        "</p>",
         unsafe_allow_html=True,
     )
-    c1, c2 = st.columns(2)
-    with c1:
-        st.text_input("Backend URL", key="backend_url")
-    with c2:
-        st.text_input("App URL (OAuth redirect)", key="app_url")
-    try:
-        health = requests.get(f"{backend_url}/health", timeout=5)
-        if health.ok:
-            st.markdown(
-                '<div style="background:rgba(34,197,94,0.06);border:1px solid rgba(34,197,94,0.15);'
-                'border-radius:8px;padding:8px 12px;font-size:12px;color:#22c55e;font-weight:600;display:inline-flex;'
-                'align-items:center;gap:6px;"><span style="width:6px;height:6px;border-radius:50%;'
-                'background:#22c55e;"></span>Backend reachable</div>',
-                unsafe_allow_html=True,
-            )
+
+    cf = profile.get("custom_fields") or {}
+    if not isinstance(cf, dict):
+        cf = {}
+    existing_key = str(cf.get("llm_api_key") or "").strip()
+    if existing_key:
+        masked = f"••••••••{existing_key[-4:]}" if len(existing_key) >= 4 else "••••"
+        st.caption(f"Saved key: {masked}")
+
+    st.text_input(
+        "LLM API Key",
+        key="settings_llm_api_key",
+        type="password",
+        placeholder="Paste your Gemini API key",
+    )
+    if st.button("Save API key", type="primary", key="btn_save_llm_key"):
+        new_key = (st.session_state.get("settings_llm_api_key") or "").strip()
+        if not new_key:
+            st.warning("Please paste a valid API key.")
+            return
+        payload = {"custom_fields": {**cf, "llm_api_key": new_key}}
+        resp = api_request(backend_url, "/users/me/profile", method="PATCH", json_body=payload)
+        if resp.ok:
+            st.session_state["profile"] = resp.json()
+            st.session_state["settings_llm_api_key"] = ""
+            st.success("API key saved.")
+            st.rerun()
         else:
-            st.error("Backend unhealthy")
-    except requests.RequestException:
-        st.error("Backend unreachable")
+            st.error(f"Failed to save API key: {resp.text}")
 
     st.markdown(
         '<p style="font-size:14px;font-weight:700;margin:24px 0 6px 0;">Account</p>'
         '<p class="dim" style="margin:0 0 14px 0;font-size:12px;">Sign out of your current session.</p>',
         unsafe_allow_html=True,
     )
-    if st.button("Sign out", type="secondary"):
+    if st.button("Sign out", type="secondary", key="btn_settings_signout"):
         clear_auth_state()
         st.rerun()
 
@@ -1738,10 +1751,10 @@ def main() -> None:
         elif page == "settings":
             st.markdown(
                 "<h1 style='font-size:24px;font-weight:800;margin:0 0 4px;'>Settings</h1>"
-                "<p style='font-size:13px;color:#6B7280;margin:0 0 14px;'>Connection and account settings.</p>",
+                "<p style='font-size:13px;color:#6B7280;margin:0 0 14px;'>AI key and account settings.</p>",
                 unsafe_allow_html=True,
             )
-            render_settings_page(backend_url, app_url)
+            render_settings_page(backend_url, profile)
 
 
 if __name__ == "__main__":

@@ -65,9 +65,9 @@ def _describe_block_or_empty(response: object) -> str:
 class GeminiProvider(LLMProvider):
     """LLM provider using Google Gemini via Google AI Studio API key."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, api_key: str | None = None) -> None:
         settings = get_settings()
-        self._api_key = (settings.google_ai_api_key or "").strip()
+        self._api_key = (api_key or settings.google_ai_api_key or "").strip()
         self._model_name = settings.gemini_model
 
     def generate(self, prompt: str, **kwargs: object) -> str:
@@ -76,8 +76,8 @@ class GeminiProvider(LLMProvider):
 
         if not self._api_key or self._api_key in _PLACEHOLDER_KEYS:
             raise RuntimeError(
-                "GOOGLE_AI_API_KEY is missing or still set to the placeholder. "
-                "Set a valid Google AI Studio API key in the environment or .env file."
+                "No valid Gemini API key is configured. "
+                "Set a user API key in Settings or configure GOOGLE_AI_API_KEY/GEMINI_API_KEY on the server."
             )
 
         gen_kwargs: dict[str, object] = dict(kwargs)
