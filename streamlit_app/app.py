@@ -1146,7 +1146,10 @@ def compute_stats(apps: list[dict[str, Any]]) -> dict[str, int]:
 
 def render_login(backend_url: str, app_url: str) -> None:
     st.title("AI Job Application Assistant")
-    st.caption("Sign in with Google. Access is controlled by the admin whitelist.")
+    st.caption(
+        "Preferred: sign in from the Chrome extension first, then open this app from there. "
+        "You can also sign in with Google below. Access is controlled by the admin whitelist."
+    )
 
     query_params = st.query_params
     login_code = query_params.get("code")

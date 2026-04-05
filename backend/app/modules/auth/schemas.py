@@ -35,6 +35,12 @@ class WebExchangeRequest(BaseModel):
     code: str
 
 
+class WebBridgeResponse(BaseModel):
+    """One-time code for exchanging JWT session to web app session (short TTL)."""
+
+    code: str
+
+
 # ---------------------------------------------------------------------------
 # Dev login (for development without Google OAuth setup)
 # ---------------------------------------------------------------------------

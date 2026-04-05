@@ -1,8 +1,41 @@
 import { useCallback, useState } from "react";
 import { STORAGE_KEYS, MSG } from "@/shared/constants";
 import { buildAutofillAnswersFromProfile } from "@/shared/autofill-answers";
-import { authGoogle, devLogin, getProfile } from "../services/api";
+import { ApiError, authGoogle, getProfile } from "../services/api";
 import { useAppStore } from "../store";
+
+function mapChromeIdentityError(message: string): string {
+  const m = message.toLowerCase();
+  if (m.includes("did not approve") || m.includes("canceled") || m.includes("cancelled") || m.includes("user closed")) {
+    return "Sign-in was cancelled. Try again and approve access when Google asks.";
+  }
+  if (m.includes("blocked") || m.includes("popup")) {
+    return "The sign-in window was blocked. Allow popups for this extension and try again.";
+  }
+  if (m.includes("network") || m.includes("failed to fetch") || m.includes("internet")) {
+    return "Network error while contacting Google. Check your connection and try again.";
+  }
+  if (m.includes("oauth2") || m.includes("token")) {
+    return `Google sign-in failed: ${message}`;
+  }
+  return message || "Google sign-in failed. Please try again.";
+}
+
+function mapAuthError(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 403) {
+      return "Access denied. Your email is not activated by an administrator yet. Ask an admin to activate your account.";
+    }
+    if (err.status === 401) {
+      return "Session expired or invalid. Try signing in again.";
+    }
+    return err.message || `Sign-in failed (${err.status}).`;
+  }
+  if (err instanceof Error) {
+    return mapChromeIdentityError(err.message);
+  }
+  return "Sign-in failed. Please try again.";
+}
 
 export function useAuth() {
   const [loading, setLoading] = useState(false);
@@ -14,13 +47,11 @@ export function useAuth() {
    */
   const completeLogin = useCallback(
     async (tokens: { access_token: string; refresh_token?: string; is_new_user: boolean }) => {
-      // Store tokens
       await chrome.storage.local.set({
         [STORAGE_KEYS.ACCESS_TOKEN]: tokens.access_token,
         ...(tokens.refresh_token ? { [STORAGE_KEYS.REFRESH_TOKEN]: tokens.refresh_token } : {}),
       });
 
-      // Ensure session ID exists
       const stored = await chrome.storage.local.get([STORAGE_KEYS.SESSION_ID]);
       if (!stored[STORAGE_KEYS.SESSION_ID]) {
         await chrome.storage.local.set({ [STORAGE_KEYS.SESSION_ID]: crypto.randomUUID() });
@@ -28,7 +59,6 @@ export function useAuth() {
 
       setAuthenticated(true);
 
-      // Fetch profile
       const profile = await getProfile();
       setProfile(profile);
 
@@ -37,7 +67,6 @@ export function useAuth() {
         [STORAGE_KEYS.AUTOFILL_ANSWERS]: buildAutofillAnswersFromProfile(profile),
       });
 
-      // Navigate based on whether user is new
       if (tokens.is_new_user || !profile.full_name) {
         setPage("profile-setup");
       } else {
@@ -56,40 +85,22 @@ export function useAuth() {
     setError(null);
 
     try {
-      // Get Google access token via Chrome Identity API
       const response = await chrome.runtime.sendMessage({ type: MSG.GET_AUTH_TOKEN });
-      if (response.error) throw new Error(response.error);
+      if (response && typeof response === "object" && "error" in response && response.error) {
+        throw new Error(mapChromeIdentityError(String(response.error)));
+      }
+      if (!response || typeof response !== "object" || !("token" in response) || !response.token) {
+        throw new Error("Google sign-in did not return a token. Try again.");
+      }
 
-      // Exchange for our JWT
-      const tokens = await authGoogle(response.token, "access_token");
+      const tokens = await authGoogle(response.token as string, "access_token");
       await completeLogin(tokens);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Sign-in failed");
+      setError(mapAuthError(err));
     } finally {
       setLoading(false);
     }
   }, [completeLogin]);
-
-  /**
-   * Dev login — skip Google OAuth entirely.
-   * Only works when the backend is running in development mode.
-   */
-  const devSignIn = useCallback(
-    async (email: string, fullName: string = "") => {
-      setLoading(true);
-      setError(null);
-
-      try {
-        const tokens = await devLogin(email, fullName);
-        await completeLogin(tokens);
-      } catch (err) {
-        setError(err instanceof Error ? err.message : "Dev login failed. Is the backend running?");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [completeLogin]
-  );
 
   const signOut = useCallback(async () => {
     await chrome.storage.local.remove([
@@ -103,5 +114,5 @@ export function useAuth() {
     setPage("login");
   }, [setAuthenticated, setProfile, setPage]);
 
-  return { signInWithGoogle, devSignIn, signOut, loading, error };
+  return { signInWithGoogle, signOut, loading, error };
 }

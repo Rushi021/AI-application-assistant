@@ -115,13 +115,22 @@ def get_active_whitelisted_google_user(db: Session, google_user: GoogleUser) -> 
     return user
 
 
-def create_web_login_code(db: Session, user_id: int) -> str:
+def create_web_login_code(db: Session, user_id: int, *, ttl_seconds: int | None = None) -> str:
+    """
+    Create a one-time web login code.
+
+    If ``ttl_seconds`` is None, uses ``web_login_code_ttl_seconds`` from settings (web OAuth redirect).
+    If set (e.g. extension→web bridge), TTL is capped at 60 seconds to limit exposure in query strings.
+    """
     settings = get_settings()
+    if ttl_seconds is None:
+        ttl = settings.web_login_code_ttl_seconds
+    else:
+        ttl = min(ttl_seconds, 60)
+
     raw_code = secrets.token_urlsafe(32)
     code_hash = hashlib.sha256(raw_code.encode("utf-8")).hexdigest()
-    expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
-        seconds=settings.web_login_code_ttl_seconds
-    )
+    expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=ttl)
 
     login_code = WebLoginCode(
         code_hash=code_hash,

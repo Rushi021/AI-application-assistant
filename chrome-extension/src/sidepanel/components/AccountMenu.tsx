@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { BarChart3, LogIn, LogOut, Settings, User } from "lucide-react";
 import { USER_APP_URL } from "@/shared/constants";
+import { createWebBridgeCode } from "../services/api";
 import { useAuth } from "../hooks/useAuth";
 import { useAppStore } from "../store";
 
@@ -14,10 +15,14 @@ function getInitials(name: string | null | undefined, email: string | null | und
   return source.slice(0, 2).toUpperCase();
 }
 
+const WEB_OPEN_COOLDOWN_MS = 1500;
+
 export default function AccountMenu() {
   const { isAuthenticated, profile, setPage } = useAppStore();
   const { signOut } = useAuth();
   const [open, setOpen] = useState(false);
+  const [webBusy, setWebBusy] = useState(false);
+  const webOpenInFlight = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -40,8 +45,22 @@ export default function AccountMenu() {
   const displayEmail = profile?.email?.trim() || "No email";
   const initials = getInitials(profile?.full_name, profile?.email);
 
-  const openUserApp = () => {
-    chrome.tabs.create({ url: USER_APP_URL });
+  const openUserApp = async () => {
+    if (webOpenInFlight.current || webBusy) return;
+    webOpenInFlight.current = true;
+    setWebBusy(true);
+    try {
+      const code = await createWebBridgeCode();
+      const url = `${USER_APP_URL}?code=${encodeURIComponent(code)}`;
+      await chrome.tabs.create({ url });
+    } catch {
+      await chrome.tabs.create({ url: USER_APP_URL });
+    } finally {
+      setTimeout(() => {
+        webOpenInFlight.current = false;
+        setWebBusy(false);
+      }, WEB_OPEN_COOLDOWN_MS);
+    }
     setOpen(false);
   };
 
@@ -87,19 +106,21 @@ export default function AccountMenu() {
 
               <button
                 type="button"
-                onClick={openUserApp}
-                className="w-full flex items-center gap-2 px-2.5 py-2 text-sm text-wf-text rounded-lg hover:bg-wf-surfaceHover transition-colors"
+                onClick={() => void openUserApp()}
+                disabled={webBusy}
+                className="w-full flex items-center gap-2 px-2.5 py-2 text-sm text-wf-text rounded-lg hover:bg-wf-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <User className="w-4 h-4 text-wf-muted" />
-                <span>My Profile</span>
+                <span>{webBusy ? "Opening…" : "My Profile"}</span>
               </button>
               <button
                 type="button"
-                onClick={openUserApp}
-                className="w-full flex items-center gap-2 px-2.5 py-2 text-sm text-wf-text rounded-lg hover:bg-wf-surfaceHover transition-colors"
+                onClick={() => void openUserApp()}
+                disabled={webBusy}
+                className="w-full flex items-center gap-2 px-2.5 py-2 text-sm text-wf-text rounded-lg hover:bg-wf-surfaceHover transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <BarChart3 className="w-4 h-4 text-wf-muted" />
-                <span>Track Applications</span>
+                <span>{webBusy ? "Opening…" : "Track Applications"}</span>
               </button>
 
               <div className="h-px my-1 bg-wf-border" />

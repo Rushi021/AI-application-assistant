@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
-from app.core.deps import get_db, get_current_user
+from app.core.deps import get_db, get_current_user, get_current_user_model
 from app.core.security import (
     create_access_token,
     create_refresh_token,
@@ -23,6 +23,7 @@ from app.modules.auth.schemas import (
     LoginRequest,
     RefreshTokenRequest,
     TokenResponse,
+    WebBridgeResponse,
     WebExchangeRequest,
 )
 from app.modules.auth.service import (
@@ -151,6 +152,19 @@ async def web_google_callback(
 
     login_code = create_web_login_code(db, user.id)
     return RedirectResponse(url=_append_query_param(next_url, "code", login_code))
+
+
+@router.post("/web/bridge", response_model=WebBridgeResponse)
+def web_bridge(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user_model),
+) -> WebBridgeResponse:
+    """
+    Mint a one-time login code for the authenticated user (e.g. Chrome extension → web app).
+    Code TTL is capped at 60 seconds; exchange via POST /auth/web/exchange.
+    """
+    raw = create_web_login_code(db, current_user.id, ttl_seconds=60)
+    return WebBridgeResponse(code=raw)
 
 
 @router.post("/web/exchange", response_model=TokenResponse)
