@@ -856,8 +856,7 @@ div[data-testid="stVerticalBlock"] > div { gap: 0.35rem !important; }
 .nav-title { font-size: 9px; letter-spacing: 0.1em; color: rgba(255,255,255,0.3); font-weight: 700; }
 
 /* Force buttons inside nav column to look like dark nav items */
-.nav-wrap ~ div button,
-div[data-testid="stVerticalBlock"] .nav-wrap ~ div button {
+.nav-wrap ~ div button {
     background: transparent !important;
     color: rgba(255,255,255,0.5) !important;
     border: none !important;
@@ -878,36 +877,53 @@ div[data-testid="stVerticalBlock"] .nav-wrap ~ div button {
     border: none !important;
 }
 
-/* Target the first column (nav) specifically */
-div[data-testid="stHorizontalBlock"] > div:first-child {
+/* ══════════════════════════════════════════════════════════════
+   NAV COLUMN — scope dark theme ONLY to column containing .nav-wrap
+   Uses :has() to avoid bleeding into form st.columns()
+   ══════════════════════════════════════════════════════════════ */
+
+/* The column (stColumn) that contains our nav-wrap gets dark bg */
+div[data-testid="stColumn"]:has(.nav-wrap) {
     background: #141332 !important;
     border-radius: 14px !important;
-    padding: 8px !important;
+    padding: 8px 4px !important;
     min-height: 80vh !important;
 }
-div[data-testid="stHorizontalBlock"] > div:first-child * {
+
+/* All text inside nav column defaults to muted white */
+div[data-testid="stColumn"]:has(.nav-wrap) p,
+div[data-testid="stColumn"]:has(.nav-wrap) span,
+div[data-testid="stColumn"]:has(.nav-wrap) label,
+div[data-testid="stColumn"]:has(.nav-wrap) .stMarkdown {
     color: rgba(255,255,255,0.5) !important;
 }
-div[data-testid="stHorizontalBlock"] > div:first-child h1,
-div[data-testid="stHorizontalBlock"] > div:first-child h2,
-div[data-testid="stHorizontalBlock"] > div:first-child h3,
-div[data-testid="stHorizontalBlock"] > div:first-child b,
-div[data-testid="stHorizontalBlock"] > div:first-child strong {
+
+/* Bright white for headings/bold in nav */
+div[data-testid="stColumn"]:has(.nav-wrap) b,
+div[data-testid="stColumn"]:has(.nav-wrap) strong {
     color: #ffffff !important;
 }
-div[data-testid="stHorizontalBlock"] > div:first-child button {
+
+/* Nav buttons: transparent with muted text */
+div[data-testid="stColumn"]:has(.nav-wrap) button {
     background: transparent !important;
     color: rgba(255,255,255,0.5) !important;
     border: none !important;
     border-radius: 10px !important;
 }
-div[data-testid="stHorizontalBlock"] > div:first-child button:hover {
+div[data-testid="stColumn"]:has(.nav-wrap) button:hover {
     background: rgba(255,255,255,0.06) !important;
-    color: #fff !important;
+    color: rgba(255,255,255,0.85) !important;
+    border: none !important;
 }
-div[data-testid="stHorizontalBlock"] > div:first-child button[kind="primary"] {
+
+/* Active nav button (primary) */
+div[data-testid="stColumn"]:has(.nav-wrap) button[kind="primary"] {
     background: #4F6BED !important;
     color: #fff !important;
+    font-weight: 600 !important;
+    border: none !important;
+    box-shadow: none !important;
 }
 
 /* ── Custom classes used in st.markdown ── */
@@ -1326,12 +1342,12 @@ def render_resume_page(backend_url: str) -> None:
         with c1:
             cs = " · Client-stored" if item.get("client_stored") else ""
             st.markdown(
-                f'<div style="display:flex;align-items:center;gap:12px;background:#0f0f12;border:1px solid #1c1c22;'
-                f'border-radius:12px;padding:14px 18px;margin-bottom:8px;">'
-                f'<div style="width:36px;height:36px;border-radius:9px;background:rgba(34,197,94,0.08);'
-                f'border:1px solid rgba(34,197,94,0.15);display:flex;align-items:center;justify-content:center;">📄</div>'
-                f'<div><div style="font-size:13px;font-weight:600;">{escape(item.get("original_filename") or "Resume")}</div>'
-                f'<div class="dim" style="font-size:11px;">{item.get("size_bytes", 0) // 1024} KB · id {rid}{escape(cs)}</div></div></div>',
+                f'<div style="display:flex;align-items:center;gap:12px;background:#ffffff;border:1px solid #E5E7EB;'
+                f'border-radius:12px;padding:14px 18px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,0.04);">'
+                f'<div style="width:36px;height:36px;border-radius:9px;background:rgba(79,107,237,0.08);'
+                f'border:1px solid rgba(79,107,237,0.12);display:flex;align-items:center;justify-content:center;">📄</div>'
+                f'<div><div style="font-size:13px;font-weight:600;color:#111827;">{escape(item.get("original_filename") or "Resume")}</div>'
+                f'<div style="font-size:11px;color:#9CA3AF;">{item.get("size_bytes", 0) // 1024} KB · id {rid}{escape(cs)}</div></div></div>',
                 unsafe_allow_html=True,
             )
         with c2:
@@ -1345,10 +1361,10 @@ def render_resume_page(backend_url: str) -> None:
 
     if len(resumes) < MAX_RESUMES:
         st.markdown(
-            '<div style="border:1px dashed #27272a;border-radius:12px;padding:32px 20px;text-align:center;margin-top:12px;">'
+            '<div style="border:1px dashed #D1D5DB;border-radius:12px;padding:32px 20px;text-align:center;margin-top:12px;">'
             '<div style="font-size:22px;margin-bottom:8px;">⬆</div>'
-            '<p class="muted" style="margin:0;">Drop a resume here or use the file picker below.</p>'
-            '<p class="dim" style="margin:6px 0 0 0;font-size:10px;">.docx, .doc, or .pdf</p></div>',
+            '<p style="font-size:13px;color:#6B7280;margin:0;">Drop a resume here or use the file picker below.</p>'
+            '<p style="font-size:11px;color:#9CA3AF;margin:6px 0 0 0;">.docx, .doc, or .pdf</p></div>',
             unsafe_allow_html=True,
         )
         uploader_key = f"resume_uploader_{st.session_state.get('resume_uploader_nonce', 0)}"
