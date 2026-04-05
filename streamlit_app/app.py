@@ -629,9 +629,11 @@ def inject_styles() -> None:
         """
 <style>
 /* ══════════════════════════════════════════════════════════════
-   0. ROOT + GLOBAL DARK MODE
+   LIGHT THEME — HirePath-style SaaS dashboard
    ══════════════════════════════════════════════════════════════ */
-:root { color-scheme: dark !important; }
+
+/* ── 0. Global background ── */
+:root { color-scheme: light !important; }
 
 .stApp,
 .stApp > header,
@@ -640,482 +642,318 @@ section[data-testid="stMain"],
 div[data-testid="stAppViewBlockContainer"],
 .stMainBlockContainer,
 .stApp [data-testid="stAppViewContainer"] {
-    background-color: #09090b !important;
-    color: #fafafa !important;
+    background-color: #F0F2F7 !important;
+    color: #111827 !important;
 }
 
-/* ══════════════════════════════════════════════════════════════
-   1. KILL WHITE TOP BAR + STREAMLIT CHROME
-   ══════════════════════════════════════════════════════════════ */
+/* ── 1. Kill Streamlit chrome ── */
 header[data-testid="stHeader"],
 .stApp > header,
 [data-testid="stToolbar"] {
-    background-color: #09090b !important;
-    border-bottom: none !important;
+    background-color: #F0F2F7 !important;
+    border: none !important;
 }
-[data-testid="stDecoration"],
-.stDeployButton {
-    display: none !important;
-}
+[data-testid="stDecoration"], .stDeployButton { display: none !important; }
 #MainMenu, footer { visibility: hidden !important; }
 
-/* ══════════════════════════════════════════════════════════════
-   2. TEXT INPUTS — ultra-aggressive selectors
-   Every layer of BaseWeb's input wrapper must be hit.
-   ══════════════════════════════════════════════════════════════ */
+/* ── 2. Hide native sidebar (we use column-based nav) ── */
+[data-testid="stSidebar"] { display: none !important; }
 
-/* Outer wrapper */
+/* ── 3. Text inputs ── */
 div[data-baseweb="input"] {
-    background-color: #111114 !important;
-    border: 1px solid rgba(255,255,255,0.06) !important;
+    background-color: #ffffff !important;
+    border: 1px solid #E5E7EB !important;
     border-radius: 10px !important;
     box-shadow: none !important;
-    transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
+    transition: border-color 0.2s ease !important;
 }
-/* Inner div that BaseWeb nests */
 div[data-baseweb="input"] > div {
     background-color: transparent !important;
     border: none !important;
     box-shadow: none !important;
 }
-/* The actual <input> element */
 div[data-baseweb="input"] input,
 [data-testid="stTextInput"] input,
 [data-testid="stNumberInput"] input {
     background-color: transparent !important;
-    color: #e4e4e7 !important;
+    color: #111827 !important;
     border: none !important;
     box-shadow: none !important;
     outline: none !important;
-    caret-color: #22c55e !important;
+    caret-color: #4F6BED !important;
     font-size: 14px !important;
 }
-/* Hover state — subtle border lift */
-div[data-baseweb="input"]:hover {
-    border-color: rgba(255,255,255,0.12) !important;
-}
-/* Focus state — green glow */
+div[data-baseweb="input"]:hover { border-color: #D1D5DB !important; }
 div[data-baseweb="input"]:focus-within {
-    border-color: rgba(34,197,94,0.5) !important;
-    box-shadow: 0 0 0 3px rgba(34,197,94,0.08) !important;
+    border-color: #4F6BED !important;
+    box-shadow: 0 0 0 3px rgba(79,107,237,0.1) !important;
 }
-/* Placeholder */
-div[data-baseweb="input"] input::placeholder {
-    color: #3f3f46 !important;
-}
-/* Autofill override */
-input:-webkit-autofill,
-input:-webkit-autofill:focus {
-    -webkit-box-shadow: 0 0 0 30px #111114 inset !important;
-    -webkit-text-fill-color: #e4e4e7 !important;
-    transition: background-color 5000s ease-in-out 0s !important;
-}
+div[data-baseweb="input"] input::placeholder { color: #9CA3AF !important; }
 
-/* ══════════════════════════════════════════════════════════════
-   3. TEXTAREA
-   ══════════════════════════════════════════════════════════════ */
+/* ── 4. Textarea ── */
 div[data-baseweb="textarea"],
 [data-testid="stTextArea"] textarea {
-    background-color: #111114 !important;
-    color: #e4e4e7 !important;
-    border: 1px solid rgba(255,255,255,0.06) !important;
+    background-color: #ffffff !important;
+    color: #111827 !important;
+    border: 1px solid #E5E7EB !important;
     border-radius: 10px !important;
     box-shadow: none !important;
-    outline: none !important;
-    caret-color: #22c55e !important;
 }
-div[data-baseweb="textarea"]:hover,
-[data-testid="stTextArea"] textarea:hover {
-    border-color: rgba(255,255,255,0.12) !important;
-}
+div[data-baseweb="textarea"]:hover { border-color: #D1D5DB !important; }
 div[data-baseweb="textarea"]:focus-within,
 [data-testid="stTextArea"] textarea:focus {
-    border-color: rgba(34,197,94,0.5) !important;
-    box-shadow: 0 0 0 3px rgba(34,197,94,0.08) !important;
+    border-color: #4F6BED !important;
+    box-shadow: 0 0 0 3px rgba(79,107,237,0.1) !important;
 }
 
-/* ══════════════════════════════════════════════════════════════
-   4. SELECT / DROPDOWN
-   ══════════════════════════════════════════════════════════════ */
+/* ── 5. Select / Dropdown ── */
 [data-testid="stSelectbox"] [data-baseweb="select"] > div,
 div[data-baseweb="select"] > div {
-    background-color: #111114 !important;
-    border: 1px solid rgba(255,255,255,0.06) !important;
+    background-color: #ffffff !important;
+    border: 1px solid #E5E7EB !important;
     border-radius: 10px !important;
     box-shadow: none !important;
-    min-height: 2.5rem !important;
-    color: #e4e4e7 !important;
-    transition: border-color 0.2s ease !important;
+    color: #111827 !important;
 }
-[data-testid="stSelectbox"] [data-baseweb="select"] > div:hover,
-div[data-baseweb="select"] > div:hover {
-    border-color: rgba(255,255,255,0.12) !important;
+[data-testid="stSelectbox"] [data-baseweb="select"] > div:hover { border-color: #D1D5DB !important; }
+[data-testid="stSelectbox"] [data-baseweb="select"] > div:focus-within {
+    border-color: #4F6BED !important;
+    box-shadow: 0 0 0 3px rgba(79,107,237,0.1) !important;
 }
-[data-testid="stSelectbox"] [data-baseweb="select"] > div:focus-within,
-div[data-baseweb="select"] > div:focus-within {
-    border-color: rgba(34,197,94,0.5) !important;
-    box-shadow: 0 0 0 3px rgba(34,197,94,0.08) !important;
-}
-/* Text color inside select */
 [data-testid="stSelectbox"] [data-baseweb="select"] span,
 div[data-baseweb="select"] span,
-.stSelectbox div[role="combobox"],
-.stSelectbox div[role="combobox"] * {
-    color: #e4e4e7 !important;
-}
-/* Arrow icon */
-[data-testid="stSelectbox"] svg,
-div[data-baseweb="select"] svg {
-    fill: #3f3f46 !important;
-}
-/* Dropdown popover menu */
-[data-baseweb="popover"],
-[data-baseweb="popover"] > div,
-ul[role="listbox"],
-div[data-baseweb="menu"] {
-    background-color: #111114 !important;
-    border: 1px solid rgba(255,255,255,0.08) !important;
+.stSelectbox div[role="combobox"] * { color: #111827 !important; }
+[data-testid="stSelectbox"] svg, div[data-baseweb="select"] svg { fill: #9CA3AF !important; }
+/* Dropdown menu */
+[data-baseweb="popover"], [data-baseweb="popover"] > div,
+ul[role="listbox"], div[data-baseweb="menu"] {
+    background-color: #ffffff !important;
+    border: 1px solid #E5E7EB !important;
     border-radius: 10px !important;
-    box-shadow: 0 12px 40px rgba(0,0,0,0.5) !important;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.08) !important;
 }
-ul[role="listbox"] li {
-    color: #a1a1aa !important;
-    background: transparent !important;
-}
-ul[role="listbox"] li:hover {
-    background-color: rgba(255,255,255,0.04) !important;
-    color: #e4e4e7 !important;
-}
-ul[role="listbox"] li[aria-selected="true"] {
-    background-color: rgba(34,197,94,0.1) !important;
-    color: #22c55e !important;
-}
+ul[role="listbox"] li { color: #374151 !important; background: transparent !important; }
+ul[role="listbox"] li:hover { background-color: #F3F4F6 !important; color: #111827 !important; }
+ul[role="listbox"] li[aria-selected="true"] { background-color: rgba(79,107,237,0.08) !important; color: #4F6BED !important; }
 
-/* ══════════════════════════════════════════════════════════════
-   5. INPUT LABELS — softer, not bright white
-   ══════════════════════════════════════════════════════════════ */
+/* ── 6. Labels ── */
 .stMarkdown, .stText, label,
 [data-testid="stWidgetLabel"] label,
-[data-testid="stWidgetLabel"] p {
-    color: #a1a1aa !important;
-    font-size: 13px !important;
-}
-/* Bold labels inside markdown (e.g. "Email (from Google)") */
-.stMarkdown b, .stMarkdown strong {
-    color: #d4d4d8 !important;
-}
+[data-testid="stWidgetLabel"] p { color: #6B7280 !important; font-size: 13px !important; }
+.stMarkdown b, .stMarkdown strong { color: #374151 !important; }
 
-/* ══════════════════════════════════════════════════════════════
-   6. EXPANDER — smooth dark cards
-   ══════════════════════════════════════════════════════════════ */
+/* ── 7. Expanders ── */
 [data-testid="stExpander"] details {
-    background: #0c0c0f !important;
-    border: 1px solid rgba(255,255,255,0.05) !important;
+    background: #ffffff !important;
+    border: 1px solid #E5E7EB !important;
     border-radius: 12px !important;
     overflow: hidden !important;
 }
-[data-testid="stExpander"] details[open] {
-    border-color: rgba(255,255,255,0.08) !important;
-}
 [data-testid="stExpander"] summary {
-    font-weight: 600 !important;
-    font-size: 14px !important;
-    color: #e4e4e7 !important;
-    padding: 14px 16px !important;
+    font-weight: 600 !important; font-size: 14px !important;
+    color: #111827 !important; padding: 14px 16px !important;
     background: transparent !important;
-    outline: none !important;
-    box-shadow: none !important;
 }
-[data-testid="stExpander"] summary:hover {
-    background: transparent !important;
-    color: #e4e4e7 !important;
-}
+[data-testid="stExpander"] summary:hover { background: #F9FAFB !important; }
 [data-testid="stExpander"] summary:focus,
 [data-testid="stExpander"] summary:focus-visible,
-[data-testid="stExpander"] summary:active,
 [data-testid="stExpander"] details[open] > summary {
-    background: transparent !important;
-    color: #e4e4e7 !important;
-    outline: none !important;
-    box-shadow: none !important;
+    background: transparent !important; color: #111827 !important;
+    outline: none !important; box-shadow: none !important;
 }
-/* Expander content area */
-[data-testid="stExpander"] details > div {
-    border-top: 1px solid rgba(255,255,255,0.04) !important;
-}
+[data-testid="stExpander"] details > div { border-top: 1px solid #F3F4F6 !important; }
 
-/* ══════════════════════════════════════════════════════════════
-   7. BORDERED CONTAINERS (Experience/School cards)
-   ══════════════════════════════════════════════════════════════ */
-div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] {
-    border: 1px solid rgba(255,255,255,0.05) !important;
+/* ── 8. Bordered containers ── */
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    border: 1px solid #E5E7EB !important;
     border-radius: 10px !important;
-    background: rgba(255,255,255,0.015) !important;
+    background: #FAFBFC !important;
 }
 
-/* ══════════════════════════════════════════════════════════════
-   8. BUTTONS
-   ══════════════════════════════════════════════════════════════ */
+/* ── 9. Buttons ── */
+/* Primary (accent blue) */
 button[kind="primary"],
 div[data-testid="stFormSubmitButton"] button {
-    background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%) !important;
+    background: #4F6BED !important;
     color: #fff !important;
     border: none !important;
     border-radius: 10px !important;
-    font-weight: 700 !important;
-    box-shadow: 0 4px 14px rgba(34,197,94,0.2) !important;
-    transition: box-shadow 0.2s ease !important;
+    font-weight: 600 !important;
+    box-shadow: 0 2px 8px rgba(79,107,237,0.2) !important;
 }
-button[kind="primary"]:hover {
-    box-shadow: 0 6px 20px rgba(34,197,94,0.35) !important;
-}
-button[kind="secondary"],
-.stButton > button {
+button[kind="primary"]:hover { box-shadow: 0 4px 14px rgba(79,107,237,0.3) !important; }
+/* Secondary */
+button[kind="secondary"], .stButton > button {
     background: transparent !important;
-    color: #a1a1aa !important;
-    border: 1px solid rgba(255,255,255,0.08) !important;
-    border-radius: 10px !important;
-    transition: all 0.15s ease !important;
-}
-button[kind="secondary"]:hover,
-.stButton > button:hover {
-    border-color: rgba(34,197,94,0.4) !important;
-    color: #22c55e !important;
-    background: rgba(34,197,94,0.04) !important;
-}
-/* Streamlit link_button CTA (login) */
-.stLinkButton > a,
-div[data-testid="stLinkButton"] > a {
-    background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%) !important;
-    color: #ffffff !important;
-    border: none !important;
-    border-radius: 10px !important;
-    font-weight: 700 !important;
-    box-shadow: 0 4px 14px rgba(34,197,94,0.2) !important;
-    text-decoration: none !important;
-}
-.stLinkButton > a:hover,
-div[data-testid="stLinkButton"] > a:hover {
-    color: #ffffff !important;
-    box-shadow: 0 6px 20px rgba(34,197,94,0.35) !important;
-    text-decoration: none !important;
-}
-.stLinkButton > a:visited,
-div[data-testid="stLinkButton"] > a:visited {
-    color: #ffffff !important;
-}
-
-/* ══════════════════════════════════════════════════════════════
-   9. TABS
-   ══════════════════════════════════════════════════════════════ */
-.stTabs [data-baseweb="tab-list"] {
-    gap: 0 !important;
-    border-bottom: 1px solid rgba(255,255,255,0.06) !important;
-    background: transparent !important;
-}
-.stTabs [data-baseweb="tab"] {
-    color: #52525b !important;
-    font-weight: 500 !important;
-    padding: 10px 20px !important;
-    background: transparent !important;
-    border: none !important;
-}
-.stTabs [data-baseweb="tab"]:hover {
-    color: #a1a1aa !important;
-    background: rgba(255,255,255,0.02) !important;
-}
-.stTabs [aria-selected="true"] {
-    color: #22c55e !important;
-    font-weight: 700 !important;
-    border-bottom: 2px solid #22c55e !important;
-}
-.stTabs [data-baseweb="tab-highlight"] {
-    background-color: #22c55e !important;
-}
-.stTabs [data-baseweb="tab-border"] {
-    display: none !important;
-}
-
-/* ══════════════════════════════════════════════════════════════
-   10. CHECKBOXES
-   ══════════════════════════════════════════════════════════════ */
-.stCheckbox label,
-.stCheckbox label span,
-.stCheckbox label p {
-    color: #d4d4d8 !important;
-}
-
-/* ══════════════════════════════════════════════════════════════
-   11. FILE UPLOADER
-   ══════════════════════════════════════════════════════════════ */
-[data-testid="stFileUploader"],
-[data-testid="stFileUploader"] > div,
-[data-testid="stFileUploader"] section {
-    background-color: transparent !important;
-    border: none !important;
-    color: #a1a1aa !important;
-}
-[data-testid="stFileUploader"] button {
-    background: #111114 !important;
-    border: 1px solid rgba(255,255,255,0.08) !important;
-    color: #a1a1aa !important;
+    color: #6B7280 !important;
+    border: 1px solid #E5E7EB !important;
     border-radius: 10px !important;
 }
-
-/* ══════════════════════════════════════════════════════════════
-   12. FORM CONTAINER
-   ══════════════════════════════════════════════════════════════ */
-[data-testid="stForm"],
-[data-testid="stForm"] > div {
-    background-color: #0c0c0f !important;
-    border: 1px solid rgba(255,255,255,0.05) !important;
-    border-radius: 14px !important;
+button[kind="secondary"]:hover, .stButton > button:hover {
+    border-color: #4F6BED !important;
+    color: #4F6BED !important;
+    background: rgba(79,107,237,0.04) !important;
+}
+/* Link button (login) */
+.stLinkButton > a, div[data-testid="stLinkButton"] > a {
+    background: #4F6BED !important; color: #fff !important;
+    border: none !important; border-radius: 10px !important;
+    font-weight: 600 !important; text-decoration: none !important;
+    box-shadow: 0 2px 8px rgba(79,107,237,0.2) !important;
 }
 
-/* ══════════════════════════════════════════════════════════════
-   13. ALERTS / INFO / SUCCESS / ERROR
-   ══════════════════════════════════════════════════════════════ */
-[data-testid="stAlert"] > div,
-.stAlert > div {
-    background-color: #0f0f12 !important;
-    border-radius: 10px !important;
+/* ── 10. Tabs ── */
+.stTabs [data-baseweb="tab-list"] { gap:0 !important; border-bottom: 1px solid #E5E7EB !important; background: transparent !important; }
+.stTabs [data-baseweb="tab"] { color: #9CA3AF !important; font-weight: 500 !important; background: transparent !important; border: none !important; }
+.stTabs [data-baseweb="tab"]:hover { color: #6B7280 !important; background: #F9FAFB !important; }
+.stTabs [aria-selected="true"] { color: #4F6BED !important; font-weight: 700 !important; border-bottom: 2px solid #4F6BED !important; }
+.stTabs [data-baseweb="tab-highlight"] { background-color: #4F6BED !important; }
+.stTabs [data-baseweb="tab-border"] { display: none !important; }
+
+/* ── 11. Checkboxes ── */
+.stCheckbox label, .stCheckbox label span { color: #374151 !important; }
+
+/* ── 12. File uploader ── */
+[data-testid="stFileUploader"], [data-testid="stFileUploader"] > div,
+[data-testid="stFileUploader"] section { background: transparent !important; border: none !important; color: #6B7280 !important; }
+[data-testid="stFileUploader"] button { background: #fff !important; border: 1px solid #E5E7EB !important; color: #374151 !important; border-radius: 10px !important; }
+
+/* ── 13. Form container ── */
+[data-testid="stForm"], [data-testid="stForm"] > div {
+    background: #ffffff !important; border: 1px solid #E5E7EB !important; border-radius: 14px !important;
 }
 
-/* ══════════════════════════════════════════════════════════════
-   14. RADIO (sidebar nav)
-   ══════════════════════════════════════════════════════════════ */
-.stRadio label span,
-div[role="radiogroup"] label span {
-    color: #a1a1aa !important;
-}
+/* ── 14. Alerts ── */
+[data-testid="stAlert"] > div { border-radius: 10px !important; }
 
-/* ══════════════════════════════════════════════════════════════
-   15. SIDEBAR
-   ══════════════════════════════════════════════════════════════ */
-[data-testid="stSidebar"],
-[data-testid="stSidebar"] > div,
-[data-testid="stSidebar"] > div > div {
-    background-color: #0f0f12 !important;
-    border-right: 1px solid rgba(255,255,255,0.04) !important;
-}
-[data-testid="stSidebar"] * { color: #a1a1aa !important; }
+/* ── 15. Typography ── */
+h1, h2, h3, h4, h5, h6 { color: #111827 !important; }
+h5 { font-size: 13px !important; }
+a { color: #4F6BED !important; }
 
-/* ══════════════════════════════════════════════════════════════
-   16. DATAFRAME
-   ══════════════════════════════════════════════════════════════ */
-[data-testid="stDataFrame"],
-[data-testid="stDataFrame"] * {
-    background-color: #0f0f12 !important;
-    color: #d4d4d8 !important;
-}
+/* ── 16. Spacing ── */
+div[data-testid="stVerticalBlock"] > div { gap: 0.35rem !important; }
 
-/* ══════════════════════════════════════════════════════════════
-   17. TYPOGRAPHY
-   ══════════════════════════════════════════════════════════════ */
-h1, h2, h3, h4, h5, h6 { color: #fafafa !important; }
-h5 { font-size: 13px !important; color: #e4e4e7 !important; }
-a { color: #22c55e !important; }
-
-/* ══════════════════════════════════════════════════════════════
-   18. SPACING — reduce Streamlit's oversized vertical gaps
-   ══════════════════════════════════════════════════════════════ */
-div[data-testid="stVerticalBlock"] > div {
-    gap: 0.35rem !important;
-}
-
-/* ══════════════════════════════════════════════════════════════
-   19. SCROLLBAR
-   ══════════════════════════════════════════════════════════════ */
-::-webkit-scrollbar { width: 5px; height: 5px; }
+/* ── 17. Scrollbar ── */
+::-webkit-scrollbar { width: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #27272a; border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 3px; }
+
+/* ── 18. EEO rows ── */
+.eeo-q { font-size: 13px; color: #6B7280; margin: 0; padding: 10px 0 6px; line-height: 1.4; }
+.eeo-row-hr { border: none; border-top: 1px solid #F3F4F6; margin: 0 0 4px; }
 
 /* ══════════════════════════════════════════════════════════════
-   20. CUSTOM CLASSES (used in st.markdown)
+   NAV COLUMN — dark sidebar inside st.columns
    ══════════════════════════════════════════════════════════════ */
 .nav-wrap {
-    background: #0c0c0f;
-    border: 1px solid rgba(255,255,255,0.05);
-    border-radius: 12px;
-    padding: 12px;
+    background: #141332 !important;
+    border: none !important;
+    border-radius: 14px;
+    padding: 14px;
     margin-bottom: 8px;
 }
-.nav-title {
-    font-size: 9px;
-    letter-spacing: 0.1em;
-    color: #52525b;
-    font-weight: 700;
-    margin-bottom: 8px;
+.nav-title { font-size: 9px; letter-spacing: 0.1em; color: rgba(255,255,255,0.3); font-weight: 700; }
+
+/* Force buttons inside nav column to look like dark nav items */
+.nav-wrap ~ div button,
+div[data-testid="stVerticalBlock"] .nav-wrap ~ div button {
+    background: transparent !important;
+    color: rgba(255,255,255,0.5) !important;
+    border: none !important;
+    text-align: left !important;
+    font-weight: 500 !important;
+    border-radius: 10px !important;
+    padding: 10px 14px !important;
 }
+.nav-wrap ~ div button:hover {
+    background: rgba(255,255,255,0.06) !important;
+    color: rgba(255,255,255,0.8) !important;
+    border: none !important;
+}
+.nav-wrap ~ div button[kind="primary"] {
+    background: #4F6BED !important;
+    color: #fff !important;
+    font-weight: 600 !important;
+    border: none !important;
+}
+
+/* Target the first column (nav) specifically */
+div[data-testid="stHorizontalBlock"] > div:first-child {
+    background: #141332 !important;
+    border-radius: 14px !important;
+    padding: 8px !important;
+    min-height: 80vh !important;
+}
+div[data-testid="stHorizontalBlock"] > div:first-child * {
+    color: rgba(255,255,255,0.5) !important;
+}
+div[data-testid="stHorizontalBlock"] > div:first-child h1,
+div[data-testid="stHorizontalBlock"] > div:first-child h2,
+div[data-testid="stHorizontalBlock"] > div:first-child h3,
+div[data-testid="stHorizontalBlock"] > div:first-child b,
+div[data-testid="stHorizontalBlock"] > div:first-child strong {
+    color: #ffffff !important;
+}
+div[data-testid="stHorizontalBlock"] > div:first-child button {
+    background: transparent !important;
+    color: rgba(255,255,255,0.5) !important;
+    border: none !important;
+    border-radius: 10px !important;
+}
+div[data-testid="stHorizontalBlock"] > div:first-child button:hover {
+    background: rgba(255,255,255,0.06) !important;
+    color: #fff !important;
+}
+div[data-testid="stHorizontalBlock"] > div:first-child button[kind="primary"] {
+    background: #4F6BED !important;
+    color: #fff !important;
+}
+
+/* ── Custom classes used in st.markdown ── */
+.logo-pill {
+    width: 32px; height: 32px; border-radius: 10px;
+    background: linear-gradient(135deg, #4F6BED, #7C3AED);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; flex-shrink: 0; color: #fff;
+}
+.muted { color: #6B7280 !important; font-size: 13px; }
+.dim { color: #9CA3AF !important; font-size: 11px; }
+
+/* ══════════════════════════════════════════════════════════════
+   STAT CARDS — white cards with colored bottom bar
+   ══════════════════════════════════════════════════════════════ */
 .stat-card {
-    background: #0c0c0f;
-    border: 1px solid rgba(255,255,255,0.05);
-    border-radius: 13px;
+    background: #ffffff;
+    border: 1px solid rgba(0,0,0,0.06);
+    border-radius: 16px;
     padding: 18px 16px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
     position: relative;
     overflow: hidden;
 }
-.stat-card .bar { position: absolute; top: 0; left: 0; right: 0; height: 2px; opacity: 0.6; border-radius: 13px 13px 0 0; }
-.stat-card .num { font-size: 28px; font-weight: 800; line-height: 1; }
-.stat-card .lbl { font-size: 11px; color: #52525b; font-weight: 600; letter-spacing: 0.04em; margin-top: 6px; text-transform: uppercase; }
+.stat-card .bar {
+    position: absolute; bottom: 0; left: 12px; right: 12px;
+    height: 3px; border-radius: 2px; opacity: 0.5;
+}
+.stat-card .num { font-size: 36px; font-weight: 900; line-height: 1; color: #111827; }
+.stat-card .lbl { font-size: 12px; color: #6B7280; font-weight: 500; margin-top: 6px; }
+
+/* ══════════════════════════════════════════════════════════════
+   APPLICATION ROW
+   ══════════════════════════════════════════════════════════════ */
 .app-row {
-    background: #0c0c0f;
-    border: 1px solid rgba(255,255,255,0.05);
+    background: #ffffff;
+    border: 1px solid rgba(0,0,0,0.06);
     border-radius: 12px;
     padding: 12px 16px;
     margin-bottom: 8px;
-    transition: border-color 0.15s;
+    transition: border-color 0.15s, box-shadow 0.15s;
 }
-.app-row:hover { border-color: rgba(255,255,255,0.1); }
-.eeo-q { font-size: 13px; color: #a1a1aa; margin: 0; padding: 10px 0 6px 0; line-height: 1.4; }
-.eeo-row-hr { border: none; border-top: 1px solid rgba(255,255,255,0.04); margin: 0 0 4px 0; }
-.logo-pill {
-    width: 32px; height: 32px; border-radius: 10px;
-    background: linear-gradient(135deg, #22c55e, #16a34a);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 14px; flex-shrink: 0;
+.app-row:hover {
+    border-color: rgba(0,0,0,0.1);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
 }
-.muted { color: #a1a1aa; font-size: 13px; }
-.dim { color: #52525b; font-size: 11px; }
-
-/* 21. LIGHT THEME OVERRIDES (new dashboard structure) */
-.stApp,
-.stApp [data-testid="stAppViewContainer"],
-.main .block-container,
-section[data-testid="stMain"],
-div[data-testid="stAppViewBlockContainer"] {
-    background: #F0F2F7 !important;
-    color: #111827 !important;
-}
-.stApp [data-testid="stHeader"] {
-    background: #F0F2F7 !important;
-}
-.stMarkdown, .stText, label, p, span, div {
-    color: inherit;
-}
-.stButton > button {
-    background: transparent !important;
-    color: #4B5563 !important;
-    border: 1px solid rgba(0,0,0,0.08) !important;
-}
-.stButton > button[kind="primary"] {
-    background: #4F6BED !important;
-    color: #fff !important;
-    border-color: #4F6BED !important;
-}
-div[data-baseweb="input"],
-div[data-baseweb="select"] > div,
-div[data-baseweb="textarea"],
-[data-testid="stTextInput"] input,
-[data-testid="stTextArea"] textarea,
-[data-testid="stNumberInput"] input,
-[data-testid="stSelectbox"] [data-baseweb="select"] > div {
-    background: #fff !important;
-    color: #111827 !important;
-    border: 1px solid rgba(0,0,0,0.08) !important;
-    box-shadow: none !important;
-}
-[data-testid="stSidebar"] { display: none !important; }
 </style>
 """,
         unsafe_allow_html=True,
@@ -1585,17 +1423,22 @@ def render_dashboard(applications: list[dict[str, Any]]) -> None:
         ("Offers", stats["offered"], "#10B981"),
         ("Pending", stats["pending"], "#F59E0B"),
     ]
-    cards_html = "".join(
-        (
-            '<div style="background:#fff;border:1px solid rgba(0,0,0,0.06);border-radius:16px;'
-            'padding:16px;box-shadow:0 1px 3px rgba(0,0,0,0.04);">'
-            f'<div style="font-size:38px;line-height:1;font-weight:900;color:#111827;">{v:02d}</div>'
-            f'<div style="font-size:12px;color:#6B7280;margin-top:6px;">{escape(label)}</div>'
-            f'<div style="height:3px;border-radius:2px;background:{color};opacity:0.5;margin-top:10px;"></div>'
-            "</div>"
+    stat_icons = {
+        "Total Applied": ("📋", "#4F6BED"),
+        "Interviews": ("👥", "#8B5CF6"),
+        "Offers": ("✓", "#10B981"),
+        "Pending": ("⏱", "#F59E0B"),
+    }
+    cards_html = ""
+    for label, v, color in stat_cards:
+        icon, _ = stat_icons.get(label, ("•", color))
+        cards_html += (
+            f'<div class="stat-card">'
+            f'<div class="num">{v:02d}</div>'
+            f'<div class="lbl">{escape(label)}</div>'
+            f'<div class="bar" style="background:{color};"></div>'
+            f'</div>'
         )
-        for label, v, color in stat_cards
-    )
     st.markdown(
         f'<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px;">{cards_html}</div>',
         unsafe_allow_html=True,
@@ -1663,12 +1506,12 @@ def render_dashboard(applications: list[dict[str, Any]]) -> None:
         ]
         max_n = max((n for _, n, _ in rows), default=1) or 1
         for label, n, c in rows:
-            pct = int((n / max_n) * 100) if max_n else 0
+            pct = int((n / max_n) * 100) if (max_n and n > 0) else 0
             st.markdown(
                 f'<div style="margin-bottom:8px;">'
                 f'<div style="display:flex;justify-content:space-between;font-size:11px;color:#6B7280;">'
                 f'<span>{label}</span><span style="color:{c};font-weight:700;">{n}</span></div>'
-                f'<div style="height:5px;border-radius:3px;background:#E5E7EB;margin-top:4px;">'
+                f'<div style="height:5px;border-radius:3px;background:#F1F5F9;margin-top:4px;">'
                 f'<div style="height:100%;width:{pct}%;background:{c};border-radius:3px;"></div></div></div>',
                 unsafe_allow_html=True,
             )
