@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import escape
 from typing import Any
 from urllib.parse import quote_plus, urlparse
@@ -81,9 +81,12 @@ def init_state() -> None:
     st.session_state.setdefault("profile", None)
     st.session_state.setdefault("main_nav", "dashboard")
     st.session_state.setdefault("dash_tab", "profile")
+    st.session_state.setdefault("selected_application_id", None)
+    st.session_state.setdefault("pipeline_days", 1)
     st.session_state.setdefault("apps_search", "")
     st.session_state.setdefault("apps_filter", "all")
     st.session_state.setdefault("resume_uploader_nonce", 0)
+    st.session_state.setdefault("resume_last_upload_token", None)
     st.session_state.setdefault("backend_url", os.environ.get("BACKEND_URL", "http://localhost:8000").rstrip("/"))
     st.session_state.setdefault("app_url", os.environ.get("STREAMLIT_APP_URL", "http://localhost:8501").rstrip("/"))
 
@@ -94,6 +97,9 @@ def clear_auth_state() -> None:
     st.session_state["profile"] = None
     st.session_state.pop("session_id", None)
     st.session_state.pop("resume_uploader_nonce", None)
+    st.session_state.pop("resume_last_upload_token", None)
+    st.session_state.pop("selected_application_id", None)
+    st.session_state.pop("pipeline_days", None)
     for k in list(st.session_state.keys()):
         if (
             k.startswith("pf_")
@@ -877,6 +883,27 @@ button[kind="secondary"]:hover,
     color: #22c55e !important;
     background: rgba(34,197,94,0.04) !important;
 }
+/* Streamlit link_button CTA (login) */
+.stLinkButton > a,
+div[data-testid="stLinkButton"] > a {
+    background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%) !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 10px !important;
+    font-weight: 700 !important;
+    box-shadow: 0 4px 14px rgba(34,197,94,0.2) !important;
+    text-decoration: none !important;
+}
+.stLinkButton > a:hover,
+div[data-testid="stLinkButton"] > a:hover {
+    color: #ffffff !important;
+    box-shadow: 0 6px 20px rgba(34,197,94,0.35) !important;
+    text-decoration: none !important;
+}
+.stLinkButton > a:visited,
+div[data-testid="stLinkButton"] > a:visited {
+    color: #ffffff !important;
+}
 
 /* ══════════════════════════════════════════════════════════════
    9. TABS
@@ -1050,6 +1077,45 @@ div[data-testid="stVerticalBlock"] > div {
 }
 .muted { color: #a1a1aa; font-size: 13px; }
 .dim { color: #52525b; font-size: 11px; }
+
+/* 21. LIGHT THEME OVERRIDES (new dashboard structure) */
+.stApp,
+.stApp [data-testid="stAppViewContainer"],
+.main .block-container,
+section[data-testid="stMain"],
+div[data-testid="stAppViewBlockContainer"] {
+    background: #F0F2F7 !important;
+    color: #111827 !important;
+}
+.stApp [data-testid="stHeader"] {
+    background: #F0F2F7 !important;
+}
+.stMarkdown, .stText, label, p, span, div {
+    color: inherit;
+}
+.stButton > button {
+    background: transparent !important;
+    color: #4B5563 !important;
+    border: 1px solid rgba(0,0,0,0.08) !important;
+}
+.stButton > button[kind="primary"] {
+    background: #4F6BED !important;
+    color: #fff !important;
+    border-color: #4F6BED !important;
+}
+div[data-baseweb="input"],
+div[data-baseweb="select"] > div,
+div[data-baseweb="textarea"],
+[data-testid="stTextInput"] input,
+[data-testid="stTextArea"] textarea,
+[data-testid="stNumberInput"] input,
+[data-testid="stSelectbox"] [data-baseweb="select"] > div {
+    background: #fff !important;
+    color: #111827 !important;
+    border: 1px solid rgba(0,0,0,0.08) !important;
+    box-shadow: none !important;
+}
+[data-testid="stSidebar"] { display: none !important; }
 </style>
 """,
         unsafe_allow_html=True,
@@ -1085,6 +1151,41 @@ def portal_host(url: str | None) -> str:
 
 def format_status_option(s: str) -> str:
     return s.replace("_", " ").title()
+
+
+def status_meta(status: str | None) -> tuple[str, str, str]:
+    key = (status or "").strip().lower()
+    mapping: dict[str, tuple[str, str, str]] = {
+        "applied": ("Applied", "#4F6BED", "rgba(79,107,237,0.10)"),
+        "assessment": ("Assessment", "#6366F1", "rgba(99,102,241,0.10)"),
+        "interview_round_1": ("Interview R1", "#8B5CF6", "rgba(139,92,246,0.10)"),
+        "interview_round_2": ("Interview R2", "#8B5CF6", "rgba(139,92,246,0.10)"),
+        "interview_round_3": ("Interview R3", "#8B5CF6", "rgba(139,92,246,0.10)"),
+        "offer": ("Offer", "#10B981", "rgba(16,185,129,0.10)"),
+        "rejected": ("Rejected", "#EF4444", "rgba(239,68,68,0.10)"),
+        "withdrawn": ("Withdrawn", "#9CA3AF", "rgba(156,163,175,0.15)"),
+    }
+    return mapping.get(key, ("Pending", "#F59E0B", "rgba(245,158,11,0.12)"))
+
+
+def status_badge_html(status: str | None) -> str:
+    label, fg, bg = status_meta(status)
+    return (
+        f'<span style="font-size:11px;font-weight:600;color:{fg};'
+        f'background:{bg};padding:4px 10px;border-radius:8px;">{escape(label)}</span>'
+    )
+
+
+def parse_created_date(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return dt.replace(tzinfo=None)
+    except ValueError:
+        return None
 
 
 def render_eeo_section(prefix: str) -> None:
@@ -1420,18 +1521,22 @@ def render_resume_page(backend_url: str) -> None:
             key=uploader_key,
         )
         if up is not None:
-            st.caption(f"Ready to upload: {up.name}")
-            if st.button("Upload selected resume", type="primary", key="btn_upload_resume"):
+            # Auto-upload once immediately after file selection.
+            token = f"{getattr(up, 'file_id', '')}:{up.name}:{getattr(up, 'size', 0)}"
+            if st.session_state.get("resume_last_upload_token") != token:
+                st.session_state["resume_last_upload_token"] = token
                 data = up.getvalue()
                 with st.spinner("Uploading…"):
                     resp = api_upload_resume(backend_url, data, up.name)
                 if resp.ok:
-                    # Rotate uploader widget key to clear selected file chip post-upload.
+                    # Rotate uploader key to clear the selected file chip and avoid repeated uploads.
                     st.session_state["resume_uploader_nonce"] = int(
                         st.session_state.get("resume_uploader_nonce", 0)
                     ) + 1
+                    st.session_state["resume_last_upload_token"] = None
                     st.rerun()
                 else:
+                    st.session_state["resume_last_upload_token"] = None
                     st.error(f"Upload failed: {resp.text}")
     else:
         st.info(f"Maximum of {MAX_RESUMES} resumes reached. Remove one to upload another.")
@@ -1472,132 +1577,201 @@ def render_settings_page(backend_url: str, app_url: str) -> None:
         st.rerun()
 
 
-def render_dashboard(
-    backend_url: str,
-    profile: dict[str, Any],
-    applications: list[dict[str, Any]],
-) -> None:
+def render_dashboard(applications: list[dict[str, Any]]) -> None:
     stats = compute_stats(applications)
-    colors = [
-        ("#fafafa", "#27272a"),
-        ("#a855f7", "rgba(168,85,247,0.15)"),
-        ("#22c55e", "rgba(34,197,94,0.15)"),
-        ("#f59e0b", "rgba(245,158,11,0.15)"),
+    stat_cards = [
+        ("Total Applied", stats["total"], "#4F6BED"),
+        ("Interviews", stats["interview"], "#8B5CF6"),
+        ("Offers", stats["offered"], "#10B981"),
+        ("Pending", stats["pending"], "#F59E0B"),
     ]
-    labels = ["Total applied", "Interviews", "Offers", "Pending"]
-    vals = [stats["total"], stats["interview"], stats["offered"], stats["pending"]]
-
-    cards = ""
-    for i, lab in enumerate(labels):
-        c, ac = colors[i]
-        cards += (
-            f'<div class="stat-card"><div class="bar" style="background:{c}"></div>'
-            f'<div class="num" style="color:{c}">{vals[i]}</div>'
-            f'<div class="lbl">{escape(lab)}</div></div>'
+    cards_html = "".join(
+        (
+            '<div style="background:#fff;border:1px solid rgba(0,0,0,0.06);border-radius:16px;'
+            'padding:16px;box-shadow:0 1px 3px rgba(0,0,0,0.04);">'
+            f'<div style="font-size:38px;line-height:1;font-weight:900;color:#111827;">{v:02d}</div>'
+            f'<div style="font-size:12px;color:#6B7280;margin-top:6px;">{escape(label)}</div>'
+            f'<div style="height:3px;border-radius:2px;background:{color};opacity:0.5;margin-top:10px;"></div>'
+            "</div>"
         )
+        for label, v, color in stat_cards
+    )
     st.markdown(
-        f'<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:20px;">{cards}</div>',
+        f'<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px;">{cards_html}</div>',
         unsafe_allow_html=True,
     )
 
-    tab_prof, tab_apps = st.tabs(["Profile", "Applications"])
-    with tab_prof:
-        render_profile_form(backend_url, profile)
-    with tab_apps:
-        st.session_state.setdefault("apps_search", "")
-        st.session_state.setdefault("apps_filter", "all")
-        for a in applications:
+    left_col, right_col = st.columns([2.0, 1.0])
+    with left_col:
+        card_top_left, card_top_right = st.columns([3, 1])
+        with card_top_left:
+            st.markdown('<p style="font-size:14px;font-weight:700;margin:4px 0 10px;">Recent Applications</p>', unsafe_allow_html=True)
+        with card_top_right:
+            if st.button("View All →", key="btn_view_all_apps"):
+                st.session_state.main_nav = "applications"
+                st.rerun()
+        recent = sorted(applications, key=lambda a: parse_created_date(a.get("created_at")) or datetime.min, reverse=True)[:5]
+        if not recent:
+            st.info("No recent applications yet.")
+        for a in recent:
             aid = int(a["id"])
-            st.session_state[f"app_srv_{aid}"] = a.get("status") or "applied"
-
-        s_col, f_col = st.columns([4, 1])
-        with s_col:
-            st.text_input(
-                "Search",
-                key="apps_search",
-                placeholder="Search applications…",
-                label_visibility="collapsed",
-            )
-        filt_opts = ["all"] + APPLICATION_STATUSES
-        if st.session_state.apps_filter not in filt_opts:
-            st.session_state.apps_filter = "all"
-        with f_col:
-            st.selectbox(
-                "Filter",
-                options=filt_opts,
-                key="apps_filter",
-                format_func=lambda x: "All statuses" if x == "all" else format_status_option(x),
-                label_visibility="collapsed",
-            )
-        filt = st.session_state.apps_filter
-        q = (st.session_state.apps_search or "").lower().strip()
-
-        def match(a: dict[str, Any]) -> bool:
-            if filt != "all" and a.get("status") != filt:
-                return False
-            if not q:
-                return True
-            return q in (a.get("company_name") or "").lower() or q in (a.get("role_title") or "").lower()
-
-        filtered = [a for a in applications if match(a)]
-
-        if not filtered:
-            st.markdown(
-                '<div class="stat-card" style="text-align:center;padding:48px 20px;">'
-                '<div style="font-size:32px;margin-bottom:10px;opacity:0.4;">📋</div>'
-                "<p style='color:#71717a;font-weight:700;margin:0 0 4px;'>No applications found</p>"
-                "<p class='dim' style='margin:0;'>Try adjusting search or filter.</p></div>",
-                unsafe_allow_html=True,
-            )
-            return
-
-        for a in filtered:
             co = (a.get("company_name") or "Company").strip() or "Company"
             role = (a.get("role_title") or "").strip() or "Role"
-            initial = co[0].upper()
-            created = a.get("created_at")
-            if isinstance(created, datetime):
-                ds = created.strftime("%b %d, %Y")
-            else:
-                ds = fmt_app_date(str(created) if created else None)
-            pu = a.get("portal_url") or ""
-            host = portal_host(pu)
-            aid = int(a["id"])
-            sk = f"app_sel_{aid}"
-            if sk not in st.session_state:
-                st.session_state[sk] = a.get("status") or "applied"
+            date_txt = fmt_app_date(str(a.get("created_at")) if a.get("created_at") else None)
+            c1, c2, c3 = st.columns([6, 2, 1])
+            with c1:
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:12px;">'
+                    f'<div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#4F6BED,#7C3AED);'
+                    f'display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;">{escape(co[:1].upper())}</div>'
+                    f'<div><div style="font-size:13px;font-weight:600;color:#111827;">{escape(co)}</div>'
+                    f'<div style="font-size:12px;color:#6B7280;">{escape(role)}</div></div></div>',
+                    unsafe_allow_html=True,
+                )
+            with c2:
+                st.markdown(
+                    f'<div style="text-align:right;"><div style="font-size:11px;color:#6B7280;">{escape(date_txt)}</div>'
+                    f'<div style="margin-top:3px;">{status_badge_html(a.get("status"))}</div></div>',
+                    unsafe_allow_html=True,
+                )
+            with c3:
+                if st.button("View", key=f"btn_recent_view_{aid}"):
+                    st.session_state.selected_application_id = aid
+                    st.session_state.main_nav = "applications"
+                    st.rerun()
 
-            r1, r2, r3 = st.columns([2.3, 1.0, 1.0])
-            with r1:
-                st.markdown(
-                    f'<div style="display:flex;align-items:center;gap:14px;min-width:0;">'
-                    f'<div style="width:38px;height:38px;border-radius:10px;background:#141418;border:1px solid #1c1c22;'
-                    f'display:flex;align-items:center;justify-content:center;font-weight:800;color:#71717a;">{escape(initial)}</div>'
-                    f'<div style="min-width:0;"><div style="font-weight:700;font-size:14px;color:#fafafa;">{escape(co)}</div>'
-                    f'<div class="muted" style="font-size:12px;">{escape(role)}</div></div></div>',
-                    unsafe_allow_html=True,
-                )
-            with r2:
-                st.markdown(
-                    f'<div style="text-align:right;"><div class="dim" style="font-size:11px;">{escape(ds)}</div>'
-                    f'<div class="dim" style="font-size:10px;">{escape(host)}</div></div>',
-                    unsafe_allow_html=True,
-                )
-            with r3:
-                st.selectbox(
-                    " ",
-                    APPLICATION_STATUSES,
-                    key=sk,
-                    format_func=format_status_option,
-                    label_visibility="collapsed",
-                    on_change=_make_app_status_callback(backend_url, aid),
-                )
-            err = st.session_state.get(f"app_status_err_{aid}")
-            if err:
-                st.markdown(
-                    f'<p style="color:#f87171;font-size:12px;margin:4px 0 12px 0;">{escape(err)}</p>',
-                    unsafe_allow_html=True,
-                )
+    with right_col:
+        st.markdown('<p style="font-size:14px;font-weight:700;margin:4px 0 8px;">Pipeline</p>', unsafe_allow_html=True)
+        d1, d3, d7 = st.columns(3)
+        for n, col in ((1, d1), (3, d3), (7, d7)):
+            with col:
+                active = st.session_state.pipeline_days == n
+                if st.button(f"{n}d", key=f"btn_pipeline_{n}", use_container_width=True, type="primary" if active else "secondary"):
+                    st.session_state.pipeline_days = n
+                    st.rerun()
+        now = datetime.utcnow()
+        filtered = [
+            a for a in applications
+            if (parse_created_date(a.get("created_at")) or datetime.min) >= (now.replace(tzinfo=None) - timedelta(days=st.session_state.pipeline_days))
+        ]
+        rows = [
+            ("Applied", sum(1 for a in filtered if (a.get("status") or "") == "applied"), "#4F6BED"),
+            ("Assessment", sum(1 for a in filtered if (a.get("status") or "") == "assessment"), "#6366F1"),
+            ("Interview", sum(1 for a in filtered if "interview" in (a.get("status") or "")), "#8B5CF6"),
+            ("Offer", sum(1 for a in filtered if (a.get("status") or "") == "offer"), "#10B981"),
+            ("Rejected", sum(1 for a in filtered if (a.get("status") or "") == "rejected"), "#EF4444"),
+        ]
+        max_n = max((n for _, n, _ in rows), default=1) or 1
+        for label, n, c in rows:
+            pct = int((n / max_n) * 100) if max_n else 0
+            st.markdown(
+                f'<div style="margin-bottom:8px;">'
+                f'<div style="display:flex;justify-content:space-between;font-size:11px;color:#6B7280;">'
+                f'<span>{label}</span><span style="color:{c};font-weight:700;">{n}</span></div>'
+                f'<div style="height:5px;border-radius:3px;background:#E5E7EB;margin-top:4px;">'
+                f'<div style="height:100%;width:{pct}%;background:{c};border-radius:3px;"></div></div></div>',
+                unsafe_allow_html=True,
+            )
+
+        st.markdown('<p style="font-size:14px;font-weight:700;margin:14px 0 8px;">Activity</p>', unsafe_allow_html=True)
+        act = sorted(applications, key=lambda a: parse_created_date(a.get("created_at")) or datetime.min, reverse=True)[:5]
+        if not act:
+            st.caption("No activity yet.")
+        for a in act:
+            label, color, _ = status_meta(a.get("status"))
+            co = (a.get("company_name") or "Company").strip() or "Company"
+            st.markdown(
+                f'<div style="display:flex;gap:8px;margin-bottom:8px;">'
+                f'<div style="width:6px;height:6px;border-radius:50%;background:{color};margin-top:5px;"></div>'
+                f'<div><div style="font-size:11px;color:#111827;">{escape(label)} — {escape(co)}</div>'
+                f'<div style="font-size:10px;color:#9CA3AF;">{escape(fmt_app_date(str(a.get("created_at")) if a.get("created_at") else None))}</div></div></div>',
+                unsafe_allow_html=True,
+            )
+
+
+def render_applications_page(backend_url: str, applications: list[dict[str, Any]]) -> None:
+    st.text_input("Search applications", key="apps_search", placeholder="Search...", label_visibility="collapsed")
+    options = ["all"] + APPLICATION_STATUSES
+    if st.session_state.apps_filter not in options:
+        st.session_state.apps_filter = "all"
+    st.selectbox(
+        "Filter",
+        options=options,
+        key="apps_filter",
+        format_func=lambda x: "All" if x == "all" else format_status_option(x),
+        label_visibility="collapsed",
+    )
+    q = (st.session_state.apps_search or "").lower().strip()
+    f = st.session_state.apps_filter
+    filtered = [
+        a for a in applications
+        if (f == "all" or (a.get("status") or "") == f)
+        and (not q or q in (a.get("company_name") or "").lower() or q in (a.get("role_title") or "").lower())
+    ]
+
+    selected = st.session_state.get("selected_application_id")
+    if selected:
+        app = next((a for a in applications if int(a["id"]) == int(selected)), None)
+        if app is None:
+            st.session_state["selected_application_id"] = None
+            st.rerun()
+        if st.button("← Back"):
+            st.session_state["selected_application_id"] = None
+            st.rerun()
+        co = (app.get("company_name") or "Company").strip() or "Company"
+        role = (app.get("role_title") or "").strip() or "Role"
+        host = portal_host(app.get("portal_url") or "")
+        status = app.get("status") or "applied"
+        st.markdown(
+            f'<div style="background:#fff;border:1px solid rgba(0,0,0,0.06);border-radius:16px;padding:18px;">'
+            f'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">'
+            f'<div><div style="font-size:22px;font-weight:800;color:#111827;">{escape(co)}</div>'
+            f'<div style="font-size:13px;color:#6B7280;">{escape(role)}</div></div>'
+            f'<div>{status_badge_html(status)}</div></div>'
+            f'<div style="margin-top:10px;font-size:12px;color:#6B7280;">Portal: {escape(host)} · Applied: {escape(fmt_app_date(str(app.get("created_at")) if app.get("created_at") else None))}</div>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
+        key = f"detail_status_{selected}"
+        st.selectbox("Update status", APPLICATION_STATUSES, key=key, index=APPLICATION_STATUSES.index(status) if status in APPLICATION_STATUSES else 0)
+        if st.button("Save status", type="primary"):
+            resp = api_request(
+                backend_url,
+                f"/me/applications/{selected}/status",
+                method="PATCH",
+                json_body={"status": st.session_state.get(key)},
+            )
+            if resp.ok:
+                st.success("Status updated.")
+                st.rerun()
+            else:
+                st.error(f"Update failed: {resp.text}")
+        return
+
+    if not filtered:
+        st.info("No results")
+        return
+    for a in filtered:
+        aid = int(a["id"])
+        co = (a.get("company_name") or "Company").strip() or "Company"
+        role = (a.get("role_title") or "").strip() or "Role"
+        date_txt = fmt_app_date(str(a.get("created_at")) if a.get("created_at") else None)
+        r1, r2, r3 = st.columns([5, 2, 1])
+        with r1:
+            st.markdown(
+                f'<div style="display:flex;align-items:center;gap:12px;padding:4px 0;">'
+                f'<div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#4F6BED,#7C3AED);'
+                f'display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;">{escape(co[:1].upper())}</div>'
+                f'<div><div style="font-size:13px;font-weight:600;color:#111827;">{escape(co)}</div>'
+                f'<div style="font-size:12px;color:#6B7280;">{escape(role)}</div></div></div>',
+                unsafe_allow_html=True,
+            )
+        with r2:
+            st.markdown(f'<div style="text-align:right;font-size:11px;color:#6B7280;">{escape(date_txt)}<br>{status_badge_html(a.get("status"))}</div>', unsafe_allow_html=True)
+        with r3:
+            if st.button("View", key=f"btn_app_view_{aid}"):
+                st.session_state["selected_application_id"] = aid
+                st.rerun()
 
 
 def main() -> None:
@@ -1626,76 +1800,86 @@ def main() -> None:
     if not apps_resp.ok:
         st.warning(f"Could not load applications: {apps_resp.text}")
 
-    # Layout: left nav + main (reference dashboard)
-    nav_col, main_col = st.columns([1, 4])
+    # Layout: left nav + main content
+    nav_col, main_col = st.columns([1.05, 3.95])
     with nav_col:
         st.markdown(
-            '<div class="nav-wrap">'
-            '<div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;">'
-            '<div class="logo-pill">⚡</div>'
-            '<div><div style="font-size:13px;font-weight:700;">AI Job Assistant</div>'
-            '<div style="font-size:9px;color:#52525b;font-weight:600;letter-spacing:0.08em;">APPLICATION PORTAL</div></div>'
+            '<div class="nav-wrap" style="background:#141332;border:0;padding:14px;">'
+            '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">'
+            '<div class="logo-pill" style="width:30px;height:30px;border-radius:8px;background:#4F6BED;">⚡</div>'
+            '<div><div style="font-size:14px;font-weight:800;color:#fff;">JobAssist</div></div>'
             "</div>"
-            '<div class="nav-title">NAVIGATION</div>',
+            '<div class="nav-title" style="display:none;">NAVIGATION</div>',
             unsafe_allow_html=True,
         )
         nav_main = st.session_state.main_nav
         if st.button("Dashboard", use_container_width=True, type="primary" if nav_main == "dashboard" else "secondary"):
             st.session_state.main_nav = "dashboard"
+            st.session_state.selected_application_id = None
+            st.rerun()
+        if st.button("Applications", use_container_width=True, type="primary" if nav_main == "applications" else "secondary"):
+            st.session_state.main_nav = "applications"
             st.rerun()
         if st.button("Profile", use_container_width=True, type="primary" if nav_main == "profile" else "secondary"):
             st.session_state.main_nav = "profile"
+            st.session_state.selected_application_id = None
             st.rerun()
-        if st.button("Resume", use_container_width=True, type="primary" if nav_main == "resume" else "secondary"):
+        if st.button("Resumes", use_container_width=True, type="primary" if nav_main == "resume" else "secondary"):
             st.session_state.main_nav = "resume"
+            st.session_state.selected_application_id = None
             st.rerun()
         if st.button("Settings", use_container_width=True, type="primary" if nav_main == "settings" else "secondary"):
             st.session_state.main_nav = "settings"
+            st.session_state.selected_application_id = None
             st.rerun()
-
-        st.markdown(
-            '<div style="margin-top:10px;padding:10px 0;border-top:1px solid #1c1c22;">'
-            '<div style="font-size:11px;color:#22c55e;font-weight:600;">● Connected</div></div>',
-            unsafe_allow_html=True,
-        )
         em = profile.get("email") or ""
         name = profile.get("full_name") or em.split("@")[0] or "User"
         initial = name[:1].upper()
         st.markdown(
+            '<div style="margin-top:8px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.08);"></div>'
             f'<div style="display:flex;align-items:center;gap:9px;padding:8px 0;">'
-            f'<div class="logo-pill" style="width:28px;height:28px;border-radius:50%;font-size:11px;">{escape(initial)}</div>'
-            f'<div style="min-width:0;"><div style="font-size:12px;font-weight:600;">{escape(name)}</div>'
-            f'<div class="dim" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{escape(em)}</div></div></div>',
+            f'<div class="logo-pill" style="width:30px;height:30px;border-radius:50%;font-size:11px;">{escape(initial)}</div>'
+            f'<div style="min-width:0;"><div style="font-size:12px;font-weight:700;color:#fff;">{escape(name)}</div>'
+            f'<div style="font-size:10px;color:rgba(255,255,255,0.6);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{escape(em)}</div></div></div>',
             unsafe_allow_html=True,
         )
+        if st.button("Sign out", key="btn_sidebar_signout", use_container_width=True, type="secondary"):
+            clear_auth_state()
+            st.rerun()
 
     with main_col:
         page = st.session_state.main_nav
         if page == "dashboard":
             st.markdown(
                 "<h1 style='font-size:24px;font-weight:800;margin:0 0 4px;'>Dashboard</h1>"
-                "<p class='muted' style='margin:0;'>Track your applications and manage your job search.</p>",
+                "<p style='font-size:13px;color:#6B7280;margin:0 0 14px;'>Track your applications and manage your job search.</p>",
                 unsafe_allow_html=True,
             )
-            render_dashboard(backend_url, profile, applications)
+            render_dashboard(applications)
+        elif page == "applications":
+            st.markdown(
+                "<h1 style='font-size:24px;font-weight:800;margin:0 0 10px;'>Applications</h1>",
+                unsafe_allow_html=True,
+            )
+            render_applications_page(backend_url, applications)
         elif page == "profile":
             st.markdown(
                 "<h1 style='font-size:24px;font-weight:800;margin:0 0 4px;'>Profile</h1>"
-                "<p class='muted' style='margin:0;'>Same fields as the first-time setup in the extension.</p>",
+                "<p style='font-size:13px;color:#6B7280;margin:0 0 14px;'>Same fields as the first-time setup in the extension.</p>",
                 unsafe_allow_html=True,
             )
             render_profile_form(backend_url, profile)
         elif page == "resume":
             st.markdown(
                 "<h1 style='font-size:24px;font-weight:800;margin:0 0 4px;'>Resumes</h1>"
-                f"<p class='muted' style='margin:0;'>Manage your uploaded resumes. Upload up to {MAX_RESUMES}.</p>",
+                f"<p style='font-size:13px;color:#6B7280;margin:0 0 14px;'>Manage your uploaded resumes. Upload up to {MAX_RESUMES}.</p>",
                 unsafe_allow_html=True,
             )
             render_resume_page(backend_url)
-        else:
+        elif page == "settings":
             st.markdown(
                 "<h1 style='font-size:24px;font-weight:800;margin:0 0 4px;'>Settings</h1>"
-                "<p class='muted' style='margin:0;'>Connection and account settings.</p>",
+                "<p style='font-size:13px;color:#6B7280;margin:0 0 14px;'>Connection and account settings.</p>",
                 unsafe_allow_html=True,
             )
             render_settings_page(backend_url, app_url)
