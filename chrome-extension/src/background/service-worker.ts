@@ -3,12 +3,23 @@
  * Handles: side panel open, message routing, auth, session management, application tracking.
  */
 
-import { MSG, STORAGE_KEYS, API_BASE_URL, GOOGLE_CLIENT_ID } from "@/shared/constants";
+import { MSG, STORAGE_KEYS } from "@/shared/constants";
 import type { AutofillProgress, AutofillSession, UserProfile } from "@/shared/types";
+import type { PendingApplication } from "@/shared/pending-application";
 import { buildAutofillAnswersFromProfile } from "@/shared/autofill-answers";
+import { enqueue } from "@/utils/pending-queue";
+import {
+  registerSyncAlarm,
+  initSyncAlarmListener,
+  syncPendingApplications,
+} from "./sync";
 
 // Allow content scripts to read/write chrome.storage.session (answers, trigger, decisions)
 chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS" });
+
+// Background sync: register alarm and listener on every service worker wake
+registerSyncAlarm();
+initSyncAlarmListener();
 
 // Rebuild autofill answers from cached profile on every service worker startup
 chrome.storage.local.get([STORAGE_KEYS.USER_PROFILE]).then((result) => {
@@ -180,11 +191,6 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
-  if (message.type === MSG.GET_AUTH_TOKEN) {
-    handleSignInWithGoogle().then(sendResponse).catch((err) => sendResponse({ error: String(err) }));
-    return true;
-  }
-
   if (message.type === MSG.GET_USER_PROFILE) {
     chrome.storage.local.get([STORAGE_KEYS.USER_PROFILE]).then((result) => {
       sendResponse(result[STORAGE_KEYS.USER_PROFILE] ?? null);
@@ -347,7 +353,53 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "TRACK_APPLICATION") {
-    trackApplication(message.data).then(sendResponse).catch((err) => sendResponse({ error: String(err) }));
+    (async () => {
+      try {
+        const data = message.data ?? {};
+        const pendingApp: PendingApplication = {
+          local_id: crypto.randomUUID(),
+          portal_url: data.portal_url || "",
+          company_name: data.company_name || null,
+          role_title: data.role_title || null,
+          job_board: data.job_board || null,
+          applied_at: data.applied_at || new Date().toISOString(),
+          status: "applied",
+          job_id: data.job_id || null,
+          resume_id: data.resume_id || null,
+          resume_filename: data.resume_filename || null,
+          resume_source: data.resume_source || null,
+          cover_letter: data.cover_letter || null,
+          salary: data.salary || null,
+          synced: false,
+          backend_id: null,
+          retry_count: 0,
+          last_error: null,
+        };
+
+        await enqueue(pendingApp);
+        syncPendingApplications().catch(() => {});
+        sendResponse({ success: true, local_id: pendingApp.local_id });
+      } catch (err) {
+        try {
+          const { pending_applications = [] } =
+            await chrome.storage.local.get("pending_applications");
+          pending_applications.push({
+            ...message.data,
+            local_id: crypto.randomUUID(),
+            synced: false,
+            retry_count: 0,
+            applied_at: new Date().toISOString(),
+          });
+          await chrome.storage.local.set({ pending_applications });
+          sendResponse({ success: true });
+        } catch (finalErr: unknown) {
+          sendResponse({
+            success: false,
+            error: finalErr instanceof Error ? finalErr.message : String(finalErr),
+          });
+        }
+      }
+    })();
     return true;
   }
 
@@ -411,346 +463,11 @@ async function handleStartAutofill() {
 }
 
 // ---------------------------------------------------------------------------
-// Google OAuth via launchWebAuthFlow (auth-code flow, works without Chrome Web Store listing)
-// ---------------------------------------------------------------------------
-
-interface AppTokens {
-  access_token: string;
-  refresh_token?: string;
-  is_new_user: boolean;
-}
-
-/**
- * Full Google sign-in flow:
- * 1. chrome.identity.launchWebAuthFlow → Google consent screen → auth code
- * 2. Send auth code to backend POST /auth/extension/google
- * 3. Backend exchanges code for Google access token, checks whitelist, returns app JWT
- *
- * Returns { tokens } on success or { error, status? } on failure.
- */
-async function handleSignInWithGoogle(): Promise<{ tokens: AppTokens } | { error: string; status?: number }> {
-  if (!GOOGLE_CLIENT_ID) {
-    return {
-      error:
-        "Google OAuth client ID is not configured. " +
-        "Set VITE_GOOGLE_CLIENT_ID in chrome-extension/.env (same value as GOOGLE_CLIENT_ID in backend/.env), rebuild the extension, and reload.",
-    };
-  }
-
-  const redirectUri = chrome.identity.getRedirectURL();
-
-  const authUrl =
-    "https://accounts.google.com/o/oauth2/v2/auth?" +
-    new URLSearchParams({
-      client_id: GOOGLE_CLIENT_ID,
-      redirect_uri: redirectUri,
-      response_type: "code",
-      scope: "openid email profile",
-      access_type: "offline",
-      prompt: "select_account",
-    }).toString();
-
-  return new Promise((resolve) => {
-    chrome.identity.launchWebAuthFlow({ url: authUrl, interactive: true }, async (redirectUrl) => {
-      if (chrome.runtime.lastError || !redirectUrl) {
-        const msg = chrome.runtime.lastError?.message ?? "";
-        // "The user did not approve access." or "cancelled" mean the user closed the popup
-        if (
-          msg.toLowerCase().includes("did not approve") ||
-          msg.toLowerCase().includes("cancel") ||
-          msg.toLowerCase().includes("closed")
-        ) {
-          resolve({ error: "Sign-in was cancelled. Try again and approve access when Google asks." });
-        } else {
-          resolve({ error: msg || "Google sign-in failed. Try again." });
-        }
-        return;
-      }
-
-      try {
-        const url = new URL(redirectUrl);
-        const errorParam = url.searchParams.get("error");
-        if (errorParam) {
-          resolve({ error: `Google sign-in error: ${errorParam}` });
-          return;
-        }
-
-        const code = url.searchParams.get("code");
-        if (!code) {
-          resolve({ error: "Google sign-in did not return an authorization code. Try again." });
-          return;
-        }
-
-        // Exchange authorization code on the backend (backend holds the client_secret)
-        const resp = await fetch(`${API_BASE_URL}/auth/extension/google`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ code, redirect_uri: redirectUri }),
-        });
-
-        if (!resp.ok) {
-          let detail = `Server error (${resp.status})`;
-          try {
-            const body = await resp.json() as { detail?: string };
-            if (body.detail) detail = body.detail;
-          } catch { /* ignore */ }
-          resolve({ error: detail, status: resp.status });
-          return;
-        }
-
-        const tokens = await resp.json() as AppTokens;
-        resolve({ tokens });
-      } catch (err) {
-        resolve({ error: err instanceof Error ? err.message : "Unexpected error during sign-in." });
-      }
-    });
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Application tracking
-// ---------------------------------------------------------------------------
-
-async function trackApplication(data?: {
-  company_name?: string;
-  role_title?: string;
-  job_id?: number;
-  resume_id?: number;
-  portal_url?: string;
-  job_description?: string;
-  salary?: string | null;
-  applied_at?: string;
-  status?: string;
-  resume_filename?: string | null;
-  resume_source?: string | null;
-  resume_text?: string | null;
-  cover_letter?: string | null;
-}): Promise<{
-  success: boolean;
-  applicationId?: number;
-  error?: string;
-  reason?: "auth_expired";
-  eventsPartialFailure?: boolean;
-}> {
-  try {
-    const stored = await chrome.storage.local.get([
-      STORAGE_KEYS.ACCESS_TOKEN,
-      STORAGE_KEYS.SESSION_ID,
-    ]);
-
-    let accessToken = stored[STORAGE_KEYS.ACCESS_TOKEN];
-    const sessionId = stored[STORAGE_KEYS.SESSION_ID];
-    if (!accessToken || !sessionId) return { success: false };
-
-    const tryRefreshAccessToken = async (): Promise<string | null> => {
-      const refreshData = await chrome.storage.local.get([STORAGE_KEYS.REFRESH_TOKEN]);
-      const refreshToken = refreshData[STORAGE_KEYS.REFRESH_TOKEN];
-      if (!refreshToken) return null;
-      try {
-        const refreshResp = await fetch(`${API_BASE_URL}/auth/refresh`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ refresh_token: refreshToken }),
-        });
-        if (!refreshResp.ok) return null;
-        const refreshJson = await refreshResp.json();
-        const nextAccessToken =
-          refreshJson && typeof refreshJson === "object" && "access_token" in refreshJson
-            ? String((refreshJson as { access_token: unknown }).access_token ?? "")
-            : "";
-        if (!nextAccessToken) return null;
-        await chrome.storage.local.set({ [STORAGE_KEYS.ACCESS_TOKEN]: nextAccessToken });
-        accessToken = nextAccessToken;
-        return nextAccessToken;
-      } catch {
-        return null;
-      }
-    };
-
-    const fetchWithAuthRetry = async (
-      url: string,
-      options: RequestInit
-    ): Promise<{ response: Response | null; authExpired: boolean }> => {
-      const firstResp = await fetch(url, options);
-      if (firstResp.status !== 401) return { response: firstResp, authExpired: false };
-      const refreshedAccessToken = await tryRefreshAccessToken();
-      if (!refreshedAccessToken) return { response: null, authExpired: true };
-      const retryHeaders = {
-        ...(options.headers as Record<string, string>),
-        Authorization: `Bearer ${refreshedAccessToken}`,
-      };
-      const retryResp = await fetch(url, { ...options, headers: retryHeaders });
-      if (retryResp.status === 401) return { response: null, authExpired: true };
-      return { response: retryResp, authExpired: false };
-    };
-
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const portalUrl = data?.portal_url ?? tab?.url ?? "";
-    const tabTitle = tab?.title ?? "";
-    const jobBoard = detectJobBoard(portalUrl);
-    const derivedRoleTitle = data?.role_title?.trim() || extractRoleFromTitle(tabTitle) || "";
-    const derivedCompanyName =
-      data?.company_name?.trim() ||
-      extractCompanyFromTitle(tabTitle) ||
-      extractCompanyFromUrl(portalUrl);
-    const status = data?.status?.trim() || "applied";
-
-    const buildAuthHeaders = (): Record<string, string> => ({
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${accessToken}`,
-      "X-Session-Id": sessionId,
-    });
-
-    const createResult = await fetchWithAuthRetry(`${API_BASE_URL}/applications`, {
-      method: "POST",
-      headers: buildAuthHeaders(),
-      body: JSON.stringify({
-        company_name: derivedCompanyName,
-        role_title: derivedRoleTitle,
-        portal_url: portalUrl,
-        job_board: jobBoard,
-        job_id: data?.job_id ?? null,
-        resume_id: data?.resume_id ?? null,
-        status,
-        job_description: data?.job_description ?? null,
-        salary: data?.salary ?? null,
-        resume_filename: data?.resume_filename ?? null,
-        resume_source: data?.resume_source ?? null,
-        cover_letter: data?.cover_letter ?? null,
-      }),
-    });
-    if (createResult.authExpired || !createResult.response) {
-      return { success: false, reason: "auth_expired" };
-    }
-    if (!createResult.response.ok) {
-      return { success: false, error: `Create application failed: HTTP ${createResult.response.status}` };
-    }
-    const application = await createResult.response.json();
-
-    const snapshot = {
-      company_name: derivedCompanyName,
-      role_title: derivedRoleTitle,
-      portal_url: portalUrl,
-      job_board: jobBoard,
-      job_description: data?.job_description ?? null,
-      salary: data?.salary ?? null,
-      applied_at: data?.applied_at ?? new Date().toISOString(),
-      status,
-      resume: {
-        resume_id: data?.resume_id ?? null,
-        filename: data?.resume_filename ?? null,
-        source: data?.resume_source ?? null,
-        content: data?.resume_text ?? null,
-      },
-      cover_letter: data?.cover_letter ?? null,
-      tracked_from: "chrome_extension_done_action",
-      captured_tab_title: tabTitle || null,
-    };
-
-    let eventsPartialFailure = false;
-
-    try {
-      const autofillEventResult = await fetchWithAuthRetry(`${API_BASE_URL}/applications/${application.id}/events`, {
-        method: "POST",
-        headers: buildAuthHeaders(),
-        body: JSON.stringify({
-          event_type: "autofill_complete",
-          detail: `Auto-filled from Chrome extension at ${snapshot.applied_at}`,
-        }),
-      });
-      if (autofillEventResult.authExpired || !autofillEventResult.response) {
-        return { success: false, reason: "auth_expired" };
-      }
-      if (!autofillEventResult.response.ok) eventsPartialFailure = true;
-    } catch {
-      eventsPartialFailure = true;
-    }
-
-    try {
-      const snapshotEventResult = await fetchWithAuthRetry(`${API_BASE_URL}/applications/${application.id}/events`, {
-        method: "POST",
-        headers: buildAuthHeaders(),
-        body: JSON.stringify({
-          event_type: "application_snapshot",
-          detail: JSON.stringify(snapshot),
-        }),
-      });
-      if (snapshotEventResult.authExpired || !snapshotEventResult.response) {
-        return { success: false, reason: "auth_expired" };
-      }
-      if (!snapshotEventResult.response.ok) eventsPartialFailure = true;
-    } catch {
-      eventsPartialFailure = true;
-    }
-
-    return {
-      success: true,
-      applicationId: application.id,
-      ...(eventsPartialFailure ? { eventsPartialFailure: true } : {}),
-    };
-  } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : String(err) };
-  }
-}
-
-function detectJobBoard(url: string): string {
-  if (!url) return "unknown";
-  try {
-    const hostname = new URL(url).hostname.toLowerCase();
-    if (hostname.includes("linkedin")) return "LinkedIn";
-    if (hostname.includes("indeed")) return "Indeed";
-    if (hostname.includes("glassdoor")) return "Glassdoor";
-    if (hostname.includes("lever.co")) return "Lever";
-    if (hostname.includes("greenhouse.io")) return "Greenhouse";
-    if (hostname.includes("workday") || hostname.includes("myworkdayjobs")) return "Workday";
-    if (hostname.includes("icims")) return "iCIMS";
-    if (hostname.includes("smartrecruiters")) return "SmartRecruiters";
-    if (hostname.includes("jobvite")) return "Jobvite";
-    if (hostname.includes("taleo")) return "Taleo";
-    if (hostname.includes("ashbyhq")) return "Ashby";
-    return hostname;
-  } catch {
-    return "unknown";
-  }
-}
-
-function extractCompanyFromUrl(url: string): string {
-  if (!url) return "";
-  try {
-    const hostname = new URL(url).hostname;
-    return hostname
-      .replace(/^(www\.|jobs\.|careers\.|apply\.)/, "")
-      .replace(/\.(com|io|co|org|net|jobs).*$/, "")
-      .replace(/\./g, " ")
-      .replace(/^(\w)/, (m) => m.toUpperCase());
-  } catch {
-    return "";
-  }
-}
-
-function extractRoleFromTitle(title: string): string {
-  if (!title) return "";
-  return title
-    .split(/[\|\-–—•]/)
-    .map((part) => part.trim())
-    .find((part) => /\b(engineer|developer|scientist|manager|analyst|intern|specialist|associate|designer|consultant|lead)\b/i.test(part)) ?? "";
-}
-
-function extractCompanyFromTitle(title: string): string {
-  if (!title) return "";
-  const parts = title
-    .split(/[\|\-–—•]/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-  if (parts.length === 0) return "";
-  return parts.find((part) => /\b(careers|jobs|job)\b/i.test(part)) ?? parts[parts.length - 1] ?? "";
-}
-
-// ---------------------------------------------------------------------------
 // Context menu
 // ---------------------------------------------------------------------------
 
 chrome.runtime.onInstalled.addListener(() => {
+  registerSyncAlarm();
   chrome.contextMenus.create({
     id: "use-as-jd",
     title: "Use selected text as Job Description",

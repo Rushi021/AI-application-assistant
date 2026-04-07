@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useAppStore } from "../store";
 import { deleteResume } from "../services/api";
 import { MSG, STORAGE_KEYS } from "@/shared/constants";
+import { getActiveTabContext } from "@/utils/tab-context";
 import type { AutofillProgress, AutofillSession, FileUploadBlockerDecision, FormBlocker, UserProfile } from "@/shared/types";
 import WorkflowLayout from "../components/WorkflowLayout";
 import AccountMenu from "../components/AccountMenu";
@@ -216,6 +217,7 @@ export default function AutoFillPage() {
     pipelineRun,
   } = useAppStore();
   const [error, setError] = useState<string | null>(null);
+  const [trackingStatus, setTrackingStatus] = useState<"idle" | "success" | "error">("idle");
   const [started, setStarted] = useState(false);
   const [showUploadCompleteConfirm, setShowUploadCompleteConfirm] = useState(false);
   const [uploadedSameAsProfileResume, setUploadedSameAsProfileResume] = useState(false);
@@ -420,6 +422,7 @@ export default function AutoFillPage() {
 
   const handleDoneAndStartNewApplication = useCallback(async () => {
     setError(null);
+    setTrackingStatus("idle");
     chrome.runtime.sendMessage({ type: MSG.AUTOFILL_SESSION_CANCEL, data: { reason: "application_done" } }).catch(() => {});
     if (autofillProgress) {
       await persistAutofillProgress({
@@ -434,43 +437,45 @@ export default function AutoFillPage() {
     }
     appendTimeline("Finalizing application tracking");
     const store = useAppStore.getState();
-    let trackingError: string | null = null;
 
     try {
+      const tabContext = await getActiveTabContext();
       const selectedResume =
         store.resumes.find((resume) => resume.id === (store.autofillContext.temporaryResumeId ?? store.selectedResumeId)) ?? null;
-      const resumeText =
-        store.pipelineRun?.tailored_resume ??
-        store.pipelineRun?.resume_text ??
-        store.draft?.sections.map((section) => section.current_text).filter(Boolean).join("\n\n") ??
-        null;
+
       const response = await chrome.runtime.sendMessage({
         type: "TRACK_APPLICATION",
         data: {
-          job_id: store.jobId,
-          resume_id: store.autofillContext.temporaryResumeId ?? store.selectedResumeId,
-          job_description: store.jobDescription || store.draft?.job_description || store.pipelineRun?.job_description || null,
-          salary:
-            store.profile?.expected_salary ??
-            store.profile?.current_salary ??
-            null,
+          portal_url: tabContext.url,
+          company_name: tabContext.company_name,
+          role_title: tabContext.role_title,
+          job_board: tabContext.job_board,
           applied_at: new Date().toISOString(),
           status: "applied",
+          job_id: store.jobId || null,
+          resume_id: store.autofillContext.temporaryResumeId ?? store.selectedResumeId ?? null,
           resume_filename: selectedResume?.original_filename ?? store.autofillContext.temporaryResumeFilename ?? null,
-          resume_source: store.autofillContext.applicationResumeSource,
-          resume_text: resumeText,
+          resume_source: store.autofillContext.applicationResumeSource ?? null,
           cover_letter: store.coverLetter || store.draft?.cover_letter || store.pipelineRun?.cover_letter || null,
+          salary: store.profile?.expected_salary ?? store.profile?.current_salary ?? null,
         },
       });
 
-      if (!response?.success) {
-        throw new Error(response?.error ?? "Failed to track application");
+      if (response?.success) {
+        setTrackingStatus("success");
+        appendTimeline(`Application tracked locally (id=${response.local_id ?? "queued"})`);
+      } else {
+        setTrackingStatus("error");
+        appendTimeline("Tracking queued with fallback — will retry automatically", "warn");
       }
-      appendTimeline(`Application tracked id=${response.applicationId ?? "unknown"}`);
     } catch (err) {
-      trackingError = err instanceof Error ? err.message : "Failed to finalize application";
-      appendTimeline(`Tracking skipped: ${trackingError}`, "warn");
+      setTrackingStatus("error");
+      const msg = err instanceof Error ? err.message : "Unknown error";
+      appendTimeline(`Tracking error: ${msg} — will retry automatically`, "warn");
     }
+
+    // Let the user see the success/error banner before resetting
+    await new Promise((r) => setTimeout(r, 1500));
 
     try {
       if (store.autofillContext.temporaryResumeId) {
@@ -484,13 +489,8 @@ export default function AutoFillPage() {
       resetExecutionView();
       resetWorkflow();
       setStarted(false);
+      setTrackingStatus("idle");
       setPage("job-description");
-    }
-
-    if (trackingError) {
-      setError(`Started a new application, but tracking failed: ${trackingError}`);
-    } else {
-      appendTimeline("Workflow reset for next application");
     }
   }, [appendTimeline, autofillProgress, persistAutofillProgress, resetExecutionView, resetWorkflow, setPage]);
 
@@ -1157,6 +1157,23 @@ export default function AutoFillPage() {
 
           <div className="shrink-0 px-[18px] py-3 border-t border-white/[0.07] bg-[#0a0a0a] space-y-2">
             {error && <p className="text-xs text-red-400">{error}</p>}
+            {trackingStatus === "success" && (
+              <div
+                className="flex items-center gap-2 rounded-xl px-3.5 py-2.5"
+                style={{ background: "rgba(34,197,94,0.08)", border: "1px solid rgba(34,197,94,0.2)" }}
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M13.333 4L6 11.333 2.667 8" stroke="#22c55e" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                <span className="text-[13px] font-semibold" style={{ color: "#22c55e" }}>Application tracked successfully!</span>
+              </div>
+            )}
+            {trackingStatus === "error" && (
+              <div
+                className="flex items-center gap-2 rounded-xl px-3.5 py-2.5"
+                style={{ background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)" }}
+              >
+                <span className="text-[13px] font-semibold" style={{ color: "#ef4444" }}>Failed to save — will retry automatically.</span>
+              </div>
+            )}
             <div className="flex gap-2 items-stretch">
               {!isSessionComplete && (
                 <button

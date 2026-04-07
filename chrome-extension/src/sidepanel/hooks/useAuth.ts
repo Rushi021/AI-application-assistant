@@ -1,12 +1,10 @@
 import { useCallback, useState } from "react";
-import { STORAGE_KEYS, MSG } from "@/shared/constants";
+import { STORAGE_KEYS, GOOGLE_CLIENT_ID } from "@/shared/constants";
 import { buildAutofillAnswersFromProfile } from "@/shared/autofill-answers";
-import { ApiError, getProfile } from "../services/api";
+import { ApiError, exchangeExtensionGoogleCode, getProfile } from "../services/api";
 import { useAppStore } from "../store";
 
 function mapAuthError(err: unknown): string {
-  // Service worker passes { error, status? } but they arrive as plain objects after message passing.
-  // Handle the two known status codes explicitly.
   if (err instanceof ApiError) {
     if (err.status === 403) {
       return "Access denied. Your email is not activated by an administrator yet.";
@@ -21,7 +19,10 @@ function mapAuthError(err: unknown): string {
     if (m.includes("Access denied") || m.includes("access denied")) {
       return "Access denied. Your email is not activated by an administrator yet.";
     }
-    if (m.includes("not configured")) return m; // surface config errors directly
+    if (m.includes("not configured")) return m;
+    if (m.toLowerCase().includes("did not approve") || m.toLowerCase().includes("cancel")) {
+      return "Sign-in was cancelled. Try again and approve access when Google asks.";
+    }
     return m || "Sign-in failed. Please try again.";
   }
   return "Sign-in failed. Please try again.";
@@ -64,41 +65,67 @@ export function useAuth() {
   );
 
   /**
-   * Sign in with Google.
-   * The service worker opens Google's consent screen via chrome.identity.launchWebAuthFlow,
-   * exchanges the auth code with the backend, and returns app JWT tokens directly.
-   * No Google client secret ever touches the extension.
+   * Sign in with Google. `launchWebAuthFlow` MUST be invoked synchronously from the button click
+   * (not after sendMessage / await), or Chrome will not show the account picker.
    */
-  const signInWithGoogle = useCallback(async () => {
-    setLoading(true);
+  const signInWithGoogle = useCallback(() => {
     setError(null);
-
-    try {
-      const response: { tokens?: { access_token: string; refresh_token?: string; is_new_user: boolean }; error?: string; status?: number } =
-        await chrome.runtime.sendMessage({ type: MSG.GET_AUTH_TOKEN });
-
-      if (!response) {
-        throw new Error("No response from extension background. Try reloading the extension.");
-      }
-
-      if (response.error) {
-        // Surface 403 with admin-specific copy; everything else passes through.
-        if (response.status === 403 || response.error.toLowerCase().includes("access denied")) {
-          throw new ApiError(403, response.error);
-        }
-        throw new Error(response.error);
-      }
-
-      if (!response.tokens?.access_token) {
-        throw new Error("Sign-in did not return valid tokens. Try again.");
-      }
-
-      await completeLogin(response.tokens);
-    } catch (err) {
-      setError(mapAuthError(err));
-    } finally {
-      setLoading(false);
+    if (!GOOGLE_CLIENT_ID.trim()) {
+      setError(
+        "Google OAuth client ID is not configured. Set VITE_GOOGLE_CLIENT_ID in chrome-extension/.env, rebuild, and reload the extension."
+      );
+      return;
     }
+
+    const redirectUri = chrome.identity.getRedirectURL();
+    const authUrl =
+      "https://accounts.google.com/o/oauth2/v2/auth?" +
+      new URLSearchParams({
+        client_id: GOOGLE_CLIENT_ID,
+        redirect_uri: redirectUri,
+        response_type: "code",
+        scope: "openid email profile",
+        access_type: "offline",
+        prompt: "select_account",
+      }).toString();
+
+    // Open OAuth first, then set loading — avoids React state flush consuming user activation before the popup.
+    chrome.identity.launchWebAuthFlow({ url: authUrl, interactive: true }, (redirectUrl) => {
+      void (async () => {
+        try {
+          if (chrome.runtime.lastError?.message) {
+            setError(mapAuthError(new Error(chrome.runtime.lastError.message)));
+            return;
+          }
+          if (!redirectUrl) {
+            setError("Google sign-in was cancelled.");
+            return;
+          }
+
+          const url = new URL(redirectUrl);
+          const errParam = url.searchParams.get("error");
+          if (errParam) {
+            setError(`Google sign-in error: ${errParam}`);
+            return;
+          }
+
+          const code = url.searchParams.get("code");
+          if (!code) {
+            setError("Google sign-in did not return an authorization code.");
+            return;
+          }
+
+          const tokens = await exchangeExtensionGoogleCode(code, redirectUri);
+          await completeLogin(tokens);
+        } catch (err) {
+          setError(mapAuthError(err));
+        } finally {
+          setLoading(false);
+        }
+      })();
+    });
+
+    setLoading(true);
   }, [completeLogin]);
 
   const signOut = useCallback(async () => {

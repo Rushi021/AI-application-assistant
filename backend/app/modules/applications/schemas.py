@@ -34,7 +34,6 @@ class ApplicationCreate(BaseModel):
     role_title: Optional[str] = None
     portal_url: Optional[str] = None
     job_board: Optional[str] = None
-    job_description: Optional[str] = None
     salary: Optional[str] = None
     resume_filename: Optional[str] = None
     resume_source: Optional[str] = None

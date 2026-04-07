@@ -138,6 +138,17 @@ export async function authGoogle(token: string, tokenType: "id_token" | "access_
   return resp.json();
 }
 
+/** Exchange Google auth code from chrome.identity.launchWebAuthFlow (no JWT yet). */
+export async function exchangeExtensionGoogleCode(code: string, redirectUri: string): Promise<AuthTokens> {
+  const resp = await fetch(`${API_BASE_URL}/auth/extension/google`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ code, redirect_uri: redirectUri }),
+  });
+  if (!resp.ok) throw new ApiError(resp.status, await resp.text());
+  return resp.json();
+}
+
 /** One-time code to open the web app with the same account (JWT → short-lived code, max 60s TTL on server). */
 export async function createWebBridgeCode(): Promise<string> {
   const data = await request<{ code: string }>("/auth/web/bridge", {

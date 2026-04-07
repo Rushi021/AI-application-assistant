@@ -35,7 +35,6 @@ def create_application(
         role_title=payload.role_title,
         portal_url=payload.portal_url,
         job_board=payload.job_board,
-        job_description=payload.job_description,
         salary=payload.salary,
         resume_filename=payload.resume_filename,
         resume_source=payload.resume_source,
