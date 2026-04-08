@@ -284,7 +284,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ success: false, error: "Missing tabId" });
           return;
         }
-        await ensureContentScriptInjected(tabId);
+        try {
+          await ensureContentScriptInjected(tabId);
+        } catch {
+          // Injection may fail on pages with restricted iframes — content script from manifest is still present
+        }
         await broadcastToAllFrames(tabId, { action: "run_autofill" });
         emitDiagTrace("DirectAutofill", "Forwarded run_autofill to all frames");
         sendResponse({ success: true });
@@ -306,9 +310,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ success: false, error: "Missing tabId" });
           return;
         }
-        await ensureContentScriptInjected(tabId);
-        await broadcastToAllFrames(tabId, { action: "run_autofill" });
-        emitDiagTrace("BroadcastRunAutofill", "Forwarded run_autofill to all frames");
+        try {
+          await ensureContentScriptInjected(tabId);
+        } catch {
+          // Injection may fail on pages with restricted iframes — content script from manifest is still present
+        }
+        try {
+          await broadcastToAllFrames(tabId, { action: "run_autofill" });
+        } catch {
+          // broadcastToAllFrames may fail if webNavigation.getAllFrames rejects
+        }
+        // Always send directly to the main frame as a reliable fallback
+        chrome.tabs.sendMessage(tabId, { action: "run_autofill" }).catch(() => {});
+        emitDiagTrace("BroadcastRunAutofill", "Forwarded run_autofill to tab");
         sendResponse({ success: true });
       } catch (err) {
         sendResponse({

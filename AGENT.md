@@ -105,6 +105,10 @@ Skip `node_modules/`, `chrome-extension/dist/`, `backend/venv/`, `.venv/`, build
 - CORS: custom middleware allows `chrome-extension://` origins; web origins use `ALLOWED_ORIGINS` from settings.
 - `manifest.json` ships `oauth2.client_id` as `YOUR_GOOGLE_OAUTH_CLIENT_ID...` — real deployments must replace it.
 - Cross-origin iframes: autofill only runs where the content script is injected; reliability varies by site.
+- `ensureContentScriptInjected` (allFrames: true) throws on pages with restricted iframes (Workday, etc.) — handlers wrap it in try/catch and always proceed to broadcast.
+- `BROADCAST_RUN_AUTOFILL` handler sends `chrome.tabs.sendMessage` to the main frame as a reliable fallback after `broadcastToAllFrames`.
+- Content script `emitAutofillProgress` writes to **both** `chrome.runtime.sendMessage` and `chrome.storage.local` so progress reaches the sidepanel even if the service-worker relay path fails.
+- Content script's `run_autofill` message handler always resets and runs (no one-shot guard on `autofillActivated`).
 
 ## Naming conventions
 

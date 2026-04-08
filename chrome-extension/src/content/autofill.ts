@@ -373,6 +373,7 @@ function emitAutofillProgress(progress: AutofillProgress): void {
   if (signature === lastProgressSignature) return;
   lastProgressSignature = signature;
   chrome.runtime.sendMessage({ type: MSG.AUTOFILL_PROGRESS, data: progress }).catch(() => {});
+  chrome.storage.local.set({ [STORAGE_KEYS.AUTOFILL_PROGRESS]: progress }).catch(() => {});
 }
 
 function buildProgress({
@@ -1543,15 +1544,13 @@ function initialize(): void {
   chrome.runtime.onMessage.addListener((message: unknown, _sender, sendResponse) => {
     const action = (message as { action?: string } | null)?.action;
     if (action === "run_autofill") {
-      if (!autofillActivated) {
-        autofillActivated = true;
-        blockedOnUpload = false;
-        pipelineRunCount = 0;
-        filledElements = new WeakSet();
-        lastProgressSignature = null;
-        console.log("[Autofill] Trigger received via message (fallback)");
-        void runAutofill();
-      }
+      autofillActivated = true;
+      blockedOnUpload = false;
+      pipelineRunCount = 0;
+      filledElements = new WeakSet();
+      lastProgressSignature = null;
+      console.log("[Autofill] Trigger received via message");
+      void runAutofill();
       sendResponse({ ok: true });
       return true;
     }
