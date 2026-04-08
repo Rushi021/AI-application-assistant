@@ -125,6 +125,9 @@ export function buildAutofillAnswersFromProfile(profile: UserProfile | null | un
       "sponsorship_required",
       "require_visa_sponsorship",
       "need_visa_sponsorship",
+      "employer_sponsorship",
+      "future_sponsorship",
+      "sponsorship_support",
     ]);
   }
 
@@ -143,6 +146,7 @@ export function buildAutofillAnswersFromProfile(profile: UserProfile | null | un
   addAliases(answers, "work_authorization", [
     "authorized_to_work",
     "legally_authorized_to_work",
+    "legally_authorized_to_work_in",
     "authorized_to_work_in_the_united_states",
     "legally_authorized",
     "work_eligibility",
@@ -165,13 +169,22 @@ export function buildAutofillAnswersFromProfile(profile: UserProfile | null | un
   addAliases(answers, "zip_code", ["zip", "zipcode"]);
   addAliases(answers, "university", ["school", "school_name", "college", "institution"]);
   addAliases(answers, "field_of_study", ["major"]);
-  addAliases(answers, "degree", ["degree_type", "education_level"]);
+  addAliases(answers, "degree", [
+    "degree_type",
+    "education_level",
+    "highest_education",
+    "education_completed",
+    "level_of_education",
+  ]);
   addAliases(answers, "expected_salary", [
     "desired_salary",
     "salary_expectation",
     "compensation",
     "desired_compensation",
     "salary_requirement",
+    "minimum_salary",
+    "salary_requirements",
+    "minimum_salary_requirements",
   ]);
   addAliases(answers, "ethnicity", ["race", "race_ethnicity"]);
   addAliases(answers, "gender", ["sex"]);
@@ -187,6 +200,16 @@ export function buildAutofillAnswersFromProfile(profile: UserProfile | null | un
       flattenCustomFields(answers, key, value);
     }
   }
+
+  // Universal eligibility: job applicants must be 18+ to apply via typical portals.
+  setAnswer(answers, "are_you_18", "Yes");
+  addAliases(answers, "are_you_18", [
+    "18_years_of_age",
+    "age_or_older",
+    "over_18",
+    "age_18_or_older",
+    "over_18_years_of_age",
+  ]);
 
   return answers;
 }

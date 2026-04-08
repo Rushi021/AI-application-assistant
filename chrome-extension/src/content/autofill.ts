@@ -37,8 +37,43 @@ let autofillRunning = false;
 let debounceTimer: number | null = null;
 let lastBlockedKey: string | null = null;
 let lastProgressSignature: string | null = null;
+/** After extension reload, the old content script cannot use chrome.* — only a full page refresh fixes it. */
+let extensionContextDead = false;
+let extensionInvalidatedBannerShown = false;
 
 const UPLOAD_DECISION_TTL_MS = 20 * 60 * 1000;
+
+function isExtensionContextValid(): boolean {
+  try {
+    return Boolean(chrome.runtime?.id);
+  } catch {
+    return false;
+  }
+}
+
+function showExtensionInvalidatedBannerOnce(): void {
+  if (extensionInvalidatedBannerShown || !document.documentElement) return;
+  extensionInvalidatedBannerShown = true;
+  const bar = document.createElement("div");
+  bar.setAttribute("data-ai-job-assistant", "extension-reload-notice");
+  bar.textContent =
+    "AI Job Assistant: this tab is using an old extension session. Refresh the page (F5) to use autofill again.";
+  bar.style.cssText = [
+    "position:fixed",
+    "top:0",
+    "left:0",
+    "right:0",
+    "z-index:2147483646",
+    "padding:10px 16px",
+    "font:13px/1.4 system-ui,sans-serif",
+    "background:#1e1e1e",
+    "color:#f5f5f5",
+    "text-align:center",
+    "box-shadow:0 2px 8px rgba(0,0,0,.35)",
+    "border-bottom:1px solid #f97316",
+  ].join(";");
+  document.documentElement.appendChild(bar);
+}
 
 /** Pairs that must NEVER match despite substring overlap */
 const BLOCKED_MATCH_PAIRS: ReadonlySet<string> = new Set([
@@ -1082,12 +1117,7 @@ function fillTextLikeOrCustomDropdown(
   element: HTMLInputElement | HTMLTextAreaElement,
   answerValue: string
 ): boolean {
-  if (element instanceof HTMLInputElement) {
-    const type = element.type.toLowerCase();
-    if (isTextLikeInput(type) && element.closest(CUSTOM_DROPDOWN_CONTAINER_SELECTOR)) {
-      return fillCustomDropdown(element, answerValue);
-    }
-  } else if (element.closest(CUSTOM_DROPDOWN_CONTAINER_SELECTOR)) {
+  if (element.closest(CUSTOM_DROPDOWN_CONTAINER_SELECTOR)) {
     const filled = fillCustomDropdown(element, answerValue);
     if (filled) return true;
   }
@@ -1407,6 +1437,15 @@ function maybeStartMutationObserverAfterRun(): void {
 }
 
 async function runAutofill(): Promise<void> {
+  if (extensionContextDead) return;
+  if (!isExtensionContextValid()) {
+    extensionContextDead = true;
+    showExtensionInvalidatedBannerOnce();
+    console.warn(
+      "[Autofill] Extension context invalidated (extension was reloaded). Refresh this page to use autofill."
+    );
+    return;
+  }
   if (autofillRunning) return;
   if (pipelineRunCount >= MAX_PIPELINE_RUNS_PER_ACTIVATION) {
     console.log("[Autofill] Max pipeline runs reached. Stopping observer retriggers.");
@@ -1507,14 +1546,24 @@ async function runAutofill(): Promise<void> {
     emitAutofillProgress(progress);
     maybeStartMutationObserverAfterRun();
   } catch (err) {
-    console.warn("AUTOFILL: runAutofill failed", err);
-    emitAutofillProgress(buildProgress({ state: "stopped", total: 0, filled: 0, completed: true }));
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/extension context invalidated|context invalidated/i.test(msg)) {
+      extensionContextDead = true;
+      showExtensionInvalidatedBannerOnce();
+      console.warn("[Autofill] Extension context invalidated during run — refresh this page.");
+    } else {
+      console.warn("AUTOFILL: runAutofill failed", err);
+    }
+    if (!extensionContextDead) {
+      emitAutofillProgress(buildProgress({ state: "stopped", total: 0, filled: 0, completed: true }));
+    }
   } finally {
     autofillRunning = false;
   }
 }
 
 function scheduleAutofill(): void {
+  if (extensionContextDead) return;
   if (!autofillActivated) return;
   if (blockedOnUpload) return;
   if (debounceTimer != null) {
@@ -1526,6 +1575,12 @@ function scheduleAutofill(): void {
 }
 
 function initialize(): void {
+  try {
+    if (window.self !== window.top) return;
+  } catch {
+    return; // cross-origin iframe
+  }
+
   chrome.storage.onChanged.addListener((changes, areaName) => {
     if (areaName === "session" && changes[STORAGE_KEYS.AUTOFILL_TRIGGER_TS]) {
       const newVal = changes[STORAGE_KEYS.AUTOFILL_TRIGGER_TS].newValue;

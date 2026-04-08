@@ -105,10 +105,14 @@ Skip `node_modules/`, `chrome-extension/dist/`, `backend/venv/`, `.venv/`, build
 - CORS: custom middleware allows `chrome-extension://` origins; web origins use `ALLOWED_ORIGINS` from settings.
 - `manifest.json` ships `oauth2.client_id` as `YOUR_GOOGLE_OAUTH_CLIENT_ID...` — real deployments must replace it.
 - Cross-origin iframes: autofill only runs where the content script is injected; reliability varies by site.
-- `ensureContentScriptInjected` (allFrames: true) throws on pages with restricted iframes (Workday, etc.) — handlers wrap it in try/catch and always proceed to broadcast.
-- `BROADCAST_RUN_AUTOFILL` handler sends `chrome.tabs.sendMessage` to the main frame as a reliable fallback after `broadcastToAllFrames`.
+- `ensureContentScriptInjected` was removed — manifest handles injection. Re-injection caused duplicate IIFE instances that fight over message channels ("listener indicated an asynchronous response by returning true, but the message channel closed before a response was received").
+- Sidepanel sends `run_autofill` directly to the tab via `chrome.tabs.sendMessage` — no service-worker middleman for the trigger path.
 - Content script `emitAutofillProgress` writes to **both** `chrome.runtime.sendMessage` and `chrome.storage.local` so progress reaches the sidepanel even if the service-worker relay path fails.
 - Content script's `run_autofill` message handler always resets and runs (no one-shot guard on `autofillActivated`).
+- `fillTextLikeOrCustomDropdown` always falls back to `fillTextLike` when `fillCustomDropdown` fails — Workday puts inputs inside `[role="combobox"]` containers but doesn't match the expected custom dropdown structure.
+- `buildAutofillAnswersFromProfile` adds a static **Yes** for age-18+ eligibility keys (`are_you_18` + aliases) and extra ATS-style aliases for sponsorship, degree/education, salary, and work authorization — empty profile fields still yield no value for those keys until the user completes profile.
+- **Extension context invalidated:** after reloading the unpacked extension or updating it, tabs that were already open keep an old content script; `chrome.storage` / `runtime` calls fail until the user **refreshes the job application tab**. The content script shows a top banner when this is detected and stops retry loops.
+- **Top-frame only:** manifest sets `all_frames: false` and `initialize()` has a `window.self !== window.top` guard. Multi-frame execution caused races where an iframe's "complete, 0 fields" progress overwrote the main frame's "blocked on upload" progress in `chrome.storage.local`, preventing the sidepanel from showing the upload blocker UI.
 
 ## Naming conventions
 

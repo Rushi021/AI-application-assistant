@@ -127,14 +127,7 @@ async function clearAutofillSession(reason?: string): Promise<void> {
   emitDiagTrace("Session", `Session cleared: ${reason ?? "unknown"}`);
 }
 
-async function ensureContentScriptInjected(tabId: number): Promise<void> {
-  await chrome.scripting.executeScript({
-    target: { tabId, allFrames: true },
-    files: ["content/content.js"],
-  });
-}
-
-/** Deliver a message to every frame in the tab. `tabs.sendMessage` without frameId only hits the main frame. */
+/** Deliver a message to every frame in the tab. */
 async function broadcastToAllFrames(tabId: number, message: object): Promise<void> {
   const frames = (await chrome.webNavigation.getAllFrames({ tabId })) ?? [];
   for (const frame of frames) {
@@ -165,11 +158,8 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     };
     await setAutofillSession(updated);
 
-    try {
-      await ensureContentScriptInjected(tabId);
-    } catch {
-      // Page may not support injection (e.g. restricted protocol)
-    }
+    // Trigger autofill in the newly loaded page (content script is injected by manifest)
+    chrome.tabs.sendMessage(tabId, { action: "run_autofill" }).catch(() => {});
   }).catch(() => {});
 });
 
@@ -277,61 +267,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === MSG.RUN_DIRECT_AUTOFILL) {
-    (async () => {
-      try {
-        const tabId = message.data?.tabId as number | undefined;
-        if (typeof tabId !== "number") {
-          sendResponse({ success: false, error: "Missing tabId" });
-          return;
-        }
-        try {
-          await ensureContentScriptInjected(tabId);
-        } catch {
-          // Injection may fail on pages with restricted iframes — content script from manifest is still present
-        }
-        await broadcastToAllFrames(tabId, { action: "run_autofill" });
-        emitDiagTrace("DirectAutofill", "Forwarded run_autofill to all frames");
-        sendResponse({ success: true });
-      } catch (err) {
-        sendResponse({
-          success: false,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    })();
-    return true;
+    const tabId = message.data?.tabId as number | undefined;
+    if (typeof tabId !== "number") {
+      sendResponse({ success: false, error: "Missing tabId" });
+      return true;
+    }
+    chrome.tabs.sendMessage(tabId, { action: "run_autofill" }).catch(() => {});
+    emitDiagTrace("DirectAutofill", "Forwarded run_autofill to tab");
+    sendResponse({ success: true });
+    return false;
   }
 
   if (message.type === MSG.BROADCAST_RUN_AUTOFILL) {
-    (async () => {
-      try {
-        const tabId = message.data?.tabId as number | undefined;
-        if (typeof tabId !== "number") {
-          sendResponse({ success: false, error: "Missing tabId" });
-          return;
-        }
-        try {
-          await ensureContentScriptInjected(tabId);
-        } catch {
-          // Injection may fail on pages with restricted iframes — content script from manifest is still present
-        }
-        try {
-          await broadcastToAllFrames(tabId, { action: "run_autofill" });
-        } catch {
-          // broadcastToAllFrames may fail if webNavigation.getAllFrames rejects
-        }
-        // Always send directly to the main frame as a reliable fallback
-        chrome.tabs.sendMessage(tabId, { action: "run_autofill" }).catch(() => {});
-        emitDiagTrace("BroadcastRunAutofill", "Forwarded run_autofill to tab");
-        sendResponse({ success: true });
-      } catch (err) {
-        sendResponse({
-          success: false,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    })();
-    return true;
+    const tabId = message.data?.tabId as number | undefined;
+    if (typeof tabId !== "number") {
+      sendResponse({ success: false, error: "Missing tabId" });
+      return true;
+    }
+    chrome.tabs.sendMessage(tabId, { action: "run_autofill" }).catch(() => {});
+    emitDiagTrace("BroadcastRunAutofill", "Forwarded run_autofill to tab");
+    sendResponse({ success: true });
+    return false;
   }
 
   if (message.type === MSG.START_AUTOFILL) {
@@ -458,18 +414,8 @@ async function handleStartAutofill() {
       return;
     }
 
-    try {
-      await ensureContentScriptInjected(tab.id);
-      await new Promise((r) => setTimeout(r, 150));
-    } catch (injectErr) {
-      const msg = injectErr instanceof Error ? injectErr.message : String(injectErr);
-      emitDiagTrace("ScriptInjection", `Injection failed: ${msg}`, "error");
-      emitStartResult(false, `Failed to inject script: ${msg}. Try refreshing the page.`);
-      return;
-    }
-
-    await broadcastToAllFrames(tab.id, { action: "run_autofill" });
-    emitDiagTrace("StartAutofill", "Forwarded run_autofill to all frames");
+    chrome.tabs.sendMessage(tab.id, { action: "run_autofill" }).catch(() => {});
+    emitDiagTrace("StartAutofill", "Forwarded run_autofill to tab");
     emitStartResult(true);
   } catch (err) {
     emitStartResult(false, err instanceof Error ? err.message : "Failed to start auto-fill");
