@@ -421,10 +421,12 @@ export default function AutoFillPage() {
   );
 
   const handleDoneAndStartNewApplication = useCallback(async () => {
+    console.log("[TRACK] handler entered");
     setError(null);
     setTrackingStatus("idle");
     chrome.runtime.sendMessage({ type: MSG.AUTOFILL_SESSION_CANCEL, data: { reason: "application_done" } }).catch(() => {});
     if (autofillProgress) {
+      console.log("[TRACK] about to persistAutofillProgress", { hasProgress: !!autofillProgress });
       await persistAutofillProgress({
         ...autofillProgress,
         completed: true,
@@ -435,31 +437,54 @@ export default function AutoFillPage() {
         activeBlocker: null,
       });
     }
+    console.log("[TRACK] persistAutofillProgress done");
+    console.log("[TRACK] 3a: about to appendTimeline");
     appendTimeline("Finalizing application tracking");
     const store = useAppStore.getState();
 
     try {
+      console.log("[TRACK] entered tracking try");
+      console.log("[TRACK] 3b: about to getActiveTabContext");
       const tabContext = await getActiveTabContext();
+      console.log("[TRACK] 3c: got tabContext", tabContext);
       const selectedResume =
         store.resumes.find((resume) => resume.id === (store.autofillContext.temporaryResumeId ?? store.selectedResumeId)) ?? null;
 
-      const response = await chrome.runtime.sendMessage({
-        type: "TRACK_APPLICATION",
-        data: {
-          portal_url: tabContext.url,
-          company_name: tabContext.company_name,
-          role_title: tabContext.role_title,
-          job_board: tabContext.job_board,
-          applied_at: new Date().toISOString(),
-          status: "applied",
-          job_id: store.jobId || null,
-          resume_id: store.autofillContext.temporaryResumeId ?? store.selectedResumeId ?? null,
-          resume_filename: selectedResume?.original_filename ?? store.autofillContext.temporaryResumeFilename ?? null,
-          resume_source: store.autofillContext.applicationResumeSource ?? null,
-          cover_letter: store.coverLetter || store.draft?.cover_letter || store.pipelineRun?.cover_letter || null,
-          salary: store.profile?.expected_salary ?? store.profile?.current_salary ?? null,
-        },
-      });
+      console.log("[TRACK] 3d: about to sendMessage TRACK_APPLICATION");
+      // Wake the service worker with a ping before sending the real message
+      try {
+        await chrome.runtime.sendMessage({ type: "PING" });
+      } catch {
+        // Worker woke up from the attempt even if it errored
+      }
+
+      // Send with a timeout so it never hangs forever
+      const response = await Promise.race([
+        chrome.runtime.sendMessage({
+          type: "TRACK_APPLICATION",
+          data: {
+            portal_url: tabContext.url,
+            company_name: tabContext.company_name,
+            role_title: tabContext.role_title,
+            job_board: tabContext.job_board,
+            applied_at: new Date().toISOString(),
+            status: "applied",
+            job_id: store.jobId || null,
+            resume_id: store.autofillContext.temporaryResumeId ?? store.selectedResumeId ?? null,
+            resume_filename: selectedResume?.original_filename ?? store.autofillContext.temporaryResumeFilename ?? null,
+            resume_source: store.autofillContext.applicationResumeSource ?? null,
+            cover_letter: store.coverLetter || store.draft?.cover_letter || store.pipelineRun?.cover_letter || null,
+            salary: store.profile?.expected_salary ?? store.profile?.current_salary ?? null,
+          },
+        }),
+        new Promise((_, reject) =>
+          setTimeout(
+            () => reject(new Error("Tracking timed out — service worker may be inactive. Please try again.")),
+            5000
+          )
+        ),
+      ]);
+      console.log("[TRACK] 3e: got response", response);
 
       if (response?.success) {
         setTrackingStatus("success");
@@ -469,15 +494,18 @@ export default function AutoFillPage() {
         appendTimeline("Tracking queued with fallback — will retry automatically", "warn");
       }
     } catch (err) {
+      console.log("[TRACK] tracking try CAUGHT", err);
       setTrackingStatus("error");
       const msg = err instanceof Error ? err.message : "Unknown error";
       appendTimeline(`Tracking error: ${msg} — will retry automatically`, "warn");
     }
 
     // Let the user see the success/error banner before resetting
+    console.log("[TRACK] about to delay");
     await new Promise((r) => setTimeout(r, 1500));
 
     try {
+      console.log("[TRACK] entered cleanup try");
       if (store.autofillContext.temporaryResumeId) {
         try {
           await deleteResume(store.autofillContext.temporaryResumeId);
@@ -486,6 +514,7 @@ export default function AutoFillPage() {
         }
       }
     } finally {
+      console.log("[TRACK] finally — navigating to job-description");
       resetExecutionView();
       resetWorkflow();
       setStarted(false);
@@ -516,13 +545,23 @@ export default function AutoFillPage() {
       handledUploadBlockerKeysRef.current.clear();
       await chrome.storage.local.remove([STORAGE_KEYS.AUTOFILL_UPLOAD_DECISIONS]);
       setStarted(true);
+
+      const { id: tabId } = await getActiveTab();
+      const tabContext = await getActiveTabContext();
+      chrome.runtime
+        .sendMessage({
+          type: MSG.AUTOFILL_SESSION_STARTED,
+          data: { tabId, url: tabContext.url },
+        })
+        .catch(() => {});
+
       await triggerAutofill();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to start auto-fill");
       appendTimeline(err instanceof Error ? err.message : "Failed to start auto-fill", "error");
       setStarted(false);
     }
-  }, [appendTimeline, resetExecutionView, triggerAutofill]);
+  }, [appendTimeline, getActiveTab, resetExecutionView, triggerAutofill]);
 
   const handleStopAutofill = useCallback(() => {
     appendTimeline("Stop requested", "warn");

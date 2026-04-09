@@ -148,6 +148,7 @@ export function buildAutofillAnswersFromProfile(profile: UserProfile | null | un
     "legally_authorized_to_work",
     "legally_authorized_to_work_in",
     "authorized_to_work_in_the_united_states",
+    "legally_authorized_to_work_in_the_united_states",
     "legally_authorized",
     "work_eligibility",
     "employment_eligibility",
@@ -178,6 +179,8 @@ export function buildAutofillAnswersFromProfile(profile: UserProfile | null | un
   ]);
   addAliases(answers, "expected_salary", [
     "desired_salary",
+    "desired_salary_range",
+    "salary_range",
     "salary_expectation",
     "compensation",
     "desired_compensation",
@@ -209,6 +212,21 @@ export function buildAutofillAnswersFromProfile(profile: UserProfile | null | un
     "over_18",
     "age_18_or_older",
     "over_18_years_of_age",
+    "18_years_of_age_or_older",
+  ]);
+
+  setAnswer(answers, "willing_to_relocate", "Yes");
+  addAliases(answers, "willing_to_relocate", [
+    "relocate",
+    "willing_to_relocate_at_your_own_expense",
+    "open_to_relocation",
+  ]);
+
+  setAnswer(answers, "subject_to_non_compete", "No");
+  addAliases(answers, "subject_to_non_compete", [
+    "non_compete",
+    "non_compete_agreement",
+    "restrictive_employment_agreement",
   ]);
 
   return answers;

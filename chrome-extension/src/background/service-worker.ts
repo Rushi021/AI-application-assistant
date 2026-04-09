@@ -181,6 +181,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  if (message.type === "PING") {
+    sendResponse({ pong: true });
+    return;
+  }
+
   if (message.type === MSG.GET_USER_PROFILE) {
     chrome.storage.local.get([STORAGE_KEYS.USER_PROFILE]).then((result) => {
       sendResponse(result[STORAGE_KEYS.USER_PROFILE] ?? null);
@@ -323,6 +328,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "TRACK_APPLICATION") {
+    console.log("[BG-TRACK] received TRACK_APPLICATION message", message.data?.portal_url);
     (async () => {
       try {
         const data = message.data ?? {};

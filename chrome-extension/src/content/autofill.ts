@@ -1427,6 +1427,195 @@ function detectPendingUploadBlocker(decisions: UploadDecisionMap): FormBlocker |
   return blockers[0] ?? null;
 }
 
+// ---------------------------------------------------------------------------
+// Custom dropdown support (Workday, Taleo, iCIMS custom comboboxes)
+// ---------------------------------------------------------------------------
+
+type CustomDropdownField = {
+  trigger: HTMLElement;
+  identifiers: string[];
+  label: string;
+};
+
+function scanCustomDropdownFields(): CustomDropdownField[] {
+  const results: CustomDropdownField[] = [];
+  const seen = new WeakSet<Element>();
+
+  const triggers = document.querySelectorAll<HTMLElement>(
+    'button[aria-haspopup="listbox"], [role="combobox"]:not(input):not(select):not(textarea)'
+  );
+
+  for (const el of triggers) {
+    if (seen.has(el) || filledElements.has(el)) continue;
+    seen.add(el);
+    if (!isElementVisible(el)) continue;
+
+    const currentText = el.textContent?.trim() ?? "";
+    if (
+      currentText &&
+      currentText.length < 100 &&
+      !/^(select(\s+one)?|choose(\s+one)?|--|—|please\s+select)$/i.test(currentText)
+    ) {
+      continue;
+    }
+
+    const container =
+      el.closest("[data-automation-id^='formField']") ??
+      el.closest("fieldset") ??
+      el.closest("[class*='formField']") ??
+      el.parentElement?.parentElement;
+    if (!container) continue;
+
+    const labelEl =
+      container.querySelector("label") ??
+      container.querySelector("[data-automation-id^='formLabel']");
+    const labelText = labelEl?.textContent?.trim() ?? "";
+    if (!labelText) continue;
+
+    const identifiers = dedupeIdentifiers([
+      labelText,
+      el.getAttribute("aria-label") ?? "",
+      el.getAttribute("data-automation-id") ?? "",
+    ]);
+    if (identifiers.length === 0) continue;
+    results.push({ trigger: el, identifiers, label: labelText });
+  }
+
+  return results;
+}
+
+function matchCustomDropdowns(
+  fields: CustomDropdownField[],
+  answers: AutofillAnswerMap
+): Array<{ field: CustomDropdownField; answerValue: string; answerKey: string }> {
+  const entries = Object.entries(answers)
+    .map(([key, value]) => ({ key, keyNorm: normalizeText(key), value }))
+    .filter((e) => e.keyNorm.length > 1 && e.value.trim().length > 0);
+
+  const out: Array<{ field: CustomDropdownField; answerValue: string; answerKey: string }> = [];
+
+  for (const field of fields) {
+    let best: { score: number; answerValue: string; answerKey: string } | null = null;
+    const ids = field.identifiers.map(normalizeText).filter((id) => id.length > 1);
+    for (const id of ids) {
+      for (const e of entries) {
+        if (BLOCKED_MATCH_PAIRS.has(`${id}|${e.keyNorm}`)) continue;
+        if (!isStrongMatch(id, e.keyNorm)) continue;
+        let score = 0;
+        if (id === e.keyNorm) {
+          score = 1000;
+        } else {
+          const a = id.split(/[_\s]+/).filter((t) => t.length > 0);
+          const b = e.keyNorm.split(/[_\s]+/).filter((t) => t.length > 0);
+          score = a.filter((t) => b.includes(t)).length * 100 + Math.min(id.length, e.keyNorm.length);
+        }
+        if (!best || score > best.score) {
+          best = { score, answerValue: e.value, answerKey: e.key };
+        }
+      }
+    }
+    if (best) out.push({ field, ...best });
+  }
+  return out;
+}
+
+async function fillSingleCustomDropdown(
+  trigger: HTMLElement,
+  answerValue: string,
+  answerKey: string,
+  label: string
+): Promise<boolean> {
+  trigger.scrollIntoView({ block: "nearest" });
+  trigger.focus();
+  trigger.click();
+  await new Promise((r) => setTimeout(r, 400));
+
+  let listbox = document.querySelector<HTMLElement>('[role="listbox"]:not([hidden])');
+  if (!listbox) {
+    trigger.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    trigger.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    await new Promise((r) => setTimeout(r, 400));
+    listbox = document.querySelector<HTMLElement>('[role="listbox"]:not([hidden])');
+  }
+
+  const options = listbox
+    ? Array.from(listbox.querySelectorAll<HTMLElement>('[role="option"]'))
+    : Array.from(document.querySelectorAll<HTMLElement>('[role="listbox"]:not([hidden]) [role="option"]'));
+
+  if (options.length === 0) {
+    trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    return false;
+  }
+
+  const optionTexts = options.map((o) => o.textContent?.trim() ?? "");
+  const yesNoResult = interpretAnswerForYesNoSelect(answerValue, answerKey || label, optionTexts);
+  const targetValue = yesNoResult ?? answerValue;
+  const targetNorm = normalizeText(targetValue);
+
+  let bestOption: HTMLElement | null = null;
+  let bestScore = 0;
+
+  for (const opt of options) {
+    const optText = normalizeText(opt.textContent ?? "");
+    if (!optText || /^(select(\s+one)?|choose(\s+one)?|--|—)$/i.test(optText)) continue;
+
+    let score = 0;
+    if (optText === targetNorm) {
+      score = 100;
+    } else if (optText.includes(targetNorm) || targetNorm.includes(optText)) {
+      score = 50;
+    } else {
+      score = tokenOverlapScore(phraseTokens(targetValue), phraseTokens(opt.textContent ?? "")) * 30;
+    }
+    if (score > bestScore) {
+      bestScore = score;
+      bestOption = opt;
+    }
+  }
+
+  if (!bestOption || bestScore <= 0) {
+    trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    return false;
+  }
+
+  bestOption.click();
+  await new Promise((r) => setTimeout(r, 120));
+  return true;
+}
+
+async function runCustomDropdownPass(
+  answers: AutofillAnswerMap
+): Promise<{ filled: number; results: FieldResultItem[] }> {
+  const dropdowns = scanCustomDropdownFields();
+  if (dropdowns.length === 0) return { filled: 0, results: [] };
+  console.log(`[Autofill] Custom dropdown pass: found ${dropdowns.length} dropdowns`);
+
+  const matches = matchCustomDropdowns(dropdowns, answers);
+  console.log(`[Autofill] Custom dropdown pass: matched ${matches.length}`);
+
+  const results: FieldResultItem[] = [];
+  let filled = 0;
+
+  for (const m of matches) {
+    const selector = buildElementSelector(m.field.trigger);
+    const ok = await fillSingleCustomDropdown(m.field.trigger, m.answerValue, m.answerKey, m.field.label);
+    if (ok) {
+      filledElements.add(m.field.trigger);
+      filled += 1;
+      results.push({ selector, label: m.field.label, action: "filled", reason: "filled", answerKey: m.answerKey });
+    } else {
+      results.push({ selector, label: m.field.label, action: "skipped", reason: "fill_failed", answerKey: m.answerKey });
+    }
+  }
+
+  for (const dd of dropdowns) {
+    if (matches.some((m) => m.field.trigger === dd.trigger)) continue;
+    results.push({ selector: buildElementSelector(dd.trigger), label: dd.label, action: "skipped", reason: "no_answer_match" });
+  }
+
+  return { filled, results };
+}
+
 function maybeStartMutationObserverAfterRun(): void {
   if (!autofillActivated || observerStarted || !document.body) return;
   observerStarted = true;
@@ -1501,48 +1690,54 @@ async function runAutofill(): Promise<void> {
     lastBlockedKey = null;
     emitAutofillProgress(buildProgress({ state: "apply", total: 0, filled: 0, completed: false }));
 
+    // ---- Step 2: Scan native form elements ----
     const nodes = collectFillableElements();
     const stats = computeScanStats(nodes);
     const fields = scanFormFields(nodes);
     console.log(
-      `[Autofill] Step 2: Scanned ${fields.length} fields (eligible=${stats.eligibleControls}, controls=${stats.totalControls}, inputs=${stats.totalInputs}, selects=${stats.totalSelects}, textareas=${stats.totalTextareas}, fileInputs=${stats.fileInputs})`
+      `[Autofill] Step 2: Scanned ${fields.length} native fields (eligible=${stats.eligibleControls}, controls=${stats.totalControls}, inputs=${stats.totalInputs}, selects=${stats.totalSelects}, textareas=${stats.totalTextareas}, fileInputs=${stats.fileInputs})`
     );
-    if (fields.length === 0) {
-      emitAutofillProgress(buildProgress({ state: "complete", total: 0, filled: 0, completed: true }));
-      maybeStartMutationObserverAfterRun();
-      return;
+
+    // ---- Step 3: Match and fill native fields ----
+    let nativeFilled = 0;
+    let nativeResults: FieldResultItem[] = [];
+
+    if (fields.length > 0) {
+      const matches = matchFieldsToAnswers(fields, answers);
+      console.log(`[Autofill] Step 3: Matched ${matches.length} native fields`);
+
+      if (matches.length > 0) {
+        const applied = applyMatchesAndCollectResults(fields, matches);
+        nativeFilled = applied.filledCount;
+        nativeResults = applied.results;
+      } else {
+        nativeResults = fields.map((f) => {
+          const selector = buildElementSelector(f.element);
+          const label = getBestFieldLabel(f.element) || selector;
+          return { selector, label, action: "skipped", reason: "no_answer_match" } satisfies FieldResultItem;
+        });
+      }
+      console.log(`[Autofill] Step 3 result: Filled ${nativeFilled} native fields`);
     }
 
-    const matches = matchFieldsToAnswers(fields, answers);
-    console.log(`[Autofill] Step 3: Matched ${matches.length} fields`);
-    if (matches.length === 0) {
-      const progress = buildProgress({
-        state: "complete",
-        total: fields.length,
-        filled: 0,
-        skipped: fields.length,
-        completed: true,
-      });
-      progress.fields = fields.map((f) => {
-        const selector = buildElementSelector(f.element);
-        const label = getBestFieldLabel(f.element) || selector;
-        return { selector, label, action: "skipped", reason: "no_answer_match" } satisfies FieldResultItem;
-      });
-      emitAutofillProgress(progress);
-      maybeStartMutationObserverAfterRun();
-      return;
-    }
+    // ---- Step 4: Scan, match, and fill custom dropdowns (Workday, etc.) ----
+    const customResult = await runCustomDropdownPass(answers);
+    console.log(`[Autofill] Step 4: Filled ${customResult.filled} custom dropdowns`);
 
-    const { filledCount: filled, results } = applyMatchesAndCollectResults(fields, matches);
-    console.log(`[Autofill] Step 4: Filled ${filled} fields`);
+    // ---- Step 5: Combine results and emit final progress ----
+    const totalFields = fields.length + customResult.results.length;
+    const totalFilled = nativeFilled + customResult.filled;
+    const allResults = [...nativeResults, ...customResult.results];
+    console.log(`[Autofill] Step 5: Total ${totalFilled}/${totalFields} fields filled`);
+
     const progress = buildProgress({
       state: "complete",
-      total: fields.length,
-      filled,
-      skipped: Math.max(0, fields.length - filled),
+      total: totalFields,
+      filled: totalFilled,
+      skipped: Math.max(0, totalFields - totalFilled),
       completed: true,
     });
-    progress.fields = results;
+    progress.fields = allResults;
     emitAutofillProgress(progress);
     maybeStartMutationObserverAfterRun();
   } catch (err) {
