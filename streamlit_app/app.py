@@ -628,11 +628,33 @@ def inject_styles() -> None:
         """
 <style>
 /* ══════════════════════════════════════════════════════════════
-   LIGHT THEME — HirePath-style SaaS dashboard
+   JOBASSIST — Premium SaaS Dashboard
+   Full-width, Apple-grade refinement
    ══════════════════════════════════════════════════════════════ */
 
-/* ── 0. Global background ── */
-:root { color-scheme: light !important; }
+@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500;9..40,600;9..40,700;9..40,800&display=swap');
+
+/* ── 0. Root & Global ── */
+:root {
+    color-scheme: light !important;
+    --bg: #f5f5f7;
+    --surface: #ffffff;
+    --surface-hover: #fafafa;
+    --border: rgba(0,0,0,0.06);
+    --border-strong: rgba(0,0,0,0.1);
+    --accent: #6366f1;
+    --accent-soft: rgba(99,102,241,0.08);
+    --accent-border: rgba(99,102,241,0.15);
+    --text: #1d1d1f;
+    --text-secondary: #86868b;
+    --text-tertiary: #aeaeb2;
+    --radius: 14px;
+    --radius-sm: 10px;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+    --shadow: 0 1px 3px rgba(0,0,0,0.04), 0 4px 12px rgba(0,0,0,0.03);
+    --shadow-lg: 0 2px 8px rgba(0,0,0,0.04), 0 8px 24px rgba(0,0,0,0.06);
+    --font: 'DM Sans', -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', sans-serif;
+}
 
 .stApp,
 .stApp > header,
@@ -641,30 +663,43 @@ section[data-testid="stMain"],
 div[data-testid="stAppViewBlockContainer"],
 .stMainBlockContainer,
 .stApp [data-testid="stAppViewContainer"] {
-    background-color: #f2f2f7 !important;
-    color: #111827 !important;
+    background-color: var(--bg) !important;
+    color: var(--text) !important;
+    font-family: var(--font) !important;
 }
 
-/* ── 1. Kill Streamlit chrome ── */
+/* ── 1. Kill ALL Streamlit chrome ── */
 header[data-testid="stHeader"],
 .stApp > header,
 [data-testid="stToolbar"] {
-    background-color: #f2f2f7 !important;
+    background-color: var(--bg) !important;
     border: none !important;
 }
 [data-testid="stDecoration"], .stDeployButton { display: none !important; }
 #MainMenu, footer { visibility: hidden !important; }
-
-/* ── 2. Hide native sidebar (we use column-based nav) ── */
 [data-testid="stSidebar"] { display: none !important; }
 
-/* ── 3. Text inputs ── */
+/* ── 2. FULL WIDTH — override Streamlit's max-width ── */
+.main .block-container,
+.stMainBlockContainer,
+div[data-testid="stAppViewBlockContainer"] {
+    max-width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+
+section[data-testid="stMain"] > div {
+    max-width: 100% !important;
+    padding: 0 !important;
+}
+
+/* ── 3. Text inputs — refined ── */
 div[data-baseweb="input"] {
-    background-color: #ffffff !important;
-    border: 1px solid #E5E7EB !important;
-    border-radius: 10px !important;
+    background-color: var(--surface) !important;
+    border: 1.5px solid var(--border-strong) !important;
+    border-radius: var(--radius-sm) !important;
     box-shadow: none !important;
-    transition: border-color 0.2s ease !important;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease !important;
 }
 div[data-baseweb="input"] > div {
     background-color: transparent !important;
@@ -675,305 +710,315 @@ div[data-baseweb="input"] input,
 [data-testid="stTextInput"] input,
 [data-testid="stNumberInput"] input {
     background-color: transparent !important;
-    color: #111827 !important;
+    color: var(--text) !important;
     border: none !important;
     box-shadow: none !important;
     outline: none !important;
-    caret-color: #6366f1 !important;
+    caret-color: var(--accent) !important;
     font-size: 14px !important;
+    font-family: var(--font) !important;
+    padding: 10px 14px !important;
 }
-div[data-baseweb="input"]:hover { border-color: #D1D5DB !important; }
+div[data-baseweb="input"]:hover { border-color: rgba(0,0,0,0.18) !important; }
 div[data-baseweb="input"]:focus-within {
-    border-color: #6366f1 !important;
-    box-shadow: 0 0 0 3px rgba(79,107,237,0.1) !important;
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 3px var(--accent-soft) !important;
 }
-div[data-baseweb="input"] input::placeholder { color: #9CA3AF !important; }
+div[data-baseweb="input"] input::placeholder { color: var(--text-tertiary) !important; }
 
 /* ── 4. Textarea ── */
 div[data-baseweb="textarea"],
 [data-testid="stTextArea"] textarea {
-    background-color: #ffffff !important;
-    color: #111827 !important;
-    border: 1px solid #E5E7EB !important;
-    border-radius: 10px !important;
+    background-color: var(--surface) !important;
+    color: var(--text) !important;
+    border: 1.5px solid var(--border-strong) !important;
+    border-radius: var(--radius-sm) !important;
     box-shadow: none !important;
+    font-family: var(--font) !important;
 }
-div[data-baseweb="textarea"]:hover { border-color: #D1D5DB !important; }
+div[data-baseweb="textarea"]:hover { border-color: rgba(0,0,0,0.18) !important; }
 div[data-baseweb="textarea"]:focus-within,
 [data-testid="stTextArea"] textarea:focus {
-    border-color: #6366f1 !important;
-    box-shadow: 0 0 0 3px rgba(79,107,237,0.1) !important;
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 3px var(--accent-soft) !important;
 }
 
 /* ── 5. Select / Dropdown ── */
 [data-testid="stSelectbox"] [data-baseweb="select"] > div,
 div[data-baseweb="select"] > div {
-    background-color: #ffffff !important;
-    border: 1px solid #E5E7EB !important;
-    border-radius: 10px !important;
+    background-color: var(--surface) !important;
+    border: 1.5px solid var(--border-strong) !important;
+    border-radius: var(--radius-sm) !important;
     box-shadow: none !important;
-    color: #111827 !important;
+    color: var(--text) !important;
+    font-family: var(--font) !important;
+    min-height: 42px !important;
 }
-[data-testid="stSelectbox"] [data-baseweb="select"] > div:hover { border-color: #D1D5DB !important; }
+[data-testid="stSelectbox"] [data-baseweb="select"] > div:hover { border-color: rgba(0,0,0,0.18) !important; }
 [data-testid="stSelectbox"] [data-baseweb="select"] > div:focus-within {
-    border-color: #6366f1 !important;
-    box-shadow: 0 0 0 3px rgba(79,107,237,0.1) !important;
+    border-color: var(--accent) !important;
+    box-shadow: 0 0 0 3px var(--accent-soft) !important;
 }
 [data-testid="stSelectbox"] [data-baseweb="select"] span,
 div[data-baseweb="select"] span,
-.stSelectbox div[role="combobox"] * { color: #111827 !important; }
-[data-testid="stSelectbox"] svg, div[data-baseweb="select"] svg { fill: #9CA3AF !important; }
-/* Dropdown menu */
+.stSelectbox div[role="combobox"] * { color: var(--text) !important; font-family: var(--font) !important; }
+[data-testid="stSelectbox"] svg, div[data-baseweb="select"] svg { fill: var(--text-tertiary) !important; }
 [data-baseweb="popover"], [data-baseweb="popover"] > div,
 ul[role="listbox"], div[data-baseweb="menu"] {
-    background-color: #ffffff !important;
-    border: 1px solid #E5E7EB !important;
-    border-radius: 10px !important;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.08) !important;
+    background-color: var(--surface) !important;
+    border: 1px solid var(--border-strong) !important;
+    border-radius: 12px !important;
+    box-shadow: var(--shadow-lg) !important;
 }
-ul[role="listbox"] li { color: #374151 !important; background: transparent !important; }
-ul[role="listbox"] li:hover { background-color: #F3F4F6 !important; color: #111827 !important; }
-ul[role="listbox"] li[aria-selected="true"] { background-color: rgba(79,107,237,0.08) !important; color: #6366f1 !important; }
+ul[role="listbox"] li { color: var(--text) !important; background: transparent !important; font-family: var(--font) !important; border-radius: 8px !important; margin: 2px 4px !important; }
+ul[role="listbox"] li:hover { background-color: var(--surface-hover) !important; }
+ul[role="listbox"] li[aria-selected="true"] { background-color: var(--accent-soft) !important; color: var(--accent) !important; font-weight: 600 !important; }
 
 /* ── 6. Labels ── */
 .stMarkdown, .stText, label,
 [data-testid="stWidgetLabel"] label,
-[data-testid="stWidgetLabel"] p { color: #6B7280 !important; font-size: 13px !important; }
-.stMarkdown b, .stMarkdown strong { color: #374151 !important; }
+[data-testid="stWidgetLabel"] p { color: var(--text-secondary) !important; font-size: 13px !important; font-family: var(--font) !important; }
+.stMarkdown b, .stMarkdown strong { color: var(--text) !important; }
 
-/* ── 7. Expanders ── */
+/* ── 7. Expanders — card style ── */
 [data-testid="stExpander"] details {
-    background: #ffffff !important;
-    border: 1px solid #E5E7EB !important;
-    border-radius: 12px !important;
+    background: var(--surface) !important;
+    border: 1px solid var(--border-strong) !important;
+    border-radius: var(--radius) !important;
     overflow: hidden !important;
+    box-shadow: var(--shadow-sm) !important;
 }
 [data-testid="stExpander"] summary {
     font-weight: 600 !important; font-size: 14px !important;
-    color: #111827 !important; padding: 14px 16px !important;
-    background: transparent !important;
+    color: var(--text) !important; padding: 16px 20px !important;
+    background: transparent !important; font-family: var(--font) !important;
 }
-[data-testid="stExpander"] summary:hover { background: #F9FAFB !important; }
+[data-testid="stExpander"] summary:hover { background: var(--surface-hover) !important; }
 [data-testid="stExpander"] summary:focus,
 [data-testid="stExpander"] summary:focus-visible,
 [data-testid="stExpander"] details[open] > summary {
-    background: transparent !important; color: #111827 !important;
+    background: transparent !important; color: var(--text) !important;
     outline: none !important; box-shadow: none !important;
 }
-[data-testid="stExpander"] details > div { border-top: 1px solid #F3F4F6 !important; }
+[data-testid="stExpander"] details > div { border-top: 1px solid var(--border) !important; padding: 4px 4px 0 !important; }
 
 /* ── 8. Bordered containers ── */
 div[data-testid="stVerticalBlockBorderWrapper"] {
-    border: 1px solid #E5E7EB !important;
-    border-radius: 10px !important;
-    background: #FAFBFC !important;
+    border: 1px solid var(--border-strong) !important;
+    border-radius: var(--radius-sm) !important;
+    background: var(--surface) !important;
 }
 
 /* ── 9. Buttons ── */
-/* Primary (accent blue) */
 button[kind="primary"],
 div[data-testid="stFormSubmitButton"] button {
-    background: #6366f1 !important;
+    background: var(--accent) !important;
     color: #fff !important;
     border: none !important;
-    border-radius: 10px !important;
+    border-radius: var(--radius-sm) !important;
     font-weight: 600 !important;
-    box-shadow: 0 2px 8px rgba(79,107,237,0.2) !important;
+    font-family: var(--font) !important;
+    font-size: 13px !important;
+    box-shadow: 0 1px 3px rgba(99,102,241,0.2) !important;
+    transition: all 0.15s ease !important;
+    padding: 8px 18px !important;
 }
-button[kind="primary"]:hover { box-shadow: 0 4px 14px rgba(79,107,237,0.3) !important; }
-/* Secondary */
+button[kind="primary"]:hover { box-shadow: 0 4px 14px rgba(99,102,241,0.3) !important; transform: translateY(-0.5px); }
 button[kind="secondary"], .stButton > button {
-    background: transparent !important;
-    color: #6B7280 !important;
-    border: 1px solid #E5E7EB !important;
-    border-radius: 10px !important;
+    background: var(--surface) !important;
+    color: var(--text-secondary) !important;
+    border: 1.5px solid var(--border-strong) !important;
+    border-radius: var(--radius-sm) !important;
+    font-family: var(--font) !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    transition: all 0.15s ease !important;
+    padding: 8px 18px !important;
 }
 button[kind="secondary"]:hover, .stButton > button:hover {
-    border-color: #6366f1 !important;
-    color: #6366f1 !important;
-    background: rgba(79,107,237,0.04) !important;
+    border-color: var(--accent-border) !important;
+    color: var(--accent) !important;
+    background: var(--accent-soft) !important;
 }
-/* Link button (login) */
 .stLinkButton > a, div[data-testid="stLinkButton"] > a {
-    background: #6366f1 !important; color: #fff !important;
-    border: none !important; border-radius: 10px !important;
+    background: var(--accent) !important; color: #fff !important;
+    border: none !important; border-radius: var(--radius-sm) !important;
     font-weight: 600 !important; text-decoration: none !important;
-    box-shadow: 0 2px 8px rgba(79,107,237,0.2) !important;
+    font-family: var(--font) !important;
+    box-shadow: 0 1px 3px rgba(99,102,241,0.2) !important;
 }
 
 /* ── 10. Tabs ── */
-.stTabs [data-baseweb="tab-list"] { gap:0 !important; border-bottom: 1px solid #E5E7EB !important; background: transparent !important; }
-.stTabs [data-baseweb="tab"] { color: #9CA3AF !important; font-weight: 500 !important; background: transparent !important; border: none !important; }
-.stTabs [data-baseweb="tab"]:hover { color: #6B7280 !important; background: #F9FAFB !important; }
-.stTabs [aria-selected="true"] { color: #6366f1 !important; font-weight: 700 !important; border-bottom: 2px solid #6366f1 !important; }
-.stTabs [data-baseweb="tab-highlight"] { background-color: #6366f1 !important; }
+.stTabs [data-baseweb="tab-list"] { gap:0 !important; border-bottom: 1px solid var(--border) !important; background: transparent !important; }
+.stTabs [data-baseweb="tab"] { color: var(--text-tertiary) !important; font-weight: 500 !important; background: transparent !important; border: none !important; font-family: var(--font) !important; }
+.stTabs [data-baseweb="tab"]:hover { color: var(--text-secondary) !important; }
+.stTabs [aria-selected="true"] { color: var(--accent) !important; font-weight: 700 !important; border-bottom: 2px solid var(--accent) !important; }
+.stTabs [data-baseweb="tab-highlight"] { background-color: var(--accent) !important; }
 .stTabs [data-baseweb="tab-border"] { display: none !important; }
 
 /* ── 11. Checkboxes ── */
-.stCheckbox label, .stCheckbox label span { color: #374151 !important; }
+.stCheckbox label, .stCheckbox label span { color: var(--text) !important; }
 
 /* ── 12. File uploader ── */
 [data-testid="stFileUploader"], [data-testid="stFileUploader"] > div,
-[data-testid="stFileUploader"] section { background: transparent !important; border: none !important; color: #6B7280 !important; }
-[data-testid="stFileUploader"] button { background: #fff !important; border: 1px solid #E5E7EB !important; color: #374151 !important; border-radius: 10px !important; }
+[data-testid="stFileUploader"] section { background: transparent !important; border: none !important; color: var(--text-secondary) !important; }
+[data-testid="stFileUploader"] button { background: var(--surface) !important; border: 1.5px solid var(--border-strong) !important; color: var(--text) !important; border-radius: var(--radius-sm) !important; }
 
 /* ── 13. Form container ── */
 [data-testid="stForm"], [data-testid="stForm"] > div {
-    background: #ffffff !important; border: 1px solid #E5E7EB !important; border-radius: 14px !important;
+    background: var(--surface) !important; border: 1px solid var(--border-strong) !important; border-radius: var(--radius) !important;
 }
 
 /* ── 14. Alerts ── */
-[data-testid="stAlert"] > div { border-radius: 10px !important; }
+[data-testid="stAlert"] > div { border-radius: var(--radius-sm) !important; }
 
 /* ── 15. Typography ── */
-h1, h2, h3, h4, h5, h6 { color: #111827 !important; }
+h1, h2, h3, h4, h5, h6 { color: var(--text) !important; font-family: var(--font) !important; }
 h5 { font-size: 13px !important; }
-a { color: #6366f1 !important; }
+a { color: var(--accent) !important; }
 
 /* ── 16. Spacing ── */
-div[data-testid="stVerticalBlock"] > div { gap: 0.35rem !important; }
+div[data-testid="stVerticalBlock"] > div { gap: 0.4rem !important; }
 
 /* ── 17. Scrollbar ── */
-::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #D1D5DB; border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.18); }
 
 /* ── 18. EEO rows ── */
-.eeo-q { font-size: 13px; color: #6B7280; margin: 0; padding: 10px 0 6px; line-height: 1.4; }
-.eeo-row-hr { border: none; border-top: 1px solid #F3F4F6; margin: 0 0 4px; }
+.eeo-q { font-size: 13px; color: var(--text-secondary); margin: 0; padding: 10px 0 6px; line-height: 1.5; font-family: var(--font); }
+.eeo-row-hr { border: none; border-top: 1px solid var(--border); margin: 0 0 4px; }
 
 /* ══════════════════════════════════════════════════════════════
-   NAV COLUMN — dark sidebar inside st.columns
-   ══════════════════════════════════════════════════════════════ */
-.nav-wrap {
-    background: #1c1c1e !important;
-    border: none !important;
-    border-radius: 14px;
-    padding: 14px;
-    margin-bottom: 8px;
-}
-.nav-title { font-size: 9px; letter-spacing: 0.1em; color: rgba(255,255,255,0.3); font-weight: 700; }
-
-/* Force buttons inside nav column to look like dark nav items */
-.nav-wrap ~ div button {
-    background: transparent !important;
-    color: rgba(255,255,255,0.5) !important;
-    border: none !important;
-    text-align: left !important;
-    font-weight: 500 !important;
-    border-radius: 10px !important;
-    padding: 10px 14px !important;
-}
-.nav-wrap ~ div button:hover {
-    background: rgba(255,255,255,0.06) !important;
-    color: rgba(255,255,255,0.8) !important;
-    border: none !important;
-}
-.nav-wrap ~ div button[kind="primary"] {
-    background: rgba(99,102,241,0.18) !important;
-    color: #fff !important;
-    font-weight: 600 !important;
-    border: none !important;
-}
-
-/* ══════════════════════════════════════════════════════════════
-   NAV COLUMN — scope dark theme ONLY to column containing .nav-wrap
-   Uses :has() to avoid bleeding into form st.columns()
+   SIDEBAR — flush left, full height, dark
    ══════════════════════════════════════════════════════════════ */
 
-/* The column (stColumn) that contains our nav-wrap gets dark bg */
 div[data-testid="stColumn"]:has(.nav-wrap) {
-    background: #1c1c1e !important;
-    border-radius: 14px !important;
-    padding: 8px 4px !important;
-    min-height: 80vh !important;
+    background: #18181b !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    min-height: 100vh !important;
+    position: sticky !important;
+    top: 0 !important;
+    border-right: 1px solid rgba(255,255,255,0.04) !important;
 }
 
-/* All text inside nav column defaults to muted white */
+.nav-wrap {
+    background: transparent !important;
+    border: none !important;
+    border-radius: 0;
+    padding: 24px 16px 16px;
+    margin-bottom: 0;
+}
+
 div[data-testid="stColumn"]:has(.nav-wrap) p,
 div[data-testid="stColumn"]:has(.nav-wrap) span,
 div[data-testid="stColumn"]:has(.nav-wrap) label,
 div[data-testid="stColumn"]:has(.nav-wrap) .stMarkdown {
-    color: rgba(255,255,255,0.5) !important;
+    color: rgba(255,255,255,0.45) !important;
+    font-family: var(--font) !important;
 }
-
-/* Bright white for headings/bold in nav */
 div[data-testid="stColumn"]:has(.nav-wrap) b,
-div[data-testid="stColumn"]:has(.nav-wrap) strong {
-    color: #ffffff !important;
-}
+div[data-testid="stColumn"]:has(.nav-wrap) strong { color: #ffffff !important; }
 
-/* Nav buttons: transparent with muted text */
+/* Nav buttons */
 div[data-testid="stColumn"]:has(.nav-wrap) button {
     background: transparent !important;
-    color: rgba(255,255,255,0.5) !important;
+    color: rgba(255,255,255,0.45) !important;
     border: none !important;
-    border-radius: 10px !important;
+    border-radius: var(--radius-sm) !important;
+    font-family: var(--font) !important;
+    font-size: 14px !important;
+    font-weight: 500 !important;
+    padding: 10px 14px !important;
+    transition: all 0.12s ease !important;
+    text-align: left !important;
 }
 div[data-testid="stColumn"]:has(.nav-wrap) button:hover {
-    background: rgba(255,255,255,0.06) !important;
-    color: rgba(255,255,255,0.85) !important;
+    background: rgba(255,255,255,0.05) !important;
+    color: rgba(255,255,255,0.8) !important;
     border: none !important;
 }
-
-/* Active nav button (primary) */
 div[data-testid="stColumn"]:has(.nav-wrap) button[kind="primary"] {
-    background: rgba(99,102,241,0.18) !important;
-    color: #fff !important;
+    background: rgba(99,102,241,0.15) !important;
+    color: #c7c8ff !important;
     font-weight: 600 !important;
     border: none !important;
     box-shadow: none !important;
+    border-left: 3px solid var(--accent) !important;
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0 !important;
+    padding-left: 11px !important;
 }
-
-/* ── Custom classes used in st.markdown ── */
-.logo-pill {
-    width: 32px; height: 32px; border-radius: 10px;
-    background: linear-gradient(135deg, #6366f1, #818cf8);
-    display: flex; align-items: center; justify-content: center;
-    font-size: 14px; flex-shrink: 0; color: #fff;
-}
-.muted { color: #6B7280 !important; font-size: 13px; }
-.dim { color: #9CA3AF !important; font-size: 11px; }
 
 /* ══════════════════════════════════════════════════════════════
-   STAT CARDS — white cards with colored bottom bar
+   COMPONENT STYLES
    ══════════════════════════════════════════════════════════════ */
+
 .stat-card {
-    background: #ffffff;
-    border: 1px solid rgba(0,0,0,0.06);
+    background: var(--surface);
+    border: 1px solid var(--border-strong);
     border-radius: 16px;
-    padding: 18px 16px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    padding: 22px 20px 18px;
+    box-shadow: var(--shadow);
     position: relative;
     overflow: hidden;
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
 }
-.stat-card .bar {
-    position: absolute; bottom: 0; left: 12px; right: 12px;
-    height: 3px; border-radius: 2px; opacity: 0.5;
+.stat-card:hover {
+    box-shadow: var(--shadow-lg);
+    transform: translateY(-1px);
 }
-.stat-card .num { font-size: 36px; font-weight: 900; line-height: 1; color: #111827; }
-.stat-card .lbl { font-size: 12px; color: #6B7280; font-weight: 500; margin-top: 6px; }
+.stat-card .icon-wrap {
+    width: 40px; height: 40px; border-radius: 12px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; margin-bottom: 14px;
+}
+.stat-card .num {
+    font-size: 32px; font-weight: 800; line-height: 1;
+    color: var(--text); letter-spacing: -0.03em;
+    font-family: var(--font);
+}
+.stat-card .lbl {
+    font-size: 13px; color: var(--text-secondary); font-weight: 500;
+    margin-top: 6px; font-family: var(--font);
+}
+.stat-card .accent-line {
+    position: absolute; bottom: 0; left: 0; right: 0;
+    height: 3px;
+}
 
-/* ══════════════════════════════════════════════════════════════
-   APPLICATION ROW
-   ══════════════════════════════════════════════════════════════ */
 .app-row {
-    background: #ffffff;
-    border: 1px solid rgba(0,0,0,0.06);
-    border-radius: 12px;
-    padding: 12px 16px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 14px 18px;
     margin-bottom: 8px;
-    transition: border-color 0.15s, box-shadow 0.15s;
+    transition: all 0.15s ease;
+    box-shadow: var(--shadow-sm);
 }
 .app-row:hover {
-    border-color: rgba(0,0,0,0.1);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    border-color: var(--border-strong);
+    box-shadow: var(--shadow);
+    transform: translateY(-0.5px);
+}
+
+.muted { color: var(--text-secondary) !important; font-size: 13px; font-family: var(--font); }
+.dim { color: var(--text-tertiary) !important; font-size: 11px; font-family: var(--font); }
+
+/* Remove column gap in main layout to make it flush */
+[data-testid="stHorizontalBlock"]:has(.nav-wrap) {
+    gap: 0 !important;
+}
+
+/* Main content column padding */
+div[data-testid="stColumn"]:has(.main-content-marker) {
+    padding: 32px 40px 40px !important;
 }
 </style>
 """,
         unsafe_allow_html=True,
     )
-
 
 
 # ── UI bits ───────────────────────────────────────────────────────────────────
@@ -1009,23 +1054,25 @@ def format_status_option(s: str) -> str:
 def status_meta(status: str | None) -> tuple[str, str, str]:
     key = (status or "").strip().lower()
     mapping: dict[str, tuple[str, str, str]] = {
-        "applied": ("Applied", "#6366f1", "rgba(79,107,237,0.10)"),
-        "assessment": ("Assessment", "#6366F1", "rgba(99,102,241,0.10)"),
-        "interview_round_1": ("Interview R1", "#8B5CF6", "rgba(139,92,246,0.10)"),
-        "interview_round_2": ("Interview R2", "#8B5CF6", "rgba(139,92,246,0.10)"),
-        "interview_round_3": ("Interview R3", "#8B5CF6", "rgba(139,92,246,0.10)"),
-        "offer": ("Offer", "#10B981", "rgba(16,185,129,0.10)"),
-        "rejected": ("Rejected", "#EF4444", "rgba(239,68,68,0.10)"),
-        "withdrawn": ("Withdrawn", "#9CA3AF", "rgba(156,163,175,0.15)"),
+        "applied": ("Applied", "#6366f1", "rgba(99,102,241,0.08)"),
+        "assessment": ("Assessment", "#8b5cf6", "rgba(139,92,246,0.08)"),
+        "interview_round_1": ("Interview R1", "#a855f7", "rgba(168,85,247,0.08)"),
+        "interview_round_2": ("Interview R2", "#a855f7", "rgba(168,85,247,0.08)"),
+        "interview_round_3": ("Interview R3", "#a855f7", "rgba(168,85,247,0.08)"),
+        "offer": ("Offer", "#22c55e", "rgba(34,197,94,0.08)"),
+        "rejected": ("Rejected", "#ef4444", "rgba(239,68,68,0.06)"),
+        "withdrawn": ("Withdrawn", "#a1a1aa", "rgba(161,161,170,0.1)"),
     }
-    return mapping.get(key, ("Pending", "#F59E0B", "rgba(245,158,11,0.12)"))
+    return mapping.get(key, ("Pending", "#f59e0b", "rgba(245,158,11,0.08)"))
 
 
 def status_badge_html(status: str | None) -> str:
     label, fg, bg = status_meta(status)
     return (
         f'<span style="font-size:11px;font-weight:600;color:{fg};'
-        f'background:{bg};padding:4px 10px;border-radius:8px;">{escape(label)}</span>'
+        f'background:{bg};padding:4px 12px;border-radius:20px;'
+        f'border:1px solid {fg}18;letter-spacing:0.01em;'
+        f'font-family:var(--font);">{escape(label)}</span>'
     )
 
 
@@ -1134,26 +1181,38 @@ def _filter_matches_application(f: str, a: dict[str, Any]) -> bool:
 
 
 def render_login(backend_url: str, app_url: str) -> None:
-    st.title("AI Job Application Assistant")
-    st.caption(
-        "Preferred: sign in from the Chrome extension first, then open this app from there. "
-        "You can also sign in with Google below. Access is controlled by the admin whitelist."
-    )
+    # Centered login card
+    _, center, _ = st.columns([1.5, 1, 1.5])
+    with center:
+        st.markdown(
+            '<div style="text-align:center;padding:80px 0 40px;">'
+            '<div style="width:64px;height:64px;border-radius:18px;'
+            'background:linear-gradient(135deg,#6366f1,#818cf8);'
+            'display:inline-flex;align-items:center;justify-content:center;'
+            'box-shadow:0 4px 20px rgba(99,102,241,0.35);margin-bottom:20px;">'
+            '<span style="font-size:28px;color:#fff;">⚡</span></div>'
+            '<h1 style="font-size:28px;font-weight:800;margin:0 0 6px;letter-spacing:-0.03em;">JobAssist</h1>'
+            '<p style="font-size:15px;color:#86868b;margin:0 0 32px;">AI-powered job application assistant</p>'
+            '</div>',
+            unsafe_allow_html=True,
+        )
 
-    query_params = st.query_params
-    login_code = query_params.get("code")
-    if login_code:
-        with st.spinner("Completing sign-in..."):
-            if exchange_web_login_code(backend_url, login_code):
-                st.success("Signed in successfully.")
-                st.rerun()
+        query_params = st.query_params
+        login_code = query_params.get("code")
+        if login_code:
+            with st.spinner("Completing sign-in..."):
+                if exchange_web_login_code(backend_url, login_code):
+                    st.success("Signed in successfully.")
+                    st.rerun()
 
-    login_url = f"{backend_url}/auth/web/google/start?next={quote_plus(app_url)}"
-    st.link_button("Sign in with Google", login_url, type="primary")
-    st.info(
-        "If access is denied, your email is not active in the whitelist yet. "
-        "Submit your email through the shared Google Form and wait for activation."
-    )
+        login_url = f"{backend_url}/auth/web/google/start?next={quote_plus(app_url)}"
+        st.link_button("Sign in with Google", login_url, type="primary", use_container_width=True)
+        st.markdown(
+            '<p style="font-size:12px;color:#aeaeb2;text-align:center;margin-top:16px;line-height:1.6;">'
+            'Preferred: sign in from the Chrome extension first.<br>'
+            'If access is denied, your email is not yet active in the whitelist.</p>',
+            unsafe_allow_html=True,
+        )
 
 
 def render_profile_form(backend_url: str, profile: dict[str, Any]) -> None:
@@ -1161,20 +1220,28 @@ def render_profile_form(backend_url: str, profile: dict[str, Any]) -> None:
     pid = profile["id"]
     prefix = f"pf_{pid}_"
     email = profile.get("email") or ""
+    initial = (profile.get("full_name") or email or "?")[:1].upper()
 
     st.markdown(
-        f'<div style="display:flex;align-items:center;gap:14px;margin-bottom:20px;">'
-        f'<div class="logo-pill" style="width:52px;height:52px;border-radius:50%;font-size:20px;">'
-        f'{escape((profile.get("full_name") or email or "?")[:1].upper())}</div>'
-        f'<div><div style="font-size:18px;font-weight:700;">{escape(profile.get("full_name") or "Your name")}</div>'
-        f'<div class="muted">{escape(email)}</div></div></div>',
+        f'<div style="display:flex;align-items:center;gap:16px;margin-bottom:24px;'
+        f'padding:20px 24px;background:var(--surface);border:1px solid var(--border-strong);'
+        f'border-radius:16px;box-shadow:var(--shadow);">'
+        f'<div style="width:52px;height:52px;border-radius:50%;flex-shrink:0;'
+        f'background:linear-gradient(135deg,#6366f1,#818cf8);'
+        f'display:flex;align-items:center;justify-content:center;'
+        f'font-size:20px;font-weight:700;color:#fff;">{escape(initial)}</div>'
+        f'<div><div style="font-size:18px;font-weight:700;color:var(--text);'
+        f'font-family:var(--font);letter-spacing:-0.02em;">'
+        f'{escape(profile.get("full_name") or "Your name")}</div>'
+        f'<div style="font-size:13px;color:var(--text-secondary);margin-top:2px;">{escape(email)}</div></div></div>',
         unsafe_allow_html=True,
     )
 
     with st.expander("Basic info", expanded=True):
         st.text_input("Full name", key=f"{prefix}full_name")
         st.markdown(
-            f'<p class="muted" style="margin:0 0 8px;"><b>Email</b> (from Google): {escape(email)}</p>',
+            f'<p style="font-size:12px;color:var(--text-tertiary);margin:0 0 8px;">'
+            f'<strong style="color:var(--text-secondary);">Email</strong> (from Google): {escape(email)}</p>',
             unsafe_allow_html=True,
         )
         c1, c2 = st.columns(2)
@@ -1326,23 +1393,32 @@ def render_resume_page(backend_url: str) -> None:
     resumes: list[dict[str, Any]] = r.json()
 
     if not resumes:
-        st.caption("No resumes yet.")
+        st.caption("No resumes yet. Upload your first one below.")
 
     for item in resumes:
         rid = int(item["id"])
-        c1, c2 = st.columns([5, 1])
+        c1, c2 = st.columns([6, 1])
         with c1:
             cs = " · Client-stored" if item.get("client_stored") else ""
+            size_kb = item.get("size_bytes", 0) // 1024
             st.markdown(
-                f'<div style="display:flex;align-items:center;gap:12px;background:#ffffff;border:1px solid #E5E7EB;'
-                f'border-radius:12px;padding:14px 18px;margin-bottom:8px;box-shadow:0 1px 3px rgba(0,0,0,0.04);">'
-                f'<div style="width:36px;height:36px;border-radius:9px;background:rgba(79,107,237,0.08);'
-                f'border:1px solid rgba(79,107,237,0.12);display:flex;align-items:center;justify-content:center;">📄</div>'
-                f'<div><div style="font-size:13px;font-weight:600;color:#111827;">{escape(item.get("original_filename") or "Resume")}</div>'
-                f'<div style="font-size:11px;color:#9CA3AF;">{item.get("size_bytes", 0) // 1024} KB · id {rid}{escape(cs)}</div></div></div>',
+                f'<div style="display:flex;align-items:center;gap:14px;background:var(--surface);'
+                f'border:1px solid var(--border-strong);border-radius:14px;padding:16px 20px;'
+                f'margin-bottom:8px;box-shadow:var(--shadow-sm);transition:all 0.15s ease;">'
+                f'<div style="width:40px;height:40px;border-radius:11px;'
+                f'background:var(--accent-soft);border:1px solid var(--accent-border);'
+                f'display:flex;align-items:center;justify-content:center;flex-shrink:0;">'
+                f'<span style="font-size:18px;">📄</span></div>'
+                f'<div style="min-width:0;flex:1;">'
+                f'<div style="font-size:14px;font-weight:600;color:var(--text);'
+                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">'
+                f'{escape(item.get("original_filename") or "Resume")}</div>'
+                f'<div style="font-size:12px;color:var(--text-tertiary);margin-top:2px;">'
+                f'{size_kb} KB{escape(cs)}</div></div></div>',
                 unsafe_allow_html=True,
             )
         with c2:
+            st.markdown('<div style="padding-top:12px;"></div>', unsafe_allow_html=True)
             if st.button("Delete", key=f"del_resume_{rid}", type="secondary"):
                 with st.spinner("Removing…"):
                     d = api_delete_resume(backend_url, rid)
@@ -1353,10 +1429,14 @@ def render_resume_page(backend_url: str) -> None:
 
     if len(resumes) < MAX_RESUMES:
         st.markdown(
-            '<div style="border:1px dashed #D1D5DB;border-radius:12px;padding:32px 20px;text-align:center;margin-top:12px;">'
-            '<div style="font-size:22px;margin-bottom:8px;">⬆</div>'
-            '<p style="font-size:13px;color:#6B7280;margin:0;">Drop a resume here or use the file picker below.</p>'
-            '<p style="font-size:11px;color:#9CA3AF;margin:6px 0 0 0;">.docx, .doc, or .pdf</p></div>',
+            '<div style="border:2px dashed var(--border-strong);border-radius:16px;'
+            'padding:40px 20px;text-align:center;margin-top:16px;'
+            'background:var(--surface);transition:border-color 0.15s;">'
+            '<div style="font-size:28px;margin-bottom:10px;opacity:0.5;">↑</div>'
+            '<p style="font-size:14px;font-weight:500;color:var(--text-secondary);margin:0;">'
+            'Drop a resume here or browse below</p>'
+            '<p style="font-size:12px;color:var(--text-tertiary);margin:6px 0 0 0;">'
+            '.docx, .doc, or .pdf · max 10 MB</p></div>',
             unsafe_allow_html=True,
         )
         uploader_key = f"resume_uploader_{st.session_state.get('resume_uploader_nonce', 0)}"
@@ -1367,7 +1447,6 @@ def render_resume_page(backend_url: str) -> None:
             key=uploader_key,
         )
         if up is not None:
-            # Auto-upload once immediately after file selection.
             token = f"{getattr(up, 'file_id', '')}:{up.name}:{getattr(up, 'size', 0)}"
             if st.session_state.get("resume_last_upload_token") != token:
                 st.session_state["resume_last_upload_token"] = token
@@ -1375,7 +1454,6 @@ def render_resume_page(backend_url: str) -> None:
                 with st.spinner("Uploading…"):
                     resp = api_upload_resume(backend_url, data, up.name)
                 if resp.ok:
-                    # Rotate uploader key to clear the selected file chip and avoid repeated uploads.
                     st.session_state["resume_uploader_nonce"] = int(
                         st.session_state.get("resume_uploader_nonce", 0)
                     ) + 1
@@ -1390,10 +1468,11 @@ def render_resume_page(backend_url: str) -> None:
 
 def render_settings_page(backend_url: str, profile: dict[str, Any]) -> None:
     st.markdown(
-        '<p style="font-size:14px;font-weight:700;margin:0 0 6px 0;">AI Model</p>'
-        '<p style="font-size:12px;color:#6B7280;margin:0 0 14px 0;">'
-        "Provide your own Gemini API key for resume tailoring and cover letter generation."
-        "</p>",
+        '<div style="background:var(--surface);border:1px solid var(--border-strong);'
+        'border-radius:16px;padding:24px;box-shadow:var(--shadow);margin-bottom:16px;">'
+        '<div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px;">AI Model</div>'
+        '<div style="font-size:13px;color:var(--text-secondary);line-height:1.5;margin-bottom:16px;">'
+        'Provide your own Gemini API key for resume tailoring and cover letter generation.</div>',
         unsafe_allow_html=True,
     )
 
@@ -1403,7 +1482,12 @@ def render_settings_page(backend_url: str, profile: dict[str, Any]) -> None:
     existing_key = str(cf.get("llm_api_key") or "").strip()
     if existing_key:
         masked = f"••••••••{existing_key[-4:]}" if len(existing_key) >= 4 else "••••"
-        st.caption(f"Saved key: {masked}")
+        st.markdown(
+            f'<div style="font-size:12px;color:var(--text-tertiary);margin-bottom:8px;">'
+            f'Current key: <code style="background:var(--bg);padding:2px 6px;border-radius:4px;">'
+            f'{masked}</code></div>',
+            unsafe_allow_html=True,
+        )
 
     st.text_input(
         "LLM API Key",
@@ -1426,131 +1510,196 @@ def render_settings_page(backend_url: str, profile: dict[str, Any]) -> None:
         else:
             st.error(f"Failed to save API key: {resp.text}")
 
+    st.markdown('</div>', unsafe_allow_html=True)
+
     st.markdown(
-        '<p style="font-size:14px;font-weight:700;margin:24px 0 6px 0;">Account</p>'
-        '<p class="dim" style="margin:0 0 14px 0;font-size:12px;">Sign out of your current session.</p>',
+        '<div style="background:var(--surface);border:1px solid var(--border-strong);'
+        'border-radius:16px;padding:24px;box-shadow:var(--shadow);margin-top:16px;">'
+        '<div style="font-size:15px;font-weight:700;color:var(--text);margin-bottom:4px;">Account</div>'
+        '<div style="font-size:13px;color:var(--text-secondary);margin-bottom:16px;">'
+        'Sign out of your current session.</div>',
         unsafe_allow_html=True,
     )
     if st.button("Sign out", type="secondary", key="btn_settings_signout"):
         clear_auth_state()
         st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
 
 def render_dashboard(applications: list[dict[str, Any]]) -> None:
     stats = compute_stats(applications)
     stat_cards = [
-        ("Total Applied", stats["total"], "#6366f1"),
-        ("Interviews", stats["interview"], "#8B5CF6"),
-        ("Offers", stats["offered"], "#10B981"),
-        ("Pending", stats["pending"], "#F59E0B"),
+        ("Total Applied", stats["total"], "#6366f1", "rgba(99,102,241,0.08)", "📋"),
+        ("Interviews", stats["interview"], "#a855f7", "rgba(168,85,247,0.08)", "💬"),
+        ("Offers", stats["offered"], "#22c55e", "rgba(34,197,94,0.08)", "✨"),
+        ("Pending", stats["pending"], "#f59e0b", "rgba(245,158,11,0.08)", "⏳"),
     ]
-    stat_icons = {
-        "Total Applied": ("📋", "#6366f1"),
-        "Interviews": ("👥", "#8B5CF6"),
-        "Offers": ("✓", "#10B981"),
-        "Pending": ("⏱", "#F59E0B"),
-    }
+
     cards_html = ""
-    for label, v, color in stat_cards:
-        icon, _ = stat_icons.get(label, ("•", color))
+    for label, v, color, bg, icon in stat_cards:
         cards_html += (
             f'<div class="stat-card">'
-            f'<div class="num">{v:02d}</div>'
+            f'<div class="icon-wrap" style="background:{bg};">'
+            f'<span>{icon}</span></div>'
+            f'<div class="num">{v}</div>'
             f'<div class="lbl">{escape(label)}</div>'
-            f'<div class="bar" style="background:{color};"></div>'
+            f'<div class="accent-line" style="background:linear-gradient(90deg,{color},{color}00);"></div>'
             f'</div>'
         )
     st.markdown(
-        f'<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:14px;">{cards_html}</div>',
+        f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px;">{cards_html}</div>',
         unsafe_allow_html=True,
     )
 
-    left_col, right_col = st.columns([2.0, 1.0])
+    left_col, right_col = st.columns([2.2, 1.0])
     with left_col:
+        # Recent applications card
+        st.markdown(
+            '<div style="background:var(--surface);border:1px solid var(--border-strong);'
+            'border-radius:16px;padding:20px 24px;box-shadow:var(--shadow);">',
+            unsafe_allow_html=True,
+        )
         card_top_left, card_top_right = st.columns([3, 1])
         with card_top_left:
-            st.markdown('<p style="font-size:14px;font-weight:700;margin:4px 0 10px;">Recent Applications</p>', unsafe_allow_html=True)
+            st.markdown(
+                '<p style="font-size:16px;font-weight:700;margin:0 0 4px;color:var(--text);'
+                'letter-spacing:-0.01em;">Recent Applications</p>',
+                unsafe_allow_html=True,
+            )
         with card_top_right:
-            if st.button("View All →", key="btn_view_all_apps"):
+            if st.button("View all →", key="btn_view_all_apps"):
                 st.session_state.main_nav = "applications"
                 st.rerun()
-        recent = sorted(applications, key=lambda a: parse_created_date(a.get("created_at")) or datetime.min, reverse=True)[:5]
+
+        recent = sorted(
+            applications,
+            key=lambda a: parse_created_date(a.get("created_at")) or datetime.min,
+            reverse=True,
+        )[:5]
         if not recent:
-            st.info("No recent applications yet.")
-        for a in recent:
+            st.markdown(
+                '<div style="padding:24px 0;text-align:center;">'
+                '<p style="font-size:14px;color:var(--text-secondary);">No applications yet. '
+                'Start one from the Chrome extension.</p></div>',
+                unsafe_allow_html=True,
+            )
+        for idx, a in enumerate(recent):
             aid = int(a["id"])
             co = (a.get("company_name") or "Company").strip() or "Company"
             role = (a.get("role_title") or "").strip() or "Role"
             date_txt = fmt_app_date(str(a.get("created_at")) if a.get("created_at") else None)
-            c1, c2, c3 = st.columns([6, 2, 1])
-            with c1:
-                st.markdown(
-                    f'<div style="display:flex;align-items:center;gap:12px;">'
-                    f'<div style="width:34px;height:34px;border-radius:9px;background:linear-gradient(135deg,#6366f1,#7C3AED);'
-                    f'display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;color:#fff;">{escape(co[:1].upper())}</div>'
-                    f'<div><div style="font-size:13px;font-weight:600;color:#111827;">{escape(co)}</div>'
-                    f'<div style="font-size:12px;color:#6B7280;">{escape(role)}</div></div></div>',
-                    unsafe_allow_html=True,
-                )
-            with c2:
-                st.markdown(
-                    f'<div style="text-align:right;"><div style="font-size:11px;color:#6B7280;">{escape(date_txt)}</div>'
-                    f'<div style="margin-top:3px;">{status_badge_html(a.get("status"))}</div></div>',
-                    unsafe_allow_html=True,
-                )
-            with c3:
-                if st.button("View", key=f"btn_recent_view_{aid}"):
-                    st.session_state.selected_application_id = aid
-                    st.session_state.main_nav = "applications"
-                    st.rerun()
+            initial = co[:1].upper()
+            _, fg, _ = status_meta(a.get("status"))
+
+            separator = f'<div style="height:1px;background:var(--border);margin:10px 0;"></div>' if idx > 0 else ""
+            st.markdown(
+                f'{separator}'
+                f'<div style="display:flex;align-items:center;gap:14px;padding:6px 0;">'
+                f'<div style="width:40px;height:40px;border-radius:11px;flex-shrink:0;'
+                f'background:linear-gradient(135deg,{fg}15,{fg}08);'
+                f'border:1px solid {fg}20;'
+                f'display:flex;align-items:center;justify-content:center;'
+                f'font-size:15px;font-weight:700;color:{fg};">{escape(initial)}</div>'
+                f'<div style="flex:1;min-width:0;">'
+                f'<div style="font-size:14px;font-weight:600;color:var(--text);">{escape(co)}</div>'
+                f'<div style="font-size:12px;color:var(--text-secondary);margin-top:1px;'
+                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{escape(role)}</div></div>'
+                f'<div style="text-align:right;flex-shrink:0;">'
+                f'<div style="font-size:11px;color:var(--text-tertiary);margin-bottom:4px;">{escape(date_txt)}</div>'
+                f'{status_badge_html(a.get("status"))}</div></div>',
+                unsafe_allow_html=True,
+            )
+        st.markdown('</div>', unsafe_allow_html=True)
 
     with right_col:
-        st.markdown('<p style="font-size:14px;font-weight:700;margin:4px 0 8px;">Pipeline</p>', unsafe_allow_html=True)
+        # Pipeline card
+        st.markdown(
+            '<div style="background:var(--surface);border:1px solid var(--border-strong);'
+            'border-radius:16px;padding:20px;box-shadow:var(--shadow);margin-bottom:14px;">',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<p style="font-size:16px;font-weight:700;margin:0 0 12px;color:var(--text);'
+            'letter-spacing:-0.01em;">Pipeline</p>',
+            unsafe_allow_html=True,
+        )
         d1, d3, d7 = st.columns(3)
         for n, col in ((1, d1), (3, d3), (7, d7)):
             with col:
                 active = st.session_state.pipeline_days == n
-                if st.button(f"{n}d", key=f"btn_pipeline_{n}", use_container_width=True, type="primary" if active else "secondary"):
+                if st.button(
+                    f"{n}d",
+                    key=f"btn_pipeline_{n}",
+                    use_container_width=True,
+                    type="primary" if active else "secondary",
+                ):
                     st.session_state.pipeline_days = n
                     st.rerun()
+
         now = datetime.utcnow()
         filtered = [
-            a for a in applications
-            if (parse_created_date(a.get("created_at")) or datetime.min) >= (now.replace(tzinfo=None) - timedelta(days=st.session_state.pipeline_days))
+            a
+            for a in applications
+            if (parse_created_date(a.get("created_at")) or datetime.min)
+            >= (now.replace(tzinfo=None) - timedelta(days=st.session_state.pipeline_days))
         ]
         rows = [
             ("Applied", sum(1 for a in filtered if (a.get("status") or "") == "applied"), "#6366f1"),
-            ("Assessment", sum(1 for a in filtered if (a.get("status") or "") == "assessment"), "#6366F1"),
-            ("Interview", sum(1 for a in filtered if "interview" in (a.get("status") or "")), "#8B5CF6"),
-            ("Offer", sum(1 for a in filtered if (a.get("status") or "") == "offer"), "#10B981"),
-            ("Rejected", sum(1 for a in filtered if (a.get("status") or "") == "rejected"), "#EF4444"),
+            ("Assessment", sum(1 for a in filtered if (a.get("status") or "") == "assessment"), "#8b5cf6"),
+            ("Interview", sum(1 for a in filtered if "interview" in (a.get("status") or "")), "#a855f7"),
+            ("Offer", sum(1 for a in filtered if (a.get("status") or "") == "offer"), "#22c55e"),
+            ("Rejected", sum(1 for a in filtered if (a.get("status") or "") == "rejected"), "#ef4444"),
         ]
         max_n = max((n for _, n, _ in rows), default=1) or 1
         for label, n, c in rows:
             pct = int((n / max_n) * 100) if (max_n and n > 0) else 0
             st.markdown(
-                f'<div style="margin-bottom:8px;">'
-                f'<div style="display:flex;justify-content:space-between;font-size:11px;color:#6B7280;">'
-                f'<span>{label}</span><span style="color:{c};font-weight:700;">{n}</span></div>'
-                f'<div style="height:5px;border-radius:3px;background:#F1F5F9;margin-top:4px;">'
-                f'<div style="height:100%;width:{pct}%;background:{c};border-radius:3px;"></div></div></div>',
+                f'<div style="margin-bottom:10px;">'
+                f'<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px;">'
+                f'<span style="color:var(--text-secondary);font-weight:500;">{label}</span>'
+                f'<span style="color:{c};font-weight:700;">{n}</span></div>'
+                f'<div style="height:6px;border-radius:3px;background:var(--bg);overflow:hidden;">'
+                f'<div style="height:100%;width:{pct}%;background:{c};border-radius:3px;'
+                f'transition:width 0.3s ease;"></div></div></div>',
                 unsafe_allow_html=True,
             )
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        st.markdown('<p style="font-size:14px;font-weight:700;margin:14px 0 8px;">Activity</p>', unsafe_allow_html=True)
-        act = sorted(applications, key=lambda a: parse_created_date(a.get("created_at")) or datetime.min, reverse=True)[:5]
+        # Activity card
+        st.markdown(
+            '<div style="background:var(--surface);border:1px solid var(--border-strong);'
+            'border-radius:16px;padding:20px;box-shadow:var(--shadow);">',
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            '<p style="font-size:16px;font-weight:700;margin:0 0 14px;color:var(--text);'
+            'letter-spacing:-0.01em;">Activity</p>',
+            unsafe_allow_html=True,
+        )
+        act = sorted(
+            applications,
+            key=lambda a: parse_created_date(a.get("created_at")) or datetime.min,
+            reverse=True,
+        )[:5]
         if not act:
-            st.caption("No activity yet.")
+            st.markdown(
+                '<p style="font-size:13px;color:var(--text-tertiary);">No activity yet.</p>',
+                unsafe_allow_html=True,
+            )
         for a in act:
             label, color, _ = status_meta(a.get("status"))
             co = (a.get("company_name") or "Company").strip() or "Company"
             st.markdown(
-                f'<div style="display:flex;gap:8px;margin-bottom:8px;">'
-                f'<div style="width:6px;height:6px;border-radius:50%;background:{color};margin-top:5px;"></div>'
-                f'<div><div style="font-size:11px;color:#111827;">{escape(label)} — {escape(co)}</div>'
-                f'<div style="font-size:10px;color:#9CA3AF;">{escape(fmt_app_date(str(a.get("created_at")) if a.get("created_at") else None))}</div></div></div>',
+                f'<div style="display:flex;gap:10px;margin-bottom:12px;align-items:flex-start;">'
+                f'<div style="width:7px;height:7px;border-radius:50%;background:{color};'
+                f'margin-top:5px;flex-shrink:0;"></div>'
+                f'<div><div style="font-size:13px;color:var(--text);font-weight:500;">'
+                f'{escape(label)} — {escape(co)}</div>'
+                f'<div style="font-size:11px;color:var(--text-tertiary);margin-top:2px;">'
+                f'{escape(fmt_app_date(str(a.get("created_at")) if a.get("created_at") else None))}</div></div></div>',
                 unsafe_allow_html=True,
             )
+        st.markdown('</div>', unsafe_allow_html=True)
 
 
 def _patch_app_status_streamlit(backend_url: str, application_id: int) -> None:
@@ -1573,13 +1722,16 @@ def _patch_app_status_streamlit(backend_url: str, application_id: int) -> None:
 
 def render_applications_page(backend_url: str, applications: list[dict[str, Any]]) -> None:
     st.markdown(
-        f'<p style="font-size:14px;color:#8e8e93;margin:0 0 20px 0;">{escape(applications_subtitle(applications))}</p>',
+        f'<p style="font-size:14px;color:var(--text-secondary);margin:0 0 20px 0;font-weight:400;">'
+        f'{escape(applications_subtitle(applications))}</p>',
         unsafe_allow_html=True,
     )
 
-    st.caption(
-        "Start a new application from the **Chrome extension** (JobAssist side panel). "
-        "This page tracks status for applications already synced to your account."
+    st.markdown(
+        '<p style="font-size:12px;color:var(--text-tertiary);margin:0 0 16px;line-height:1.5;">'
+        'Start a new application from the <strong style="color:var(--text-secondary);">Chrome extension</strong> '
+        '(JobAssist side panel). This page tracks status for applications already synced.</p>',
+        unsafe_allow_html=True,
     )
 
     filter_options = ["all", "interview"] + APPLICATION_STATUSES
@@ -1593,7 +1745,7 @@ def render_applications_page(backend_url: str, applications: list[dict[str, Any]
             return "Interview pipeline"
         return format_status_option(x)
 
-    row1_c1, row1_c2 = st.columns([4, 1])
+    row1_c1, row1_c2 = st.columns([5, 1.5])
     with row1_c1:
         st.text_input(
             "Search",
@@ -1636,14 +1788,24 @@ def render_applications_page(backend_url: str, applications: list[dict[str, Any]
         role = (app.get("role_title") or "").strip() or "Role"
         host = portal_host(app.get("portal_url") or "")
         status = app.get("status") or "applied"
+        _, fg, _ = status_meta(status)
         st.markdown(
-            f'<div style="background:#fff;border:1px solid #e5e5ea;border-radius:16px;padding:18px;box-shadow:0 0.5px 0 rgba(0,0,0,0.04),0 1px 3px rgba(0,0,0,0.04);">'
-            f'<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;">'
-            f'<div><div style="font-size:22px;font-weight:800;color:#1c1c1e;">{escape(co)}</div>'
-            f'<div style="font-size:13px;color:#8e8e93;">{escape(role)}</div></div>'
+            f'<div style="background:var(--surface);border:1px solid var(--border-strong);'
+            f'border-radius:16px;padding:24px;box-shadow:var(--shadow);margin-bottom:16px;">'
+            f'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">'
+            f'<div style="display:flex;align-items:center;gap:14px;">'
+            f'<div style="width:48px;height:48px;border-radius:13px;'
+            f'background:linear-gradient(135deg,{fg}15,{fg}08);border:1px solid {fg}20;'
+            f'display:flex;align-items:center;justify-content:center;'
+            f'font-size:20px;font-weight:800;color:{fg};">{escape(co[:1].upper())}</div>'
+            f'<div><div style="font-size:20px;font-weight:800;color:var(--text);'
+            f'letter-spacing:-0.02em;">{escape(co)}</div>'
+            f'<div style="font-size:13px;color:var(--text-secondary);margin-top:2px;">{escape(role)}</div></div></div>'
             f'<div>{status_badge_html(status)}</div></div>'
-            f'<div style="margin-top:10px;font-size:12px;color:#8e8e93;">Portal: {escape(host)} · Applied: {escape(fmt_app_date(str(app.get("created_at")) if app.get("created_at") else None))}</div>'
-            '</div>',
+            f'<div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);'
+            f'font-size:12px;color:var(--text-tertiary);">'
+            f'Portal: {escape(host)} · Applied: {escape(fmt_app_date(str(app.get("created_at")) if app.get("created_at") else None))}</div>'
+            f'</div>',
             unsafe_allow_html=True,
         )
         key = f"detail_status_{selected}"
@@ -1671,12 +1833,21 @@ def render_applications_page(backend_url: str, applications: list[dict[str, Any]
 
     if not filtered:
         st.markdown(
-            '<div style="border-radius:16px;border:1px solid #e5e5ea;background:#fff;padding:48px 20px;text-align:center;box-shadow:0 0.5px 0 rgba(0,0,0,0.04),0 1px 3px rgba(0,0,0,0.04);">'
-            '<p style="font-size:15px;font-weight:600;color:#1c1c1e;margin:0;">No applications found</p>'
-            '<p style="font-size:13px;color:#8e8e93;margin:8px 0 0 0;">Try adjusting your search or filter</p></div>',
+            '<div style="border-radius:16px;border:1px solid var(--border-strong);'
+            'background:var(--surface);padding:56px 20px;text-align:center;box-shadow:var(--shadow);">'
+            '<div style="font-size:36px;margin-bottom:12px;opacity:0.4;">🔍</div>'
+            '<p style="font-size:16px;font-weight:600;color:var(--text);margin:0 0 4px;">No applications found</p>'
+            '<p style="font-size:13px;color:var(--text-secondary);margin:0;">Try adjusting your search or filter</p></div>',
             unsafe_allow_html=True,
         )
         return
+
+    # Application list inside a card
+    st.markdown(
+        '<div style="background:var(--surface);border:1px solid var(--border-strong);'
+        'border-radius:16px;overflow:hidden;box-shadow:var(--shadow);">',
+        unsafe_allow_html=True,
+    )
 
     for i, a in enumerate(filtered):
         aid = int(a["id"])
@@ -1684,23 +1855,36 @@ def render_applications_page(backend_url: str, applications: list[dict[str, Any]
         role = (a.get("role_title") or "").strip() or "Role"
         date_txt = fmt_app_date(str(a.get("created_at")) if a.get("created_at") else None)
         status = a.get("status") or "applied"
+        _, fg, _ = status_meta(status)
         sk = f"app_row_status_{aid}"
         if sk not in st.session_state:
             st.session_state[sk] = status if status in APPLICATION_STATUSES else "applied"
-        c1, c2, c3, c4 = st.columns([3.2, 1.2, 1.6, 0.7])
+
+        if i > 0:
+            st.markdown(
+                '<div style="height:1px;background:var(--border);margin:0 20px;"></div>',
+                unsafe_allow_html=True,
+            )
+
+        c1, c2, c3, c4 = st.columns([3.5, 1.0, 1.8, 0.5])
         with c1:
             st.markdown(
-                f'<div style="display:flex;align-items:center;gap:12px;padding:10px 0;">'
-                f'<div style="width:40px;height:40px;border-radius:11px;flex-shrink:0;background:rgba(99,102,241,0.1);'
-                f'border:1px solid rgba(99,102,241,0.2);display:flex;align-items:center;justify-content:center;'
-                f'font-size:16px;font-weight:700;color:#6366f1;">{escape(co[:1].upper())}</div>'
-                f'<div style="min-width:0;"><div style="font-size:14px;font-weight:600;color:#1c1c1e;">{escape(co)}</div>'
-                f'<div style="font-size:13px;color:#8e8e93;">{escape(role)}</div></div></div>',
+                f'<div style="display:flex;align-items:center;gap:14px;padding:8px 0 8px 4px;">'
+                f'<div style="width:42px;height:42px;border-radius:12px;flex-shrink:0;'
+                f'background:linear-gradient(135deg,{fg}12,{fg}06);'
+                f'border:1px solid {fg}18;'
+                f'display:flex;align-items:center;justify-content:center;'
+                f'font-size:16px;font-weight:700;color:{fg};">{escape(co[:1].upper())}</div>'
+                f'<div style="min-width:0;">'
+                f'<div style="font-size:14px;font-weight:600;color:var(--text);'
+                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{escape(co)}</div>'
+                f'<div style="font-size:12px;color:var(--text-secondary);margin-top:1px;'
+                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{escape(role)}</div></div></div>',
                 unsafe_allow_html=True,
             )
         with c2:
             st.markdown(
-                f'<div style="font-size:12px;color:#aeaeb2;padding-top:8px;">{escape(date_txt)}</div>',
+                f'<div style="font-size:12px;color:var(--text-tertiary);padding-top:14px;">{escape(date_txt)}</div>',
                 unsafe_allow_html=True,
             )
         with c3:
@@ -1714,21 +1898,19 @@ def render_applications_page(backend_url: str, applications: list[dict[str, Any]
                 args=(backend_url, aid),
             )
         with c4:
-            if st.button("View", key=f"btn_app_view_{aid}"):
+            st.markdown('<div style="padding-top:4px;"></div>', unsafe_allow_html=True)
+            if st.button("→", key=f"btn_app_view_{aid}"):
                 st.session_state["selected_application_id"] = aid
                 st.rerun()
         err = st.session_state.get(f"app_status_err_{aid}")
         if err:
             st.caption(f"Error: {err}")
-        if i < len(filtered) - 1:
-            st.markdown(
-                '<div style="height:1px;background:rgba(60,60,67,0.06);margin:4px 0;"></div>',
-                unsafe_allow_html=True,
-            )
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
     st.markdown(
-        f'<p style="text-align:center;font-size:12px;color:#aeaeb2;padding:20px 0 8px 0;">'
-        f"Showing {len(filtered)} of {len(applications)} applications</p>",
+        f'<p style="text-align:center;font-size:12px;color:var(--text-tertiary);padding:18px 0 4px;">'
+        f'Showing {len(filtered)} of {len(applications)} applications</p>',
         unsafe_allow_html=True,
     )
 
@@ -1759,54 +1941,62 @@ def main() -> None:
     if not apps_resp.ok:
         st.warning(f"Could not load applications: {apps_resp.text}")
 
-    # Layout: left nav + main content
-    nav_col, main_col = st.columns([1.05, 3.95])
+    # Layout: flush sidebar + full-width main
+    nav_col, main_col = st.columns([1.0, 4.5])
     with nav_col:
         n_apps = len(applications)
         st.markdown(
-            '<div class="nav-wrap" style="background:transparent;border:0;padding:14px 14px 10px;">'
-            '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">'
-            '<div style="width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,#6366f1,#818cf8);'
-            'display:flex;align-items:center;justify-content:center;box-shadow:0 2px 8px rgba(99,102,241,0.35);">'
+            '<div class="nav-wrap">'
+            '<div style="display:flex;align-items:center;gap:11px;margin-bottom:28px;">'
+            '<div style="width:34px;height:34px;border-radius:10px;'
+            'background:linear-gradient(135deg,#6366f1,#818cf8);'
+            'display:flex;align-items:center;justify-content:center;'
+            'box-shadow:0 2px 10px rgba(99,102,241,0.35);">'
             '<span style="font-size:16px;color:#fff;">⚡</span></div>'
-            '<div><div style="font-size:16px;font-weight:700;color:#fff;letter-spacing:-0.01em;">JobAssist</div></div>'
-            "</div>",
+            '<div style="font-size:17px;font-weight:800;color:#fff;letter-spacing:-0.02em;">JobAssist</div>'
+            '</div></div>',
             unsafe_allow_html=True,
         )
         nav_main = st.session_state.main_nav
-        if st.button("Dashboard", use_container_width=True, type="primary" if nav_main == "dashboard" else "secondary"):
+        if st.button("◻  Dashboard", use_container_width=True, type="primary" if nav_main == "dashboard" else "secondary"):
             st.session_state.main_nav = "dashboard"
             st.session_state.selected_application_id = None
             st.rerun()
         if st.button(
-            f"Applications ({n_apps})",
+            f"📄  Applications  ({n_apps})",
             use_container_width=True,
             type="primary" if nav_main == "applications" else "secondary",
         ):
             st.session_state.main_nav = "applications"
             st.rerun()
-        if st.button("Profile", use_container_width=True, type="primary" if nav_main == "profile" else "secondary"):
+        if st.button("👤  Profile", use_container_width=True, type="primary" if nav_main == "profile" else "secondary"):
             st.session_state.main_nav = "profile"
             st.session_state.selected_application_id = None
             st.rerun()
-        if st.button("Resumes", use_container_width=True, type="primary" if nav_main == "resume" else "secondary"):
+        if st.button("📑  Resumes", use_container_width=True, type="primary" if nav_main == "resume" else "secondary"):
             st.session_state.main_nav = "resume"
             st.session_state.selected_application_id = None
             st.rerun()
-        if st.button("Settings", use_container_width=True, type="primary" if nav_main == "settings" else "secondary"):
+        if st.button("⚙  Settings", use_container_width=True, type="primary" if nav_main == "settings" else "secondary"):
             st.session_state.main_nav = "settings"
             st.session_state.selected_application_id = None
             st.rerun()
+
+        # User block
         em = profile.get("email") or ""
         name = profile.get("full_name") or em.split("@")[0] or "User"
         initial = name[:1].upper()
         st.markdown(
-            '<div style="margin-top:8px;padding-top:10px;border-top:1px solid rgba(255,255,255,0.06);"></div>'
-            f'<div style="display:flex;align-items:center;gap:10px;padding:8px 0;">'
-            f'<div style="width:34px;height:34px;border-radius:10px;flex-shrink:0;background:linear-gradient(135deg,#34c759,#30d158);'
-            f'display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700;color:#fff;">{escape(initial)}</div>'
-            f'<div style="min-width:0;"><div style="font-size:13px;font-weight:600;color:#fff;line-height:1.3;">{escape(name)}</div>'
-            f'<div style="font-size:11px;color:#636366;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{escape(em)}</div></div></div>',
+            f'<div style="margin-top:24px;padding-top:16px;border-top:1px solid rgba(255,255,255,0.06);">'
+            f'<div style="display:flex;align-items:center;gap:10px;padding:4px 0 8px;">'
+            f'<div style="width:34px;height:34px;border-radius:10px;flex-shrink:0;'
+            f'background:linear-gradient(135deg,#22c55e,#4ade80);'
+            f'display:flex;align-items:center;justify-content:center;'
+            f'font-size:14px;font-weight:700;color:#052e16;">{escape(initial)}</div>'
+            f'<div style="min-width:0;flex:1;">'
+            f'<div style="font-size:13px;font-weight:600;color:#fff;line-height:1.3;">{escape(name)}</div>'
+            f'<div style="font-size:11px;color:rgba(255,255,255,0.3);overflow:hidden;'
+            f'text-overflow:ellipsis;white-space:nowrap;">{escape(em)}</div></div></div></div>',
             unsafe_allow_html=True,
         )
         if st.button("Sign out", key="btn_sidebar_signout", use_container_width=True, type="secondary"):
@@ -1814,38 +2004,50 @@ def main() -> None:
             st.rerun()
 
     with main_col:
+        # Invisible marker for CSS targeting
+        st.markdown('<div class="main-content-marker" style="display:none;"></div>', unsafe_allow_html=True)
+
         page = st.session_state.main_nav
         if page == "dashboard":
             st.markdown(
-                "<h1 style='font-size:28px;font-weight:700;margin:0 0 4px;letter-spacing:-0.025em;color:#1c1c1e;'>Dashboard</h1>"
-                "<p style='font-size:14px;color:#8e8e93;margin:0 0 14px;'>Track your applications and manage your job search.</p>",
+                '<h1 style="font-size:30px;font-weight:800;margin:0 0 4px;'
+                'letter-spacing:-0.03em;color:var(--text);">Dashboard</h1>'
+                '<p style="font-size:14px;color:var(--text-secondary);margin:0 0 24px;font-weight:400;">'
+                'Track your applications and manage your job search.</p>',
                 unsafe_allow_html=True,
             )
             render_dashboard(applications)
         elif page == "applications":
             st.markdown(
-                "<h1 style='font-size:28px;font-weight:700;margin:0 0 4px;letter-spacing:-0.025em;color:#1c1c1e;'>Applications</h1>",
+                '<h1 style="font-size:30px;font-weight:800;margin:0 0 4px;'
+                'letter-spacing:-0.03em;color:var(--text);">Applications</h1>',
                 unsafe_allow_html=True,
             )
             render_applications_page(backend_url, applications)
         elif page == "profile":
             st.markdown(
-                "<h1 style='font-size:28px;font-weight:700;margin:0 0 4px;letter-spacing:-0.025em;color:#1c1c1e;'>Profile</h1>"
-                "<p style='font-size:14px;color:#8e8e93;margin:0 0 14px;'>Same fields as the first-time setup in the extension.</p>",
+                '<h1 style="font-size:30px;font-weight:800;margin:0 0 4px;'
+                'letter-spacing:-0.03em;color:var(--text);">Profile</h1>'
+                '<p style="font-size:14px;color:var(--text-secondary);margin:0 0 24px;font-weight:400;">'
+                'Same fields as the first-time setup in the extension.</p>',
                 unsafe_allow_html=True,
             )
             render_profile_form(backend_url, profile)
         elif page == "resume":
             st.markdown(
-                "<h1 style='font-size:28px;font-weight:700;margin:0 0 4px;letter-spacing:-0.025em;color:#1c1c1e;'>Resumes</h1>"
-                f"<p style='font-size:14px;color:#8e8e93;margin:0 0 14px;'>Manage your uploaded resumes. Upload up to {MAX_RESUMES}.</p>",
+                '<h1 style="font-size:30px;font-weight:800;margin:0 0 4px;'
+                'letter-spacing:-0.03em;color:var(--text);">Resumes</h1>'
+                f'<p style="font-size:14px;color:var(--text-secondary);margin:0 0 24px;font-weight:400;">'
+                f'Manage your uploaded resumes. Upload up to {MAX_RESUMES}.</p>',
                 unsafe_allow_html=True,
             )
             render_resume_page(backend_url)
         elif page == "settings":
             st.markdown(
-                "<h1 style='font-size:28px;font-weight:700;margin:0 0 4px;letter-spacing:-0.025em;color:#1c1c1e;'>Settings</h1>"
-                "<p style='font-size:14px;color:#8e8e93;margin:0 0 14px;'>AI key and account settings.</p>",
+                '<h1 style="font-size:30px;font-weight:800;margin:0 0 4px;'
+                'letter-spacing:-0.03em;color:var(--text);">Settings</h1>'
+                '<p style="font-size:14px;color:var(--text-secondary);margin:0 0 24px;font-weight:400;">'
+                'AI key and account settings.</p>',
                 unsafe_allow_html=True,
             )
             render_settings_page(backend_url, profile)
