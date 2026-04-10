@@ -157,6 +157,7 @@ export default function ProfileSetupPage() {
   }, [profile]);
 
   const handleSave = async () => {
+    console.log("[PROFILE-SAVE] triggered");
     setSaving(true);
     setError(null);
     try {
@@ -175,14 +176,18 @@ export default function ProfileSetupPage() {
         gpa: firstEd.gpa,
         custom_fields: mergedCustom,
       };
+      console.log("[PROFILE-SAVE] payload:", JSON.stringify(payload, null, 2));
       const updated = await updateProfile(payload);
+      console.log("[PROFILE-SAVE] API response:", JSON.stringify(updated, null, 2));
       setProfile(updated);
       await chrome.storage.local.set({
         [STORAGE_KEYS.USER_PROFILE]: updated,
         [STORAGE_KEYS.AUTOFILL_ANSWERS]: buildAutofillAnswersFromProfile(updated),
       });
+      console.log("[PROFILE-SAVE] written to storage");
       setPage("job-description");
     } catch (err) {
+      console.log("[PROFILE-SAVE] ERROR:", err);
       setError(err instanceof Error ? err.message : "Failed to save profile");
     } finally {
       setSaving(false);

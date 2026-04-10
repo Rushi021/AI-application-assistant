@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useAppStore } from "../store";
-import { deleteResume } from "../services/api";
+import { deleteResume, submitTrackedApplication, type TrackApplicationPayload } from "../services/api";
 import { MSG, STORAGE_KEYS } from "@/shared/constants";
 import { getActiveTabContext } from "@/utils/tab-context";
 import type { AutofillProgress, AutofillSession, FileUploadBlockerDecision, FormBlocker, UserProfile } from "@/shared/types";
@@ -442,6 +442,7 @@ export default function AutoFillPage() {
     appendTimeline("Finalizing application tracking");
     const store = useAppStore.getState();
 
+    let trackPayload: TrackApplicationPayload | null = null;
     try {
       console.log("[TRACK] entered tracking try");
       console.log("[TRACK] 3b: about to getActiveTabContext");
@@ -450,54 +451,50 @@ export default function AutoFillPage() {
       const selectedResume =
         store.resumes.find((resume) => resume.id === (store.autofillContext.temporaryResumeId ?? store.selectedResumeId)) ?? null;
 
-      console.log("[TRACK] 3d: about to sendMessage TRACK_APPLICATION");
-      // Wake the service worker with a ping before sending the real message
-      try {
-        await chrome.runtime.sendMessage({ type: "PING" });
-      } catch {
-        // Worker woke up from the attempt even if it errored
-      }
+      trackPayload = {
+        portal_url: tabContext.url,
+        company_name: tabContext.company_name,
+        role_title: tabContext.role_title,
+        job_board: tabContext.job_board,
+        applied_at: new Date().toISOString(),
+        status: "applied",
+        job_id: store.jobId || null,
+        resume_id: store.autofillContext.temporaryResumeId ?? store.selectedResumeId ?? null,
+        resume_filename: selectedResume?.original_filename ?? store.autofillContext.temporaryResumeFilename ?? null,
+        resume_source: store.autofillContext.applicationResumeSource ?? null,
+        cover_letter: store.coverLetter || store.draft?.cover_letter || store.pipelineRun?.cover_letter || null,
+        salary: store.profile?.expected_salary ?? store.profile?.current_salary ?? null,
+      };
 
-      // Send with a timeout so it never hangs forever
-      const response = await Promise.race([
-        chrome.runtime.sendMessage({
-          type: "TRACK_APPLICATION",
-          data: {
-            portal_url: tabContext.url,
-            company_name: tabContext.company_name,
-            role_title: tabContext.role_title,
-            job_board: tabContext.job_board,
-            applied_at: new Date().toISOString(),
-            status: "applied",
-            job_id: store.jobId || null,
-            resume_id: store.autofillContext.temporaryResumeId ?? store.selectedResumeId ?? null,
-            resume_filename: selectedResume?.original_filename ?? store.autofillContext.temporaryResumeFilename ?? null,
-            resume_source: store.autofillContext.applicationResumeSource ?? null,
-            cover_letter: store.coverLetter || store.draft?.cover_letter || store.pipelineRun?.cover_letter || null,
-            salary: store.profile?.expected_salary ?? store.profile?.current_salary ?? null,
-          },
-        }),
-        new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error("Tracking timed out — service worker may be inactive. Please try again.")),
-            5000
-          )
-        ),
-      ]);
+      console.log("[TRACK] 3d: about to submitTrackedApplication (direct API)");
+      const response = await submitTrackedApplication(trackPayload);
+      console.log("[TRACK] API call succeeded", response);
       console.log("[TRACK] 3e: got response", response);
-
-      if (response?.success) {
-        setTrackingStatus("success");
-        appendTimeline(`Application tracked locally (id=${response.local_id ?? "queued"})`);
-      } else {
-        setTrackingStatus("error");
-        appendTimeline("Tracking queued with fallback — will retry automatically", "warn");
-      }
+      setTrackingStatus("success");
+      appendTimeline(`Application tracked (id=${response.id})`);
     } catch (err) {
       console.log("[TRACK] tracking try CAUGHT", err);
-      setTrackingStatus("error");
-      const msg = err instanceof Error ? err.message : "Unknown error";
-      appendTimeline(`Tracking error: ${msg} — will retry automatically`, "warn");
+      if (trackPayload) {
+        const pending = {
+          local_id: crypto.randomUUID(),
+          ...trackPayload,
+          synced: false,
+          backend_id: null,
+          retry_count: 0,
+          last_error: err instanceof Error ? err.message : String(err),
+        };
+        const { pending_applications = [] } = await chrome.storage.local.get("pending_applications");
+        pending_applications.push(pending);
+        await chrome.storage.local.set({ pending_applications });
+        console.log("[TRACK] saved to pending queue for later sync");
+        console.log("[TRACK] direct API failed, saved to pending queue");
+        setTrackingStatus("error");
+        appendTimeline("Tracking queued for later sync — will retry automatically", "warn");
+      } else {
+        setTrackingStatus("error");
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        appendTimeline(`Tracking error: ${msg} — will retry automatically`, "warn");
+      }
     }
 
     // Let the user see the success/error banner before resetting

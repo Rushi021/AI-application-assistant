@@ -75,28 +75,81 @@ function showExtensionInvalidatedBannerOnce(): void {
   document.documentElement.appendChild(bar);
 }
 
-/** Pairs that must NEVER match despite substring overlap */
+/** Pairs that must NEVER match despite substring overlap (both sides match normalizeText() output). */
 const BLOCKED_MATCH_PAIRS: ReadonlySet<string> = new Set([
+  "address line 1|address line 2",
+  "address line 1|postal code",
+  "address line 1|zip code",
+  "address line 2|address line 1",
+  "address line 2|postal code",
+  "address line 2|zip code",
   "city|ethnicity",
-  "ethnicity|city",
-  "state|veteran_status",
-  "veteran_status|state",
-  "state|disability_status",
-  "disability_status|state",
-  "postal_code|address_line1",
-  "address_line1|postal_code",
-  "postal_code|address_line2",
-  "address_line2|postal_code",
-  "zip_code|address_line1",
-  "address_line1|zip_code",
-  "zip_code|address_line2",
-  "address_line2|zip_code",
-  "address_line_2|address_line1",
-  "address_line1|address_line_2",
-  "name|phone_number",
-  "phone_number|name",
+  "company name|first name",
+  "company name|full name",
+  "company name|last name",
+  "company name|name",
+  "country|country code",
+  "country|county",
+  "country code|country",
+  "county|country",
+  "current title|job title",
+  "disability status|state",
   "email|female",
+  "employer|first name",
+  "employer|full name",
+  "employer|last name",
+  "employer|name",
+  "employer name|first name",
+  "employer name|full name",
+  "employer name|last name",
+  "employer name|name",
+  "ethnicity|city",
+  "first name|company name",
+  "first name|employer",
+  "first name|employer name",
+  "first name|middle name",
+  "first name|school name",
+  "full name|company name",
+  "full name|employer",
+  "full name|employer name",
+  "full name|middle name",
+  "full name|preferred name",
+  "full name|school name",
+  "job title|current title",
+  "job title|title",
+  "last name|company name",
+  "last name|employer",
+  "last name|employer name",
+  "last name|middle name",
+  "last name|preferred name",
+  "last name|school name",
+  "middle name|first name",
+  "middle name|full name",
+  "middle name|last name",
+  "middle name|name",
+  "name|company name",
+  "name|employer",
+  "name|employer name",
+  "name|middle name",
+  "name|phone number",
+  "name|school name",
+  "phone country|country",
+  "phone number|name",
   "phone|sponsorship",
+  "postal code|address line 1",
+  "postal code|address line 2",
+  "preferred name|full name",
+  "preferred name|last name",
+  "school name|first name",
+  "school name|full name",
+  "school name|last name",
+  "school name|name",
+  "state|disability status",
+  "state|veteran status",
+  "title|job title",
+  "veteran status|state",
+  "zip code|address line 1",
+  "zip code|address line 2",
 ]);
 
 function normalizeText(value: string): string {
@@ -126,6 +179,12 @@ function splitAnswerTokens(value: string): string[] {
 
 function dispatchFieldEvents(element: FillableElement): void {
   element.dispatchEvent(new Event("input", { bubbles: true }));
+  element.dispatchEvent(new Event("change", { bubbles: true }));
+  element.dispatchEvent(new Event("blur", { bubbles: true }));
+}
+
+/** Native <select>: avoid `input` (not standard); React/controlled components expect change/blur. */
+function dispatchSelectEvents(element: HTMLSelectElement): void {
   element.dispatchEvent(new Event("change", { bubbles: true }));
   element.dispatchEvent(new Event("blur", { bubbles: true }));
 }
@@ -723,7 +782,18 @@ function matchFieldsToAnswers(fields: ScannedField[], answers: AutofillAnswerMap
     }
 
     if (best) {
+      console.log("[MATCH]", {
+        fieldIdentifiers: normalizedIdentifiers.slice(0, 3),
+        matchedKey: best.answerKey,
+        matchedValue: (best.answerValue ?? "").substring(0, 30),
+        score: best.score,
+      });
       matches.push({ element: field.element, answerValue: best.answerValue, answerKey: best.answerKey });
+    } else {
+      console.log("[MATCH-SKIP]", {
+        fieldIdentifiers: normalizedIdentifiers.slice(0, 3),
+        reason: "no match found",
+      });
     }
   }
 
@@ -949,7 +1019,7 @@ function fillSelect(element: HTMLSelectElement, answerValue: string, answerKey?:
     );
     if (matchedOption) {
       element.value = matchedOption.value;
-      dispatchFieldEvents(element);
+      dispatchSelectEvents(element);
       return true;
     }
   }
@@ -1043,14 +1113,14 @@ function fillSelect(element: HTMLSelectElement, answerValue: string, answerKey?:
     for (const option of options) {
       option.selected = selectedValues.has(option.value);
     }
-    dispatchFieldEvents(element);
+    dispatchSelectEvents(element);
     return true;
   }
 
   const option = findOption(answerValue);
   if (!option) return false;
   element.value = option.value;
-  dispatchFieldEvents(element);
+  dispatchSelectEvents(element);
   return true;
 }
 
@@ -1067,11 +1137,7 @@ function fillCustomDropdown(element: HTMLElement, answerValue: string): boolean 
   if (!searchInput) return false;
 
   setNativeValue(searchInput, answerValue);
-  searchInput.dispatchEvent(new Event("input", { bubbles: true }));
-  searchInput.dispatchEvent(new Event("keyup", { bubbles: true }));
-  searchInput.dispatchEvent(
-    new KeyboardEvent("keyup", { bubbles: true, key: answerValue.slice(-1) || " " })
-  );
+  dispatchFieldEvents(searchInput);
 
   setTimeout(() => {
     const optionElements = container.querySelectorAll<HTMLElement>(

@@ -327,6 +327,64 @@ export async function getSectionHistory(draftId: number, sectionId: string): Pro
 // Applications
 // ---------------------------------------------------------------------------
 
+/** Full payload for Done-track flow; `applied_at` is not sent in POST /applications (matches background sync body). */
+export type TrackApplicationPayload = {
+  portal_url: string;
+  company_name: string | null;
+  role_title: string | null;
+  job_board: string | null;
+  applied_at: string;
+  status: "applied";
+  job_id: number | null;
+  resume_id: number | null;
+  resume_filename: string | null;
+  resume_source: string | null;
+  cover_letter: string | null;
+  salary: string | null;
+};
+
+/** POST /applications with the same JSON body as [sync.ts](chrome-extension/src/background/sync.ts) queue sync. */
+export async function submitTrackedApplication(payload: TrackApplicationPayload): Promise<Application> {
+  const body = {
+    job_id: payload.job_id,
+    resume_id: payload.resume_id,
+    status: payload.status,
+    company_name: payload.company_name,
+    role_title: payload.role_title,
+    portal_url: payload.portal_url,
+    job_board: payload.job_board,
+    salary: payload.salary,
+    resume_filename: payload.resume_filename,
+    resume_source: payload.resume_source,
+    cover_letter: payload.cover_letter,
+  };
+  const application = await request<Application>("/applications", {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+  void logTrackingCreatedEvent(application.id, payload.applied_at);
+  return application;
+}
+
+/** Best-effort parity with sync.ts post-create event (never throws). */
+export async function logTrackingCreatedEvent(applicationId: number, appliedAtIso: string): Promise<void> {
+  try {
+    await request<void>(`/applications/${applicationId}/events`, {
+      method: "POST",
+      body: JSON.stringify({
+        event_type: "tracking_created",
+        detail: JSON.stringify({
+          source: "extension_done_button",
+          tracked_from: "chrome_extension",
+          detected_at: appliedAtIso,
+        }),
+      }),
+    });
+  } catch {
+    // Event logging is best-effort; application is already saved
+  }
+}
+
 export async function createApplication(params: {
   company_name?: string;
   role_title?: string;

@@ -20,7 +20,6 @@ function PageRouter() {
     );
   }
 
-  // Force login if not authenticated
   if (!isAuthenticated && currentPage !== "login") {
     return <LoginPage />;
   }
