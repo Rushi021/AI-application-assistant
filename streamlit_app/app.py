@@ -669,7 +669,10 @@ div[data-testid="stAppViewBlockContainer"],
 }
 
 /* ── 1. Kill ALL Streamlit chrome ── */
-header[data-testid="stHeader"],
+header[data-testid="stHeader"] {
+    display: none !important;
+    height: 0 !important;
+}
 .stApp > header,
 [data-testid="stToolbar"] {
     background-color: var(--bg) !important;
@@ -880,11 +883,19 @@ a { color: var(--accent) !important; }
 /* ── 16. Spacing ── */
 div[data-testid="stVerticalBlock"] > div { gap: 0.4rem !important; }
 
-/* ── 17. Scrollbar ── */
-::-webkit-scrollbar { width: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.1); border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(0,0,0,0.18); }
+/* Hide scrollbar everywhere but keep scroll functional */
+* {
+    scrollbar-width: none !important; /* Firefox */
+    -ms-overflow-style: none !important; /* IE/Edge */
+}
+*::-webkit-scrollbar {
+    display: none !important; /* Chrome/Safari */
+}
+
+/* Remove gap between nav and main columns */
+section[data-testid="stMain"] [data-testid="stHorizontalBlock"] {
+    gap: 0 !important;
+}
 
 /* ── 18. EEO rows ── */
 .eeo-q { font-size: 13px; color: var(--text-secondary); margin: 0; padding: 10px 0 6px; line-height: 1.5; font-family: var(--font); }
@@ -897,18 +908,26 @@ div[data-testid="stVerticalBlock"] > div { gap: 0.4rem !important; }
 div[data-testid="stColumn"]:has(.nav-wrap) {
     background: #18181b !important;
     border-radius: 0 !important;
-    padding: 0 !important;
+    padding-top: 16px !important;
+    padding-left: 0 !important;
+    padding-bottom: 0 !important;
+    padding-right: 0 !important;
+    margin-right: 0 !important;
     min-height: 100vh !important;
     position: sticky !important;
     top: 0 !important;
     border-right: 1px solid rgba(255,255,255,0.04) !important;
 }
 
+div[data-testid="stColumn"]:has(.nav-wrap) [data-testid="stVerticalBlock"] > div {
+    gap: 0.15rem !important;
+}
+
 .nav-wrap {
     background: transparent !important;
     border: none !important;
     border-radius: 0;
-    padding: 24px 16px 16px;
+    padding: 20px 16px 12px !important;
     margin-bottom: 0;
 }
 
@@ -929,9 +948,9 @@ div[data-testid="stColumn"]:has(.nav-wrap) button {
     border: none !important;
     border-radius: var(--radius-sm) !important;
     font-family: var(--font) !important;
-    font-size: 14px !important;
+    font-size: 13px !important;
     font-weight: 500 !important;
-    padding: 10px 14px !important;
+    padding: 9px 14px !important;
     transition: all 0.12s ease !important;
     text-align: left !important;
 }
@@ -959,7 +978,7 @@ div[data-testid="stColumn"]:has(.nav-wrap) button[kind="primary"] {
     background: var(--surface);
     border: 1px solid var(--border-strong);
     border-radius: 16px;
-    padding: 22px 20px 18px;
+    padding: 16px 16px 12px;
     box-shadow: var(--shadow);
     position: relative;
     overflow: hidden;
@@ -969,13 +988,8 @@ div[data-testid="stColumn"]:has(.nav-wrap) button[kind="primary"] {
     box-shadow: var(--shadow-lg);
     transform: translateY(-1px);
 }
-.stat-card .icon-wrap {
-    width: 40px; height: 40px; border-radius: 12px;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 18px; margin-bottom: 14px;
-}
 .stat-card .num {
-    font-size: 32px; font-weight: 800; line-height: 1;
+    font-size: 28px; font-weight: 800; line-height: 1;
     color: var(--text); letter-spacing: -0.03em;
     font-family: var(--font);
 }
@@ -984,8 +998,12 @@ div[data-testid="stColumn"]:has(.nav-wrap) button[kind="primary"] {
     margin-top: 6px; font-family: var(--font);
 }
 .stat-card .accent-line {
-    position: absolute; bottom: 0; left: 0; right: 0;
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
     height: 3px;
+    border-radius: 0 0 16px 16px;
 }
 
 .app-row {
@@ -1006,14 +1024,11 @@ div[data-testid="stColumn"]:has(.nav-wrap) button[kind="primary"] {
 .muted { color: var(--text-secondary) !important; font-size: 13px; font-family: var(--font); }
 .dim { color: var(--text-tertiary) !important; font-size: 11px; font-family: var(--font); }
 
-/* Remove column gap in main layout to make it flush */
-[data-testid="stHorizontalBlock"]:has(.nav-wrap) {
-    gap: 0 !important;
-}
-
-/* Main content column padding */
+/* Main content column — viewport height, scrollbar hidden via global rules */
 div[data-testid="stColumn"]:has(.main-content-marker) {
-    padding: 32px 40px 40px !important;
+    padding: 20px 32px 20px !important;
+    max-height: 100vh;
+    overflow-y: auto;
 }
 </style>
 """,
@@ -1539,26 +1554,19 @@ def render_dashboard(applications: list[dict[str, Any]]) -> None:
     for label, v, color, bg, icon in stat_cards:
         cards_html += (
             f'<div class="stat-card">'
-            f'<div class="icon-wrap" style="background:{bg};">'
-            f'<span>{icon}</span></div>'
+            f'<div style="font-size:22px;margin-bottom:10px;">{icon}</div>'
             f'<div class="num">{v}</div>'
             f'<div class="lbl">{escape(label)}</div>'
-            f'<div class="accent-line" style="background:linear-gradient(90deg,{color},{color}00);"></div>'
+            f'<div class="accent-line" style="background:{color};"></div>'
             f'</div>'
         )
     st.markdown(
-        f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:24px;">{cards_html}</div>',
+        f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:14px;">{cards_html}</div>',
         unsafe_allow_html=True,
     )
 
     left_col, right_col = st.columns([2.2, 1.0])
     with left_col:
-        # Recent applications card
-        st.markdown(
-            '<div style="background:var(--surface);border:1px solid var(--border-strong);'
-            'border-radius:16px;padding:20px 24px;box-shadow:var(--shadow);">',
-            unsafe_allow_html=True,
-        )
         card_top_left, card_top_right = st.columns([3, 1])
         with card_top_left:
             st.markdown(
@@ -1575,10 +1583,10 @@ def render_dashboard(applications: list[dict[str, Any]]) -> None:
             applications,
             key=lambda a: parse_created_date(a.get("created_at")) or datetime.min,
             reverse=True,
-        )[:5]
+        )[:3]
         if not recent:
             st.markdown(
-                '<div style="padding:24px 0;text-align:center;">'
+                '<div style="padding:16px 0;text-align:center;">'
                 '<p style="font-size:14px;color:var(--text-secondary);">No applications yet. '
                 'Start one from the Chrome extension.</p></div>',
                 unsafe_allow_html=True,
@@ -1591,10 +1599,10 @@ def render_dashboard(applications: list[dict[str, Any]]) -> None:
             initial = co[:1].upper()
             _, fg, _ = status_meta(a.get("status"))
 
-            separator = f'<div style="height:1px;background:var(--border);margin:10px 0;"></div>' if idx > 0 else ""
+            separator = f'<div style="height:1px;background:var(--border);margin:6px 0;"></div>' if idx > 0 else ""
             st.markdown(
                 f'{separator}'
-                f'<div style="display:flex;align-items:center;gap:14px;padding:6px 0;">'
+                f'<div style="display:flex;align-items:center;gap:14px;padding:4px 0;">'
                 f'<div style="width:40px;height:40px;border-radius:11px;flex-shrink:0;'
                 f'background:linear-gradient(135deg,{fg}15,{fg}08);'
                 f'border:1px solid {fg}20;'
@@ -1609,17 +1617,10 @@ def render_dashboard(applications: list[dict[str, Any]]) -> None:
                 f'{status_badge_html(a.get("status"))}</div></div>',
                 unsafe_allow_html=True,
             )
-        st.markdown('</div>', unsafe_allow_html=True)
 
     with right_col:
-        # Pipeline card
         st.markdown(
-            '<div style="background:var(--surface);border:1px solid var(--border-strong);'
-            'border-radius:16px;padding:20px;box-shadow:var(--shadow);margin-bottom:14px;">',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            '<p style="font-size:16px;font-weight:700;margin:0 0 12px;color:var(--text);'
+            '<p style="font-size:16px;font-weight:700;margin:0 0 10px;color:var(--text);'
             'letter-spacing:-0.01em;">Pipeline</p>',
             unsafe_allow_html=True,
         )
@@ -1654,7 +1655,7 @@ def render_dashboard(applications: list[dict[str, Any]]) -> None:
         for label, n, c in rows:
             pct = int((n / max_n) * 100) if (max_n and n > 0) else 0
             st.markdown(
-                f'<div style="margin-bottom:10px;">'
+                f'<div style="margin-bottom:7px;">'
                 f'<div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:5px;">'
                 f'<span style="color:var(--text-secondary);font-weight:500;">{label}</span>'
                 f'<span style="color:{c};font-weight:700;">{n}</span></div>'
@@ -1663,16 +1664,9 @@ def render_dashboard(applications: list[dict[str, Any]]) -> None:
                 f'transition:width 0.3s ease;"></div></div></div>',
                 unsafe_allow_html=True,
             )
-        st.markdown('</div>', unsafe_allow_html=True)
 
-        # Activity card
         st.markdown(
-            '<div style="background:var(--surface);border:1px solid var(--border-strong);'
-            'border-radius:16px;padding:20px;box-shadow:var(--shadow);">',
-            unsafe_allow_html=True,
-        )
-        st.markdown(
-            '<p style="font-size:16px;font-weight:700;margin:0 0 14px;color:var(--text);'
+            '<p style="font-size:16px;font-weight:700;margin:14px 0 10px;color:var(--text);'
             'letter-spacing:-0.01em;">Activity</p>',
             unsafe_allow_html=True,
         )
@@ -1680,7 +1674,7 @@ def render_dashboard(applications: list[dict[str, Any]]) -> None:
             applications,
             key=lambda a: parse_created_date(a.get("created_at")) or datetime.min,
             reverse=True,
-        )[:5]
+        )[:3]
         if not act:
             st.markdown(
                 '<p style="font-size:13px;color:var(--text-tertiary);">No activity yet.</p>',
@@ -1690,7 +1684,7 @@ def render_dashboard(applications: list[dict[str, Any]]) -> None:
             label, color, _ = status_meta(a.get("status"))
             co = (a.get("company_name") or "Company").strip() or "Company"
             st.markdown(
-                f'<div style="display:flex;gap:10px;margin-bottom:12px;align-items:flex-start;">'
+                f'<div style="display:flex;gap:10px;margin-bottom:8px;align-items:flex-start;">'
                 f'<div style="width:7px;height:7px;border-radius:50%;background:{color};'
                 f'margin-top:5px;flex-shrink:0;"></div>'
                 f'<div><div style="font-size:13px;color:var(--text);font-weight:500;">'
@@ -1699,7 +1693,6 @@ def render_dashboard(applications: list[dict[str, Any]]) -> None:
                 f'{escape(fmt_app_date(str(a.get("created_at")) if a.get("created_at") else None))}</div></div></div>',
                 unsafe_allow_html=True,
             )
-        st.markdown('</div>', unsafe_allow_html=True)
 
 
 def _patch_app_status_streamlit(backend_url: str, application_id: int) -> None:
@@ -2010,9 +2003,9 @@ def main() -> None:
         page = st.session_state.main_nav
         if page == "dashboard":
             st.markdown(
-                '<h1 style="font-size:30px;font-weight:800;margin:0 0 4px;'
+                '<h1 style="font-size:26px;font-weight:800;margin:0 0 2px;'
                 'letter-spacing:-0.03em;color:var(--text);">Dashboard</h1>'
-                '<p style="font-size:14px;color:var(--text-secondary);margin:0 0 24px;font-weight:400;">'
+                '<p style="font-size:14px;color:var(--text-secondary);margin:0 0 14px;font-weight:400;">'
                 'Track your applications and manage your job search.</p>',
                 unsafe_allow_html=True,
             )
