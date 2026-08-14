@@ -330,7 +330,7 @@ Served from [`backend/app/web/`](backend/app/web/). Four folder tabs, no separat
 
 | Tab | What it does |
 |-----|----------------|
-| Personal information | `PUT /profile`. Autofill (`GET /applications/autofill-payload` and the extension content script) reads these fields for common name/contact/address inputs. |
+| Personal information | `PUT /profile`. Contact, salary (base + $10k range), education, work-auth/EEO Yes/No fields. Autofill (`GET /applications/autofill-payload` and the extension content script) maps them onto application forms. |
 | Job search | Lists `GET /jobs`. `POST /scraping/search` is the placeholder. Manual paste still works. User must pick a resume before Score or Add to tracker. |
 | Resume store | 4 families × 2 versions. Upload/delete. **Use this resume** writes `preferred_resume_id`. |
 | Tracker | `GET /applications` joined with job + resume. Succeeded/Failed → `POST /applications/{id}/outcome`. |

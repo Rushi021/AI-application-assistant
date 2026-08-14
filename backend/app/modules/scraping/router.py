@@ -45,34 +45,36 @@ def search_jobs(
     db: Session = Depends(get_db),
     scraper: JobBoardScraper = Depends(get_scraper),
 ) -> ScrapeSearchResponse:
-    scraped = scraper.search(payload.role, payload.location, payload.keywords)
     results: list[ScrapedJobRead] = []
     job_repo = SqlAlchemyJobRepo(db)
-    for item in scraped:
-        job_id = None
-        if payload.persist:
-            job = job_repo.create(
-                Job(
-                    user_id=current_user.id,
-                    raw_text=item.raw_text,
-                    company_name=item.company_name,
-                    role=item.role or payload.role,
-                    sponsorship=item.sponsorship,
-                    date_posted=item.date_posted,
-                    application_link=item.application_link,
-                    source="scraped",
+    keywords = ", ".join(payload.keywords)
+    for role in payload.roles:
+        for location in payload.locations:
+            for item in scraper.search(role, location, keywords):
+                job_id = None
+                if payload.persist:
+                    job = job_repo.create(
+                        Job(
+                            user_id=current_user.id,
+                            raw_text=item.raw_text,
+                            company_name=item.company_name,
+                            role=item.role or role,
+                            sponsorship=item.sponsorship,
+                            date_posted=item.date_posted,
+                            application_link=item.application_link,
+                            source="scraped",
+                        )
+                    )
+                    job_id = job.id
+                results.append(
+                    ScrapedJobRead(
+                        raw_text=item.raw_text,
+                        company_name=item.company_name,
+                        role=item.role,
+                        sponsorship=item.sponsorship,
+                        date_posted=item.date_posted,
+                        application_link=item.application_link,
+                        job_id=job_id,
+                    )
                 )
-            )
-            job_id = job.id
-        results.append(
-            ScrapedJobRead(
-                raw_text=item.raw_text,
-                company_name=item.company_name,
-                role=item.role,
-                sponsorship=item.sponsorship,
-                date_posted=item.date_posted,
-                application_link=item.application_link,
-                job_id=job_id,
-            )
-        )
     return ScrapeSearchResponse(provider=scraper.provider_name, results=results)

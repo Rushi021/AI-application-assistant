@@ -114,6 +114,18 @@ body {
   max-width: 46rem;
 }
 
+.block-title {
+  font-family: Syne, sans-serif;
+  font-size: 1.05rem;
+  margin: 28px 0 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.block-hint {
+  margin: -4px 0 12px;
+}
+
 .banner {
   background: #efe4d2;
   border-left: 3px solid var(--brass);
@@ -177,6 +189,25 @@ textarea {
   grid-column: 1 / -1;
 }
 
+.add-block {
+  margin: 12px 0 0;
+}
+
+.education-entry {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed var(--line);
+}
+
+.education-entry-head {
+  display: flex;
+  justify-content: flex-end;
+}
+
+#profile-form > .actions {
+  margin-top: 32px;
+}
+
 .actions,
 .toolbar {
   display: flex;
@@ -232,6 +263,54 @@ button:disabled {
   margin: 0;
   font-family: Syne, sans-serif;
   font-size: 1.05rem;
+}
+
+.chip-field .optional {
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.chip-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  background: #fffdf8;
+  border: 1px solid var(--line);
+  padding: 6px 8px;
+  min-height: 38px;
+}
+
+.chips {
+  display: contents;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: #efe4d2;
+  padding: 3px 8px;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.chip button {
+  background: transparent;
+  color: var(--ink);
+  border: 0;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+  font-weight: 500;
+}
+
+.chip-input {
+  flex: 1;
+  min-width: 8rem;
+  border: 0;
+  background: transparent;
+  padding: 4px 2px;
 }
 
 .hint {

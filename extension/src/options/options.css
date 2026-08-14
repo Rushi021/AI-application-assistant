@@ -8,10 +8,20 @@ label {
   display: block;
   margin: 10px 0;
 }
-input {
+input,
+select {
   width: 100%;
   box-sizing: border-box;
   padding: 6px;
+}
+.hint {
+  color: #555;
+  font-size: 13px;
+  margin: -4px 0 12px;
+}
+h3 {
+  margin: 22px 0 8px;
+  font-size: 15px;
 }
 .check {
   display: flex;

@@ -126,9 +126,67 @@ async function refresh() {
   }
 }
 
+function ynFromProfile(value) {
+  if (value === true) return "yes";
+  if (value === false) return "no";
+  return "";
+}
+
+function ynToBool(value) {
+  if (value === "yes") return true;
+  if (value === "no") return false;
+  return null;
+}
+
+function money(n) {
+  return Number(n).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+}
+
+function updateSalaryRange() {
+  const base = Number($("salary-base").value);
+  const out = $("salary-range");
+  if (!base) {
+    out.value = "";
+    return;
+  }
+  out.value = `${money(base)} – ${money(base + 10000)}`;
+}
+
+function updateAuthQuestion() {
+  const country = $("work-auth-country").value.trim() || "this country";
+  $("auth-question-text").textContent = `Are you legally authorized to work in ${country}?`;
+}
+
+function collectEducation() {
+  return [...$("education-extra").querySelectorAll(".education-entry")].map((block) => ({
+    degree: block.querySelector('[data-edu="degree"]').value || null,
+    school_name: block.querySelector('[data-edu="school_name"]').value,
+    field_of_study: block.querySelector('[data-edu="field_of_study"]').value,
+    graduation_date: block.querySelector('[data-edu="graduation_date"]').value || null,
+    gpa: block.querySelector('[data-edu="gpa"]').value,
+  }));
+}
+
+function addEducation(data = {}) {
+  const node = $("education-template").content.firstElementChild.cloneNode(true);
+  for (const key of ["degree", "school_name", "field_of_study", "graduation_date", "gpa"]) {
+    const el = node.querySelector(`[data-edu="${key}"]`);
+    if (el) el.value = data[key] || "";
+  }
+  node.querySelector("[data-remove-edu]").addEventListener("click", () => node.remove());
+  $("education-extra").appendChild(node);
+}
+
+function renderEducation() {
+  $("education-extra").innerHTML = "";
+  for (const entry of state.profile.education || []) {
+    addEducation(entry);
+  }
+}
+
 function renderProfile() {
   const form = $("profile-form");
-  const fields = [
+  const textFields = [
     "full_name",
     "email",
     "phone",
@@ -136,22 +194,46 @@ function renderProfile() {
     "linkedin_url",
     "github_url",
     "website_url",
-    "work_authorization",
     "address_line1",
     "city",
     "state",
     "zip_code",
     "country",
+    "gender",
+    "race_ethnicity",
+    "veteran_status",
+    "disability_status",
+    "highest_degree",
+    "school_name",
+    "field_of_study",
+    "graduation_date",
+    "gpa",
+    "work_auth_country",
+    "citizenship_country",
   ];
-  for (const name of fields) {
-    form.elements[name].value = state.profile[name] || "";
+  for (const name of textFields) {
+    if (form.elements[name]) form.elements[name].value = state.profile[name] || "";
   }
-  form.elements.needs_sponsorship.checked = Boolean(state.profile.needs_sponsorship);
+  form.elements.desired_salary_base.value = state.profile.desired_salary_base || "";
+  form.elements.willing_to_relocate.value = ynFromProfile(state.profile.willing_to_relocate);
+  form.elements.legally_authorized_to_work.value = ynFromProfile(state.profile.legally_authorized_to_work);
+  form.elements.needs_sponsorship.value = ynFromProfile(state.profile.needs_sponsorship);
+  form.elements.at_least_18.value = ynFromProfile(state.profile.at_least_18);
+  form.elements.has_non_compete.value = ynFromProfile(state.profile.has_non_compete);
+  updateSalaryRange();
+  updateAuthQuestion();
+  renderEducation();
 }
+
+$("add-education").addEventListener("click", () => addEducation());
+$("salary-base").addEventListener("input", updateSalaryRange);
+$("work-auth-country").addEventListener("input", updateAuthQuestion);
 
 $("profile-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const form = event.target;
+  const baseRaw = form.desired_salary_base.value;
+  const base = baseRaw === "" ? null : Number(baseRaw);
   const body = {
     full_name: form.full_name.value,
     email: form.email.value,
@@ -160,14 +242,32 @@ $("profile-form").addEventListener("submit", async (event) => {
     linkedin_url: form.linkedin_url.value,
     github_url: form.github_url.value,
     website_url: form.website_url.value,
-    work_authorization: form.work_authorization.value,
-    needs_sponsorship: form.needs_sponsorship.checked,
     address_line1: form.address_line1.value,
     city: form.city.value,
     state: form.state.value,
     zip_code: form.zip_code.value,
     country: form.country.value,
     preferred_resume_id: state.profile.preferred_resume_id || null,
+    desired_salary_base: base,
+    desired_salary_min: base,
+    desired_salary_max: base === null ? null : base + 10000,
+    willing_to_relocate: ynToBool(form.willing_to_relocate.value),
+    highest_degree: form.highest_degree.value || null,
+    school_name: form.school_name.value,
+    field_of_study: form.field_of_study.value,
+    graduation_date: form.graduation_date.value || null,
+    gpa: form.gpa.value,
+    education: collectEducation(),
+    work_auth_country: form.work_auth_country.value,
+    legally_authorized_to_work: ynToBool(form.legally_authorized_to_work.value),
+    needs_sponsorship: ynToBool(form.needs_sponsorship.value),
+    citizenship_country: form.citizenship_country.value,
+    at_least_18: ynToBool(form.at_least_18.value),
+    has_non_compete: ynToBool(form.has_non_compete.value),
+    gender: form.gender.value || null,
+    race_ethnicity: form.race_ethnicity.value || null,
+    veteran_status: form.veteran_status.value || null,
+    disability_status: form.disability_status.value || null,
   };
   try {
     state.profile = await api("/profile", { method: "PUT", body });
@@ -261,18 +361,62 @@ async function trackJob(jobId) {
   }
 }
 
+function chipValues(name) {
+  return [...document.querySelectorAll(`[data-chips="${name}"] [data-value]`)].map((el) => el.dataset.value);
+}
+
+function addChip(box, value) {
+  const text = value.replace(/,$/, "").trim();
+  if (!text) return;
+  const chips = box.querySelector(".chips");
+  const exists = [...chips.querySelectorAll("[data-value]")].some(
+    (chip) => chip.dataset.value.toLowerCase() === text.toLowerCase()
+  );
+  if (exists) return;
+  const chip = document.createElement("span");
+  chip.className = "chip";
+  chip.dataset.value = text;
+  const remove = document.createElement("button");
+  remove.type = "button";
+  remove.setAttribute("aria-label", `Remove ${text}`);
+  remove.textContent = "×";
+  remove.addEventListener("click", () => chip.remove());
+  chip.append(document.createTextNode(text), remove);
+  chips.appendChild(chip);
+}
+
+function commitChipInput(input) {
+  addChip(input.closest(".chip-box"), input.value);
+  input.value = "";
+}
+
+document.querySelectorAll(".chip-input").forEach((input) => {
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      commitChipInput(input);
+    }
+    if (event.key === "Backspace" && !input.value) {
+      input.closest(".chip-box").querySelector(".chips [data-value]:last-child")?.remove();
+    }
+  });
+  input.addEventListener("blur", () => commitChipInput(input));
+});
+
 $("scrape-form").addEventListener("submit", async (event) => {
   event.preventDefault();
-  const form = event.target;
+  document.querySelectorAll("#scrape-form .chip-input").forEach(commitChipInput);
+  const roles = chipValues("roles");
+  const locations = chipValues("locations");
+  const keywords = chipValues("keywords");
+  if (!roles.length || !locations.length) {
+    banner("Add at least one role and one location before searching.", true);
+    return;
+  }
   try {
     const result = await api("/scraping/search", {
       method: "POST",
-      body: {
-        role: form.role.value,
-        location: form.location.value,
-        keywords: form.keywords.value,
-        persist: true,
-      },
+      body: { roles, locations, keywords, persist: true },
     });
     $("scrape-note").textContent = result.note || `Provider: ${result.provider}`;
     if (!result.results.length) {

@@ -14,6 +14,7 @@
     </form>
     <h2>Personal data (autofill)</h2>
     <form id="profile">
+      <h3>Contact</h3>
       <label>Full name <input id="full_name" /></label>
       <label>Email <input id="email" /></label>
       <label>Phone <input id="phone" /></label>
@@ -21,13 +22,112 @@
       <label>LinkedIn <input id="linkedin_url" /></label>
       <label>GitHub <input id="github_url" /></label>
       <label>Website <input id="website_url" /></label>
-      <label>Work authorization <input id="work_authorization" /></label>
-      <label class="check"><input type="checkbox" id="needs_sponsorship" /> Needs sponsorship</label>
       <label>Address <input id="address_line1" /></label>
       <label>City <input id="city" /></label>
       <label>State <input id="state" /></label>
       <label>ZIP <input id="zip_code" /></label>
       <label>Country <input id="country" /></label>
+
+      <h3>Compensation &amp; mobility</h3>
+      <label>Desired base salary (USD) <input id="desired_salary_base" type="number" min="0" step="1000" /></label>
+      <p class="hint" id="salary-range-hint"></p>
+      <label>Willing to relocate?
+        <select id="willing_to_relocate">
+          <option value="">—</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+        </select>
+      </label>
+
+      <h3>Education</h3>
+      <label>Degree completed
+        <select id="highest_degree">
+          <option value="">—</option>
+          <option>High school</option>
+          <option>Associate</option>
+          <option>Bachelor's</option>
+          <option>Master's</option>
+          <option>MBA</option>
+          <option>PhD</option>
+          <option>Other</option>
+        </select>
+      </label>
+      <label>School / university name <input id="school_name" /></label>
+      <label>Field of study / major <input id="field_of_study" /></label>
+      <label>Graduation date (or expected) <input id="graduation_date" type="month" /></label>
+      <label>GPA <input id="gpa" /></label>
+
+      <h3>Work authorization</h3>
+      <label>Work-authorization country <input id="work_auth_country" /></label>
+      <label>Legally authorized to work?
+        <select id="legally_authorized_to_work">
+          <option value="">—</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+        </select>
+      </label>
+      <label>Require visa sponsorship now or in the future?
+        <select id="needs_sponsorship">
+          <option value="">—</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+        </select>
+      </label>
+      <label>Country of citizenship <input id="citizenship_country" /></label>
+      <label>At least 18 years of age?
+        <select id="at_least_18">
+          <option value="">—</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+        </select>
+      </label>
+      <label>Subject to a non-compete / restrictive covenant?
+        <select id="has_non_compete">
+          <option value="">—</option>
+          <option value="yes">Yes</option>
+          <option value="no">No</option>
+        </select>
+      </label>
+
+      <h3>Equal employment (voluntary)</h3>
+      <label>Gender
+        <select id="gender">
+          <option value="">—</option>
+          <option>Male</option>
+          <option>Female</option>
+          <option>Non-binary</option>
+          <option>Prefer not to say</option>
+        </select>
+      </label>
+      <label>Race / ethnicity
+        <select id="race_ethnicity">
+          <option value="">—</option>
+          <option>American Indian or Alaska Native</option>
+          <option>Asian</option>
+          <option>Black or African American</option>
+          <option>Hispanic or Latino</option>
+          <option>Native Hawaiian or Other Pacific Islander</option>
+          <option>White</option>
+          <option>Two or more races</option>
+          <option>Prefer not to say</option>
+        </select>
+      </label>
+      <label>Veteran status
+        <select id="veteran_status">
+          <option value="">—</option>
+          <option>I am a veteran</option>
+          <option>I am not a veteran</option>
+          <option>Prefer not to say</option>
+        </select>
+      </label>
+      <label>Disability status
+        <select id="disability_status">
+          <option value="">—</option>
+          <option>Yes, I have a disability</option>
+          <option>No, I do not have a disability</option>
+          <option>Prefer not to say</option>
+        </select>
+      </label>
       <button type="submit">Save profile</button>
     </form>
     <p id="status"></p>

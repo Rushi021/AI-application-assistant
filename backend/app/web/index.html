@@ -35,22 +35,171 @@
             <h2>Personal information</h2>
             <p>Saved here is what autofill uses on application forms. Common name, contact, and address fields map automatically.</p>
           </header>
-          <form id="profile-form" class="grid-form">
-            <label>Full name <input name="full_name" autocomplete="name" /></label>
-            <label>Email <input name="email" type="email" autocomplete="email" /></label>
-            <label>Phone <input name="phone" type="tel" autocomplete="tel" /></label>
-            <label>Location <input name="location" placeholder="City, State" /></label>
-            <label>LinkedIn <input name="linkedin_url" /></label>
-            <label>GitHub <input name="github_url" /></label>
-            <label>Website <input name="website_url" /></label>
-            <label>Work authorization <input name="work_authorization" placeholder="US citizen, H-1B…" /></label>
-            <label class="check span-2"><input name="needs_sponsorship" type="checkbox" /> Needs visa sponsorship</label>
-            <label class="span-2">Street address <input name="address_line1" autocomplete="address-line1" /></label>
-            <label>City <input name="city" autocomplete="address-level2" /></label>
-            <label>State <input name="state" autocomplete="address-level1" /></label>
-            <label>ZIP <input name="zip_code" autocomplete="postal-code" /></label>
-            <label>Country <input name="country" autocomplete="country-name" /></label>
-            <div class="span-2 actions">
+          <form id="profile-form">
+            <h3 class="block-title">Contact</h3>
+            <div class="grid-form">
+              <label>Full name <input name="full_name" autocomplete="name" /></label>
+              <label>Email <input name="email" type="email" autocomplete="email" /></label>
+              <label>Phone <input name="phone" type="tel" autocomplete="tel" /></label>
+              <label>Location <input name="location" placeholder="City, State" /></label>
+              <label>LinkedIn <input name="linkedin_url" /></label>
+              <label>GitHub <input name="github_url" /></label>
+              <label>Website <input name="website_url" /></label>
+              <label class="span-2">Street address <input name="address_line1" autocomplete="address-line1" /></label>
+              <label>City <input name="city" autocomplete="address-level2" /></label>
+              <label>State <input name="state" autocomplete="address-level1" /></label>
+              <label>ZIP <input name="zip_code" autocomplete="postal-code" /></label>
+              <label>Country <input name="country" autocomplete="country-name" /></label>
+            </div>
+
+            <h3 class="block-title">Compensation &amp; mobility</h3>
+            <div class="grid-form">
+              <label>Desired base salary (USD)
+                <input name="desired_salary_base" id="salary-base" type="number" min="0" step="1000" placeholder="150000" />
+              </label>
+              <label>Desired salary range ($10,000 spread)
+                <input id="salary-range" readonly placeholder="Filled from base salary" />
+              </label>
+              <label>Willing to relocate?
+                <select name="willing_to_relocate">
+                  <option value="">—</option>
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                </select>
+              </label>
+            </div>
+
+            <h3 class="block-title">Education</h3>
+            <div class="grid-form">
+              <label>Degree completed
+                <select name="highest_degree">
+                  <option value="">—</option>
+                  <option>High school</option>
+                  <option>Associate</option>
+                  <option>Bachelor's</option>
+                  <option>Master's</option>
+                  <option>MBA</option>
+                  <option>PhD</option>
+                  <option>Other</option>
+                </select>
+              </label>
+              <label>School / university name <input name="school_name" /></label>
+              <label>Field of study / major <input name="field_of_study" /></label>
+              <label>Graduation date (or expected)
+                <input name="graduation_date" type="month" />
+              </label>
+              <label>GPA <input name="gpa" placeholder="3.8" /></label>
+            </div>
+            <div id="education-extra"></div>
+            <p class="add-block">
+              <button type="button" class="ghost" id="add-education">Add education</button>
+            </p>
+            <template id="education-template">
+              <div class="grid-form education-entry">
+                <div class="span-2 education-entry-head">
+                  <button type="button" class="ghost" data-remove-edu>Remove</button>
+                </div>
+                <label>Degree completed
+                  <select data-edu="degree">
+                    <option value="">—</option>
+                    <option>High school</option>
+                    <option>Associate</option>
+                    <option>Bachelor's</option>
+                    <option>Master's</option>
+                    <option>MBA</option>
+                    <option>PhD</option>
+                    <option>Other</option>
+                  </select>
+                </label>
+                <label>School / university name <input data-edu="school_name" /></label>
+                <label>Field of study / major <input data-edu="field_of_study" /></label>
+                <label>Graduation date (or expected)
+                  <input data-edu="graduation_date" type="month" />
+                </label>
+                <label>GPA <input data-edu="gpa" placeholder="3.8" /></label>
+              </div>
+            </template>
+
+            <h3 class="block-title">Work authorization</h3>
+            <div class="grid-form">
+              <label>Work-authorization country (fills the question below)
+                <input name="work_auth_country" id="work-auth-country" placeholder="United States" />
+              </label>
+              <label id="auth-question-label"><span id="auth-question-text">Are you legally authorized to work in this country?</span>
+                <select name="legally_authorized_to_work">
+                  <option value="">—</option>
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                </select>
+              </label>
+              <label class="span-2">Will you now, or in the future, require visa sponsorship to work in this role?
+                <select name="needs_sponsorship">
+                  <option value="">—</option>
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                </select>
+              </label>
+              <label>Country of citizenship <input name="citizenship_country" /></label>
+              <label>Are you at least 18 years of age?
+                <select name="at_least_18">
+                  <option value="">—</option>
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                </select>
+              </label>
+              <label class="span-2">Are you subject to any non-compete or restrictive covenant that would affect this role?
+                <select name="has_non_compete">
+                  <option value="">—</option>
+                  <option value="yes">Yes</option>
+                  <option value="no">No</option>
+                </select>
+              </label>
+            </div>
+
+            <h3 class="block-title">Equal employment (voluntary)</h3>
+            <p class="hint block-hint">Used when an ATS asks EEO questions. Prefer not to say is a valid answer.</p>
+            <div class="grid-form">
+              <label>Gender
+                <select name="gender">
+                  <option value="">—</option>
+                  <option>Male</option>
+                  <option>Female</option>
+                  <option>Non-binary</option>
+                  <option>Prefer not to say</option>
+                </select>
+              </label>
+              <label>Race / ethnicity
+                <select name="race_ethnicity">
+                  <option value="">—</option>
+                  <option>American Indian or Alaska Native</option>
+                  <option>Asian</option>
+                  <option>Black or African American</option>
+                  <option>Hispanic or Latino</option>
+                  <option>Native Hawaiian or Other Pacific Islander</option>
+                  <option>White</option>
+                  <option>Two or more races</option>
+                  <option>Prefer not to say</option>
+                </select>
+              </label>
+              <label>Veteran status
+                <select name="veteran_status">
+                  <option value="">—</option>
+                  <option>I am a veteran</option>
+                  <option>I am not a veteran</option>
+                  <option>Prefer not to say</option>
+                </select>
+              </label>
+              <label>Disability status
+                <select name="disability_status">
+                  <option value="">—</option>
+                  <option>Yes, I have a disability</option>
+                  <option>No, I do not have a disability</option>
+                  <option>Prefer not to say</option>
+                </select>
+              </label>
+            </div>
+
+            <div class="actions">
               <button type="submit">Save personal information</button>
             </div>
           </form>
@@ -65,14 +214,31 @@
           <div class="split">
             <form id="scrape-form" class="panel">
               <h3>Search targets</h3>
-              <label>Role <input name="role" placeholder="Machine learning engineer" required /></label>
-              <label>Location <input name="location" placeholder="New York, NY" /></label>
-              <label>Keywords <input name="keywords" placeholder="Python, sponsorship" /></label>
+              <p class="hint">Type a value and press Enter to add another. Role and location need at least one each.</p>
+              <label class="chip-field">Role
+                <div class="chip-box" data-chips="roles">
+                  <div class="chips"></div>
+                  <input class="chip-input" placeholder="Data scientist" />
+                </div>
+              </label>
+              <label class="chip-field">Location
+                <div class="chip-box" data-chips="locations">
+                  <div class="chips"></div>
+                  <input class="chip-input" placeholder="New York, NY" />
+                </div>
+              </label>
+              <label class="chip-field">Keywords <span class="optional">(optional)</span>
+                <div class="chip-box" data-chips="keywords">
+                  <div class="chips"></div>
+                  <input class="chip-input" placeholder="Python" />
+                </div>
+              </label>
               <button type="submit">Run search</button>
               <p class="hint" id="scrape-note"></p>
             </form>
             <form id="ingest-form" class="panel">
               <h3>Paste a job</h3>
+              <p class="hint">Adds to the job list below. It does not go on Tracker until you click Add to tracker.</p>
               <label>Company <input name="company_name" /></label>
               <label>Role <input name="role" /></label>
               <label>Sponsorship <input name="sponsorship" /></label>

@@ -20,7 +20,7 @@ from app.common.ports import (
 from app.modules.applications.models import Application
 from app.modules.jobs.models import Job, JobRequirement
 from app.modules.matching.models import EmbeddingCache, MatchScore
-from app.modules.profile.models import Profile
+from app.modules.profile.models import Profile, PROFILE_UPSERT_FIELDS
 from app.modules.resumes.models import Resume, ResumeBullet, ResumeSection
 from app.modules.scraping.models import SearchTarget
 from app.modules.tailoring.models import TailorRun
@@ -213,24 +213,7 @@ class SqlAlchemyProfileRepo(ProfileRepo):
             self._db.commit()
             self._db.refresh(profile)
             return profile
-        for field in (
-            "full_name",
-            "email",
-            "phone",
-            "location",
-            "linkedin_url",
-            "github_url",
-            "website_url",
-            "work_authorization",
-            "needs_sponsorship",
-            "address_line1",
-            "city",
-            "state",
-            "zip_code",
-            "country",
-            "custom_fields_json",
-            "preferred_resume_id",
-        ):
+        for field in PROFILE_UPSERT_FIELDS:
             value = getattr(profile, field)
             if value is not None:
                 setattr(existing, field, value)

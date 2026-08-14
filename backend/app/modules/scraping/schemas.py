@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 from app.common.ports import ScrapedJob
 
@@ -27,10 +27,23 @@ class SearchTargetRead(BaseModel):
 
 
 class ScrapeSearchRequest(BaseModel):
-    role: str
-    location: str = ""
-    keywords: str = ""
+    roles: list[str]
+    locations: list[str]
+    keywords: list[str] = Field(default_factory=list)
     persist: bool = True
+
+    @field_validator("roles", "locations")
+    @classmethod
+    def require_values(cls, values: list[str]) -> list[str]:
+        cleaned = [item.strip() for item in values if item and item.strip()]
+        if not cleaned:
+            raise ValueError("at least one value is required")
+        return cleaned
+
+    @field_validator("keywords")
+    @classmethod
+    def strip_keywords(cls, values: list[str]) -> list[str]:
+        return [item.strip() for item in values if item and item.strip()]
 
 
 class ScrapedJobRead(BaseModel):

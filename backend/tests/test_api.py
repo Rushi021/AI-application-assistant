@@ -77,7 +77,7 @@ def test_ingest_score_tailor_apply(client, tmp_path):
     scrape = client.post(
         "/scraping/search",
         headers=AUTH,
-        json={"role": "ML Engineer", "location": "NYC"},
+        json={"roles": ["ML Engineer", "Data scientist"], "locations": ["NYC", "Remote"]},
     )
     assert scrape.status_code == 200
     assert scrape.json()["provider"] == "noop"
@@ -85,10 +85,53 @@ def test_ingest_score_tailor_apply(client, tmp_path):
 
 
 def test_profile_roundtrip(client):
-    saved = client.put("/profile", headers=AUTH, json={"full_name": "Rushi", "email": "a@b.com"})
+    saved = client.put(
+        "/profile",
+        headers=AUTH,
+        json={
+            "full_name": "Rushi",
+            "email": "a@b.com",
+            "desired_salary_base": 150000,
+            "willing_to_relocate": True,
+            "highest_degree": "Master's",
+            "school_name": "NYU",
+            "field_of_study": "Computer Science",
+            "graduation_date": "2024-05",
+            "gpa": "3.8",
+            "education": [
+                {
+                    "degree": "Bachelor's",
+                    "school_name": "Rutgers",
+                    "field_of_study": "Computer Science",
+                    "graduation_date": "2020-05",
+                    "gpa": "3.6",
+                }
+            ],
+            "work_auth_country": "United States",
+            "legally_authorized_to_work": True,
+            "needs_sponsorship": False,
+            "citizenship_country": "India",
+            "at_least_18": True,
+            "has_non_compete": False,
+            "gender": "Prefer not to say",
+            "race_ethnicity": "Asian",
+            "veteran_status": "I am not a veteran",
+            "disability_status": "Prefer not to say",
+        },
+    )
     assert saved.status_code == 200
+    body = saved.json()
+    assert body["desired_salary_base"] == 150000
+    assert body["desired_salary_min"] == 150000
+    assert body["desired_salary_max"] == 160000
     got = client.get("/profile", headers=AUTH)
-    assert got.json()["full_name"] == "Rushi"
+    data = got.json()
+    assert data["full_name"] == "Rushi"
+    assert data["legally_authorized_to_work"] is True
+    assert data["needs_sponsorship"] is False
+    assert data["highest_degree"] == "Master's"
+    assert data["willing_to_relocate"] is True
+    assert data["education"][0]["school_name"] == "Rutgers"
 
 
 def test_delete_resume(client, tmp_path):

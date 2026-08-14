@@ -25,7 +25,7 @@ from app.modules.ai import usage as _usage_models  # noqa: F401
 from app.modules.applications import models as _application_models  # noqa: F401
 from app.modules.jobs import models as _job_models  # noqa: F401
 from app.modules.matching import models as _matching_models  # noqa: F401
-from app.modules.profile import models as _profile_models  # noqa: F401
+from app.modules.profile.models import PROFILE_SQLITE_COLUMNS
 from app.modules.resumes import models as _resume_models  # noqa: F401
 from app.modules.scraping import models as _scraping_models  # noqa: F401
 from app.modules.tailoring import models as _tailoring_models  # noqa: F401
@@ -44,8 +44,9 @@ def _patch_sqlite_columns() -> None:
         if existing.fetchone() is None:
             return
         cols = {row[1] for row in conn.execute(text("PRAGMA table_info(profiles)"))}
-        if "preferred_resume_id" not in cols:
-            conn.execute(text("ALTER TABLE profiles ADD COLUMN preferred_resume_id INTEGER"))
+        for name, sql_type in PROFILE_SQLITE_COLUMNS.items():
+            if name not in cols:
+                conn.execute(text(f"ALTER TABLE profiles ADD COLUMN {name} {sql_type}"))
 
 
 def create_app() -> FastAPI:
