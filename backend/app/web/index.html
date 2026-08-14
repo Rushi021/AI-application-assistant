@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Application packet</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&family=Syne:wght@600;700;800&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/web/styles.css" />
+  </head>
+  <body>
+    <div class="desk">
+      <header class="masthead">
+        <p class="eyebrow">Local packet</p>
+        <h1>Job applications</h1>
+        <p class="lede">Personal data feeds autofill. You pick the resume for each role.</p>
+      </header>
+
+      <nav class="tabs" aria-label="Packet sections">
+        <a href="#/personal" data-route="personal">Personal information</a>
+        <a href="#/jobs" data-route="jobs">Job search</a>
+        <a href="#/resumes" data-route="resumes">Resume store</a>
+        <a href="#/tracker" data-route="tracker">Tracker</a>
+      </nav>
+
+      <main class="folder">
+        <p id="banner" class="banner" hidden></p>
+
+        <section id="page-personal" class="page" hidden>
+          <header class="page-head">
+            <h2>Personal information</h2>
+            <p>Saved here is what autofill uses on application forms. Common name, contact, and address fields map automatically.</p>
+          </header>
+          <form id="profile-form" class="grid-form">
+            <label>Full name <input name="full_name" autocomplete="name" /></label>
+            <label>Email <input name="email" type="email" autocomplete="email" /></label>
+            <label>Phone <input name="phone" type="tel" autocomplete="tel" /></label>
+            <label>Location <input name="location" placeholder="City, State" /></label>
+            <label>LinkedIn <input name="linkedin_url" /></label>
+            <label>GitHub <input name="github_url" /></label>
+            <label>Website <input name="website_url" /></label>
+            <label>Work authorization <input name="work_authorization" placeholder="US citizen, H-1B…" /></label>
+            <label class="check span-2"><input name="needs_sponsorship" type="checkbox" /> Needs visa sponsorship</label>
+            <label class="span-2">Street address <input name="address_line1" autocomplete="address-line1" /></label>
+            <label>City <input name="city" autocomplete="address-level2" /></label>
+            <label>State <input name="state" autocomplete="address-level1" /></label>
+            <label>ZIP <input name="zip_code" autocomplete="postal-code" /></label>
+            <label>Country <input name="country" autocomplete="country-name" /></label>
+            <div class="span-2 actions">
+              <button type="submit">Save personal information</button>
+            </div>
+          </form>
+        </section>
+
+        <section id="page-jobs" class="page" hidden>
+          <header class="page-head">
+            <h2>Job search</h2>
+            <p>Scraped listings will land here. Until a scraper is plugged in, paste a description. Choose the resume yourself before scoring or tracking.</p>
+          </header>
+
+          <div class="split">
+            <form id="scrape-form" class="panel">
+              <h3>Search targets</h3>
+              <label>Role <input name="role" placeholder="Machine learning engineer" required /></label>
+              <label>Location <input name="location" placeholder="New York, NY" /></label>
+              <label>Keywords <input name="keywords" placeholder="Python, sponsorship" /></label>
+              <button type="submit">Run search</button>
+              <p class="hint" id="scrape-note"></p>
+            </form>
+            <form id="ingest-form" class="panel">
+              <h3>Paste a job</h3>
+              <label>Company <input name="company_name" /></label>
+              <label>Role <input name="role" /></label>
+              <label>Sponsorship <input name="sponsorship" /></label>
+              <label>Date posted <input name="date_posted" /></label>
+              <label>Application link <input name="application_link" /></label>
+              <label>Job description <textarea name="raw_text" rows="7" required></textarea></label>
+              <button type="submit">Save to list</button>
+            </form>
+          </div>
+
+          <div class="toolbar">
+            <label class="resume-pick">
+              Resume for this session
+              <select id="job-resume"></select>
+            </label>
+            <p class="hint">Scoring can recommend a family. The resume used to apply is still the one you select here.</p>
+          </div>
+          <div id="job-list" class="stack"></div>
+        </section>
+
+        <section id="page-resumes" class="page" hidden>
+          <header class="page-head">
+            <h2>Resume store</h2>
+            <p>Four families, two versions each. Mark one as the selected resume — that is the default you apply with, not an automatic pick.</p>
+          </header>
+          <div id="resume-grid" class="family-grid"></div>
+        </section>
+
+        <section id="page-tracker" class="page" hidden>
+          <header class="page-head">
+            <h2>Tracker</h2>
+            <p>Every application you log. Outcome and date stay with the record.</p>
+          </header>
+          <div id="tracker-table"></div>
+        </section>
+      </main>
+    </div>
+    <script src="/web/app.js"></script>
+  </body>
+</html>

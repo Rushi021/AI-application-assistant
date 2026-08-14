@@ -1,12 +1,19 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.common.adapters.sqlalchemy_repos import SqlAlchemyApplicationRepo
+from app.common.adapters.sqlalchemy_repos import SqlAlchemyApplicationRepo, SqlAlchemyProfileRepo
 from app.common.errors import not_found
 from app.core.deps import get_current_user, get_db
 from app.modules.applications.models import Application
-from app.modules.applications.schemas import ApplicationCreate, ApplicationRead, ApplicationUpdate
-
+from app.modules.applications.schemas import (
+    ApplicationCreate,
+    ApplicationOutcome,
+    ApplicationRead,
+    ApplicationUpdate,
+)
+from app.modules.profile.schemas import ProfileRead
 
 router = APIRouter(prefix="/applications", tags=["applications"])
 
@@ -17,14 +24,17 @@ def create_application(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> ApplicationRead:
-    repo = SqlAlchemyApplicationRepo(db)
     application = Application(
         user_id=current_user.id,
         job_id=payload.job_id,
         resume_id=payload.resume_id,
+        tailor_run_id=payload.tailor_run_id,
         status=payload.status,
+        autofill_payload=payload.autofill_payload,
+        applied_at=datetime.utcnow() if payload.status == "applied" else None,
+        status_updated_at=datetime.utcnow(),
     )
-    created = repo.create(application)
+    created = SqlAlchemyApplicationRepo(db).create(application)
     return ApplicationRead.model_validate(created)
 
 
@@ -36,10 +46,36 @@ def update_application(
     db: Session = Depends(get_db),
 ) -> ApplicationRead:
     repo = SqlAlchemyApplicationRepo(db)
-    updated = repo.update_status(application_id, payload.status)
-    if not updated or updated.user_id != current_user.id:
+    application = repo.get(application_id)
+    if not application or application.user_id != current_user.id:
         raise not_found("Application not found")
-    return ApplicationRead.model_validate(updated)
+    if payload.status is not None:
+        application.status = payload.status
+        application.status_updated_at = datetime.utcnow()
+        if payload.status == "applied" and application.applied_at is None:
+            application.applied_at = datetime.utcnow()
+    if payload.autofill_payload is not None:
+        application.autofill_payload = payload.autofill_payload
+    return ApplicationRead.model_validate(repo.update(application))
+
+
+@router.post("/{application_id}/outcome", response_model=ApplicationRead)
+def record_outcome(
+    application_id: int,
+    payload: ApplicationOutcome,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ApplicationRead:
+    repo = SqlAlchemyApplicationRepo(db)
+    application = repo.get(application_id)
+    if not application or application.user_id != current_user.id:
+        raise not_found("Application not found")
+    application.outcome = "succeeded" if payload.succeeded else "failed"
+    application.status = payload.status or ("applied" if payload.succeeded else "failed")
+    application.status_updated_at = datetime.utcnow()
+    if payload.succeeded and application.applied_at is None:
+        application.applied_at = datetime.utcnow()
+    return ApplicationRead.model_validate(repo.update(application))
 
 
 @router.get("", response_model=list[ApplicationRead])
@@ -47,6 +83,16 @@ def list_applications(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> list[ApplicationRead]:
-    repo = SqlAlchemyApplicationRepo(db)
-    items = repo.list_by_user(current_user.id)
+    items = SqlAlchemyApplicationRepo(db).list_by_user(current_user.id)
     return [ApplicationRead.model_validate(item) for item in items]
+
+
+@router.get("/autofill-payload")
+def autofill_payload(
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    profile = SqlAlchemyProfileRepo(db).get_by_user(current_user.id)
+    if not profile:
+        return {}
+    return ProfileRead.model_validate(profile).model_dump()

@@ -1,0 +1,92 @@
+:root {
+  color-scheme: light dark;
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+body {
+  width: 420px;
+  margin: 0;
+  padding: 12px 14px 16px;
+}
+h1 {
+  font-size: 16px;
+  margin: 0 0 4px;
+}
+.step-label {
+  margin: 0 0 10px;
+  color: #666;
+  font-size: 12px;
+}
+label {
+  display: block;
+  font-size: 12px;
+  margin: 8px 0 4px;
+}
+textarea,
+input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px;
+}
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+button {
+  margin-top: 10px;
+  width: 100%;
+  padding: 8px;
+  cursor: pointer;
+}
+.row {
+  display: flex;
+  gap: 8px;
+}
+.row button {
+  flex: 1;
+}
+.ok {
+  background: #1b7f4a;
+  color: white;
+  border: 0;
+}
+.fail {
+  background: #a33;
+  color: white;
+  border: 0;
+}
+.error {
+  background: #fee;
+  color: #900;
+  padding: 8px;
+  margin-bottom: 8px;
+  font-size: 12px;
+}
+.card {
+  border: 1px solid #ccc;
+  padding: 8px;
+  margin: 6px 0;
+  cursor: pointer;
+}
+.card.selected {
+  outline: 2px solid #2563eb;
+}
+.section {
+  border-top: 1px solid #ddd;
+  padding-top: 8px;
+  margin-top: 8px;
+}
+.preview {
+  max-height: 140px;
+  overflow: auto;
+  font-size: 11px;
+  white-space: pre-wrap;
+}
+.check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.check input {
+  width: auto;
+}

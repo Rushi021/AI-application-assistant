@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Assistant options</title>
+    <link rel="stylesheet" href="options.css" />
+  </head>
+  <body>
+    <h1>Job Application Assistant</h1>
+    <form id="settings">
+      <label>API base URL <input id="apiBase" /></label>
+      <label>Bearer token <input id="token" /></label>
+      <button type="submit">Save connection</button>
+    </form>
+    <h2>Personal data (autofill)</h2>
+    <form id="profile">
+      <label>Full name <input id="full_name" /></label>
+      <label>Email <input id="email" /></label>
+      <label>Phone <input id="phone" /></label>
+      <label>Location <input id="location" /></label>
+      <label>LinkedIn <input id="linkedin_url" /></label>
+      <label>GitHub <input id="github_url" /></label>
+      <label>Website <input id="website_url" /></label>
+      <label>Work authorization <input id="work_authorization" /></label>
+      <label class="check"><input type="checkbox" id="needs_sponsorship" /> Needs sponsorship</label>
+      <label>Address <input id="address_line1" /></label>
+      <label>City <input id="city" /></label>
+      <label>State <input id="state" /></label>
+      <label>ZIP <input id="zip_code" /></label>
+      <label>Country <input id="country" /></label>
+      <button type="submit">Save profile</button>
+    </form>
+    <p id="status"></p>
+    <script src="../api.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

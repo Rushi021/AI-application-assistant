@@ -4,11 +4,15 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from app.db.base import Base
-from app.modules.applications.models import Application
-from app.modules.jobs.models import Job
-from app.modules.pipeline.models import PipelineRun
-from app.modules.resumes.models import Resume
-from app.modules.users.models import User
+from app.modules.ai.usage import ModelCall  # noqa: F401
+from app.modules.applications.models import Application  # noqa: F401
+from app.modules.jobs.models import Job, JobRequirement  # noqa: F401
+from app.modules.matching.models import EmbeddingCache, MatchScore  # noqa: F401
+from app.modules.profile.models import Profile  # noqa: F401
+from app.modules.resumes.models import Resume, ResumeBullet, ResumeSection  # noqa: F401
+from app.modules.scraping.models import SearchTarget  # noqa: F401
+from app.modules.tailoring.models import TailorRun  # noqa: F401
+from app.modules.users.models import User  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

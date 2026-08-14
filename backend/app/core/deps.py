@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from typing import Generator
 
 from fastapi import Depends, Header, HTTPException, status
@@ -5,16 +7,18 @@ from sqlalchemy.orm import Session
 
 from app.common.adapters.local_storage import LocalResumeStorage
 from app.common.adapters.s3_storage import S3ResumeStorage
-from app.common.ports import LLMProvider, ResumeStorage
-from app.modules.ai.providers.gemini_provider import GeminiProvider
+from app.common.ports import ResumeStorage
 from app.core.config import get_settings
 from app.core.security import require_test_token, TestUser
-from app.db.session import SessionLocal
+from app.db import session as db_session
+from app.modules.ai.gateway import ModelGateway
+from app.modules.ai.ports import UsageLogger
+from app.modules.ai.usage import SqlAlchemyUsageLogger
 from app.modules.auth.service import get_or_create_test_user
 
 
 def get_db() -> Generator[Session, None, None]:
-    db = SessionLocal()
+    db = db_session.SessionLocal()
     try:
         yield db
     finally:
@@ -41,6 +45,10 @@ def get_resume_storage() -> ResumeStorage:
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid storage backend")
 
 
-def get_llm_provider() -> LLMProvider:
-    """Return the configured LLM provider (Gemini for now). Swap via config later if needed."""
-    return GeminiProvider()
+def get_usage_logger() -> UsageLogger:
+    return SqlAlchemyUsageLogger()
+
+
+def get_model_gateway(usage: UsageLogger = Depends(get_usage_logger)) -> ModelGateway:
+    """Request-scoped gateway. Callers pass a *task* name, never a provider."""
+    return ModelGateway(usage=usage)
