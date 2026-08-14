@@ -187,7 +187,9 @@ function renderEducation() {
 function renderProfile() {
   const form = $("profile-form");
   const textFields = [
-    "full_name",
+    "first_name",
+    "middle_name",
+    "last_name",
     "email",
     "phone",
     "location",
@@ -235,7 +237,9 @@ $("profile-form").addEventListener("submit", async (event) => {
   const baseRaw = form.desired_salary_base.value;
   const base = baseRaw === "" ? null : Number(baseRaw);
   const body = {
-    full_name: form.full_name.value,
+    first_name: form.first_name.value,
+    middle_name: form.middle_name.value,
+    last_name: form.last_name.value,
     email: form.email.value,
     phone: form.phone.value,
     location: form.location.value,

@@ -20,7 +20,10 @@
   ]);
 
   const mapping = [
-    { field: "full_name", aliases: ["name", "full name", "fullname", "applicant name", "legal name"] },
+    { field: "first_name", aliases: ["first name", "firstname", "given name"] },
+    { field: "middle_name", aliases: ["middle name", "middle initial", "middlename"] },
+    { field: "last_name", aliases: ["last name", "lastname", "surname", "family name"] },
+    { field: "full_name", aliases: ["full name", "fullname", "applicant name", "legal name"] },
     { field: "email", aliases: ["email", "e-mail"] },
     { field: "phone", aliases: ["phone", "mobile", "tel"] },
     { field: "location", aliases: ["location"] },

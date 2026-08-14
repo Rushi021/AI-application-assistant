@@ -33,6 +33,10 @@ def upsert_profile(
     education = data.pop("education", None)
     if education is not None:
         data["education_json"] = json.dumps(education)
+    parts = [data.get("first_name") or "", data.get("middle_name") or "", data.get("last_name") or ""]
+    joined = " ".join(part.strip() for part in parts if part and part.strip())
+    if joined or any(data.get(key) is not None for key in ("first_name", "middle_name", "last_name")):
+        data["full_name"] = joined or None
     base = data.get("desired_salary_base")
     if base is not None:
         data["desired_salary_min"] = data.get("desired_salary_min") if data.get("desired_salary_min") is not None else base

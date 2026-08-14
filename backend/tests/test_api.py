@@ -89,7 +89,8 @@ def test_profile_roundtrip(client):
         "/profile",
         headers=AUTH,
         json={
-            "full_name": "Rushi",
+            "first_name": "Rushi",
+            "last_name": "Patel",
             "email": "a@b.com",
             "desired_salary_base": 150000,
             "willing_to_relocate": True,
@@ -126,7 +127,9 @@ def test_profile_roundtrip(client):
     assert body["desired_salary_max"] == 160000
     got = client.get("/profile", headers=AUTH)
     data = got.json()
-    assert data["full_name"] == "Rushi"
+    assert data["first_name"] == "Rushi"
+    assert data["last_name"] == "Patel"
+    assert data["full_name"] == "Rushi Patel"
     assert data["legally_authorized_to_work"] is True
     assert data["needs_sponsorship"] is False
     assert data["highest_degree"] == "Master's"

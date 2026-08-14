@@ -1,5 +1,7 @@
 const TEXT_FIELDS = [
-  "full_name",
+  "first_name",
+  "middle_name",
+  "last_name",
   "email",
   "phone",
   "location",

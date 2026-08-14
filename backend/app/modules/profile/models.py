@@ -10,6 +10,9 @@ from app.db.base import Base
 # SQLite ALTER types for columns added after the first create_all.
 PROFILE_SQLITE_COLUMNS: dict[str, str] = {
     "preferred_resume_id": "INTEGER",
+    "first_name": "VARCHAR(100)",
+    "middle_name": "VARCHAR(100)",
+    "last_name": "VARCHAR(100)",
     "desired_salary_base": "INTEGER",
     "desired_salary_min": "INTEGER",
     "desired_salary_max": "INTEGER",
@@ -58,6 +61,9 @@ class Profile(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     user_id: Mapped[int] = mapped_column(Integer, ForeignKey("users.id"), unique=True, index=True)
     full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    first_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    middle_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    last_name: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     phone: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
     location: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)

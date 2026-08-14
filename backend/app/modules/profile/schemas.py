@@ -16,6 +16,9 @@ class EducationEntry(BaseModel):
 
 class ProfileUpsert(BaseModel):
     full_name: Optional[str] = None
+    first_name: Optional[str] = None
+    middle_name: Optional[str] = None
+    last_name: Optional[str] = None
     email: Optional[str] = None
     phone: Optional[str] = None
     location: Optional[str] = None
