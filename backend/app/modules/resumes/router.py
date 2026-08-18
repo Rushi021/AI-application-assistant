@@ -7,6 +7,7 @@ from app.common.ports import ResumeStorage
 from app.common.utils import compute_sha256
 from app.core.config import get_settings
 from app.core.deps import get_current_user, get_db, get_resume_storage
+from app.modules.resumes.docx_parser import parse_docx
 from app.modules.resumes.latex_parser import parse_latex
 from app.modules.resumes.models import RESUME_FAMILIES, Resume, ResumeBullet, ResumeSection
 from app.modules.resumes.schemas import BulletRead, ResumeRead, SectionRead
@@ -115,6 +116,11 @@ def upload_resume(
     if ext == "tex":
         parsed = parse_latex(file_bytes.decode("utf-8", errors="replace"))
         preamble = parsed.preamble
+    elif ext == "docx":
+        try:
+            parsed = parse_docx(file_bytes)
+        except Exception as exc:  # a corrupt upload should not 500
+            raise bad_request(f"Could not read that .docx: {exc}")
 
     resume = Resume(
         user_id=current_user.id,
@@ -142,6 +148,42 @@ def upload_resume(
         )
         SqlAlchemyResumeSectionRepo(db).replace_for_resume(created.id, [blob], [])
     return _to_read(created, storage, db)
+
+
+def _parse_bytes(ext: str, file_bytes: bytes):
+    if ext == "tex":
+        return parse_latex(file_bytes.decode("utf-8", errors="replace"))
+    if ext == "docx":
+        return parse_docx(file_bytes)
+    return None
+
+
+@router.post("/{resume_id}/reparse", response_model=ResumeRead)
+def reparse_resume(
+    resume_id: int,
+    current_user=Depends(get_current_user),
+    storage: ResumeStorage = Depends(get_resume_storage),
+    db: Session = Depends(get_db),
+) -> ResumeRead:
+    """Re-run the parser over a stored upload without re-uploading it.
+
+    Useful after a parser improvement: the file on disk is the source of truth, so
+    the sections and bullets scoring reads can be rebuilt from it at any time.
+    """
+    repo = SqlAlchemyResumeRepo(db)
+    item = repo.get(resume_id)
+    if not item or item.user_id != current_user.id:
+        raise not_found("Resume not found")
+    with open(storage.get_file_url_or_path(item.file_key), "rb") as handle:
+        file_bytes = handle.read()
+    parsed = _parse_bytes(item.source_format, file_bytes)
+    if parsed is None:
+        raise bad_request(f"No parser for .{item.source_format} resumes")
+    if parsed.preamble:
+        item.template_preamble = parsed.preamble
+    _persist_parse(db, item.id, parsed)
+    db.commit()
+    return _to_read(item, storage, db)
 
 
 @router.get("", response_model=list[ResumeRead])

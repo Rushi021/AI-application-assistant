@@ -14,6 +14,14 @@ class JobIngestRequest(BaseModel):
     source: str = "manual"
 
 
+class JobUpdateRequest(BaseModel):
+    company_name: Optional[str] = None
+    role: Optional[str] = None
+    sponsorship: Optional[str] = None
+    date_posted: Optional[str] = None
+    application_link: Optional[str] = None
+
+
 class JobRead(BaseModel):
     id: int
     user_id: int

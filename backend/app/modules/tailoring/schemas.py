@@ -34,8 +34,14 @@ class TailorRunRead(BaseModel):
     sections_json: str
     cover_letter: Optional[str] = None
     final_latex: Optional[str] = None
+    final_tex_key: Optional[str] = None
+    final_docx_key: Optional[str] = None
     final_pdf_key: Optional[str] = None
     compiler_warning: Optional[str] = None
+    export_dir: Optional[str] = None
+    exported_docx_path: Optional[str] = None
+    exported_pdf_path: Optional[str] = None
+    exported_tex_path: Optional[str] = None
     created_at: datetime
     updated_at: datetime
 

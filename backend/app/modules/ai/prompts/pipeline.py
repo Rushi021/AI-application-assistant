@@ -1,5 +1,50 @@
 """Prompt builders. Callers never name a model here."""
 
+from typing import Sequence
+
+# The editable-lines block is fenced with this header so a caller (and the fake
+# provider) can find it without guessing.
+TAILOR_ITEMS_HEADER = "Resume lines you may rewrite"
+
+
+def build_tailor_items_prompt(
+    job_description: str,
+    items: Sequence[dict],
+    *,
+    frozen_context: str = "",
+    instructions: str = "",
+) -> str:
+    """Ask for line-addressed edits instead of a rewritten document.
+
+    The model only ever sees the lines it is allowed to change, each tagged with an
+    id. Everything else is read-only context. That is what lets the renderer put
+    each edit back into the exact paragraph it came from, leaving the title,
+    section headers, and Education untouched.
+    """
+    numbered = "\n".join(f'[{item["id"]}] ({item.get("section") or "Resume"}) {item["text"]}' for item in items)
+    context = f"\nRead-only context (do not rewrite, do not return ids for these):\n---\n{frozen_context}\n---\n" if frozen_context.strip() else ""
+    extra = f"\nPersonalized instructions:\n{instructions}\n" if instructions.strip() else ""
+    return f"""You are a resume expert tailoring an existing resume to a job description.
+
+Rules:
+- Rewrite only the numbered lines below. Return an entry for each line you changed and omit the ones you leave alone.
+- Return the id exactly as given. Never merge, split, reorder, or delete a line.
+- Keep each rewritten line within about 10 percent of the original's character count. The document's layout depends on lines not changing length.
+- Stay truthful: never invent an employer, job title, date, degree, or a skill the candidate has not shown.
+- Plain text only. No markdown, no bullet glyphs, no leading dashes, no quotes around the line.
+- Reproduce any tab characters in the original line exactly, in the same order.
+
+Job description:
+---
+{job_description}
+---
+{context}
+{TAILOR_ITEMS_HEADER}:
+---
+{numbered}
+---
+{extra}"""
+
 
 def build_tailor_resume_prompt(job_description: str, resume_text: str, instructions: str = "") -> str:
     extra = f"\nPersonalized instructions:\n{instructions}\n" if instructions.strip() else ""

@@ -7,6 +7,7 @@ import re
 from typing import Optional
 
 from app.modules.ai.ports import LLMProvider, LLMResponse, ModelCapabilities
+from app.modules.ai.prompts.pipeline import TAILOR_ITEMS_HEADER
 from app.modules.ai.registry import register_llm
 
 
@@ -14,6 +15,24 @@ def _extract_block(prompt: str, header: str) -> str:
     pattern = re.compile(rf"{re.escape(header)}\s*:?\s*\n---\n(.*?)\n---", re.DOTALL | re.IGNORECASE)
     match = pattern.search(prompt)
     return match.group(1).strip() if match else ""
+
+
+_ITEM_LINE_RE = re.compile(r"^\[(\d+)\]\s*(?:\(([^)]*)\)\s*)?(.*)$")
+
+
+def _heuristic_tailored_lines(prompt: str) -> dict:
+    """Echo every offered line back with a marker, keeping ids and tabs intact."""
+    block = _extract_block(prompt, TAILOR_ITEMS_HEADER)
+    items = []
+    for line in block.splitlines():
+        match = _ITEM_LINE_RE.match(line.strip())
+        if not match:
+            continue
+        text = match.group(3).strip()
+        if not text:
+            continue
+        items.append({"id": int(match.group(1)), "text": f"{text} (tailored)"})
+    return {"items": items}
 
 
 def _heuristic_requirements(prompt: str) -> dict:
@@ -76,7 +95,9 @@ class FakeLLMProvider(LLMProvider):
         **kwargs: object,
     ) -> LLMResponse:
         lower = prompt.lower()
-        if json_mode or "matching this schema" in lower or "must_have" in lower:
+        if TAILOR_ITEMS_HEADER.lower() in lower:
+            text = json.dumps(_heuristic_tailored_lines(prompt))
+        elif json_mode or "matching this schema" in lower or "must_have" in lower:
             text = json.dumps(_heuristic_requirements(prompt))
         elif "cover letter" in lower:
             text = (

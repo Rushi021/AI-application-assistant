@@ -255,6 +255,18 @@ class SqlAlchemyApplicationRepo(ApplicationRepo):
     def get(self, application_id: int) -> Optional[Application]:
         return self._db.query(Application).filter(Application.id == application_id).first()
 
+    def find_for_job_resume(self, user_id: int, job_id: int, resume_id: int) -> Optional[Application]:
+        return (
+            self._db.query(Application)
+            .filter(
+                Application.user_id == user_id,
+                Application.job_id == job_id,
+                Application.resume_id == resume_id,
+            )
+            .order_by(Application.id.desc())
+            .first()
+        )
+
     def list_by_user(self, user_id: int) -> Iterable[Application]:
         return (
             self._db.query(Application)

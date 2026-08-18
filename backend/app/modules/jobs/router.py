@@ -5,7 +5,7 @@ from app.common.adapters.sqlalchemy_repos import SqlAlchemyJobRepo
 from app.common.errors import not_found
 from app.core.deps import get_current_user, get_db
 from app.modules.jobs.models import Job
-from app.modules.jobs.schemas import JobIngestRequest, JobRead
+from app.modules.jobs.schemas import JobIngestRequest, JobRead, JobUpdateRequest
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -41,6 +41,24 @@ def list_jobs(
 ) -> list[JobRead]:
     items = SqlAlchemyJobRepo(db).list_by_user(current_user.id)
     return [JobRead.model_validate(item) for item in items]
+
+
+@router.patch("/{job_id}", response_model=JobRead)
+def update_job(
+    job_id: int,
+    payload: JobUpdateRequest,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> JobRead:
+    repo = SqlAlchemyJobRepo(db)
+    job = repo.get(job_id)
+    if not job or job.user_id != current_user.id:
+        raise not_found("Job not found")
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        if isinstance(value, str):
+            value = value.strip() or None
+        setattr(job, key, value)
+    return JobRead.model_validate(repo.update(job))
 
 
 @router.get("/{job_id}", response_model=JobRead)

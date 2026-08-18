@@ -14,20 +14,21 @@
 
     <section id="step-1" class="step">
       <label for="jd">Job description</label>
-      <textarea id="jd" rows="10" placeholder="Paste the job description here. This is the first step."></textarea>
-      <div class="grid">
-        <label>Company <input id="company" /></label>
-        <label>Role <input id="role" /></label>
-        <label>Sponsorship <input id="sponsorship" /></label>
-        <label>Date posted <input id="datePosted" /></label>
-      </div>
-      <label>Application link <input id="applyLink" /></label>
+      <textarea id="jd" rows="14" placeholder="Paste the job description here. This is the first step."></textarea>
       <button id="ingestBtn">Score against my resumes</button>
     </section>
 
     <section id="step-2" class="step" hidden>
       <p>Pick a base resume. Highest score is recommended.</p>
       <div id="scores"></div>
+      <details id="store">
+        <summary>Resume store</summary>
+        <p class="hint">
+          Same store as the website. What you upload or delete here shows up there, and the other way around.
+        </p>
+        <div id="storeGrid"></div>
+        <button id="refreshStoreBtn" class="ghost">Refresh from server</button>
+      </details>
       <button id="toTailor">Continue with selected resume</button>
     </section>
 
@@ -40,17 +41,34 @@
     </section>
 
     <section id="step-4" class="step" hidden>
+      <p class="hint">
+        Greyed lines are locked: the title, section headers, Education, and any line whose
+        tab alignment holds a date in place. Everything else keeps its original formatting
+        when the document is written.
+      </p>
       <div id="sections"></div>
-      <button id="finalizeBtn">Finalize (write .tex / PDF)</button>
+      <button id="finalizeBtn">Finalize document</button>
     </section>
 
     <section id="step-5" class="step" hidden>
-      <p>Apply using autofill on this tab, then log the outcome.</p>
+      <p>Company and role name the saved file and fill the tracker row, so set them first.</p>
+      <div class="grid">
+        <label>Company <input id="company" /></label>
+        <label>Role <input id="role" /></label>
+        <label>Sponsorship <input id="sponsorship" /></label>
+        <label>Date posted <input id="datePosted" /></label>
+      </div>
+      <label>Application link <input id="applyLink" /></label>
+      <button id="autoApplyBtn">Save to resume library</button>
+      <div id="exportPanel" class="export" hidden></div>
       <button id="autofillBtn">Autofill this page</button>
-      <button id="applyBtn">Mark applied</button>
-      <div class="row">
-        <button id="okBtn" class="ok">Succeeded</button>
-        <button id="failBtn" class="fail">Failed</button>
+      <button id="trackBtn">Mark applied</button>
+      <div id="outcomePanel" hidden>
+        <p>Logged. Record whether the application succeeded.</p>
+        <div class="row">
+          <button id="okBtn" class="ok">Succeeded</button>
+          <button id="failBtn" class="fail">Failed</button>
+        </div>
       </div>
       <pre id="finalPreview" class="preview"></pre>
     </section>

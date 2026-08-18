@@ -7,6 +7,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.base import Base
 
 
+TAILOR_STATUSES = ("draft", "ready", "finalized", "auto_apply")
+
+
 class TailorRun(Base):
     __tablename__ = "tailor_runs"
 
@@ -20,7 +23,27 @@ class TailorRun(Base):
     sections_json: Mapped[str] = mapped_column(Text, default="[]")
     cover_letter: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     final_latex: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    final_pdf_key: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    final_tex_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    final_docx_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    final_pdf_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     compiler_warning: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # Where the auto-apply step filed the documents in the local library.
+    export_dir: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    exported_docx_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    exported_pdf_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    exported_tex_path: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+# Columns added after the first create_all on an existing local SQLite file.
+TAILOR_RUN_SQLITE_COLUMNS: dict[str, str] = {
+    "final_tex_key": "VARCHAR(500)",
+    "final_docx_key": "VARCHAR(500)",
+    "export_dir": "VARCHAR(500)",
+    "exported_docx_path": "VARCHAR(500)",
+    "exported_pdf_path": "VARCHAR(500)",
+    "exported_tex_path": "VARCHAR(500)",
+}

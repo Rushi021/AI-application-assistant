@@ -59,7 +59,10 @@ def test_ingest_score_tailor_apply(client, tmp_path):
     run_id = tailor.json()["id"]
     finalized = client.post(f"/tailoring/runs/{run_id}/finalize", headers=AUTH)
     assert finalized.status_code == 200, finalized.text
-    assert finalized.json()["final_latex"]
+    final_latex = finalized.json()["final_latex"]
+    # Tailoring must not swallow a section: both headers survive, in order.
+    assert final_latex.index("\\section{Experience}") < final_latex.index("\\section{Skills}")
+    assert "\\begin{itemize}" in final_latex
 
     applied = client.post(
         "/applications",
@@ -74,6 +77,15 @@ def test_ingest_score_tailor_apply(client, tmp_path):
     )
     assert outcome.json()["outcome"] == "succeeded"
 
+    patched = client.patch(
+        f"/jobs/{job_id}",
+        headers=AUTH,
+        json={"sponsorship": "No", "application_link": "https://example.com/jobs/1"},
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["sponsorship"] == "No"
+    assert patched.json()["application_link"] == "https://example.com/jobs/1"
+
     scrape = client.post(
         "/scraping/search",
         headers=AUTH,
@@ -82,6 +94,36 @@ def test_ingest_score_tailor_apply(client, tmp_path):
     assert scrape.status_code == 200
     assert scrape.json()["provider"] == "noop"
     assert scrape.json()["results"] == []
+
+
+def test_update_job_metadata_after_ingest(client):
+    job = client.post(
+        "/jobs/ingest",
+        headers=AUTH,
+        json={"raw_text": "Python engineer. Sponsorship not offered.", "source": "manual"},
+    )
+    assert job.status_code == 200, job.text
+    body = job.json()
+    assert body["company_name"] is None
+    assert body["role"] is None
+    patched = client.patch(
+        f"/jobs/{body['id']}",
+        headers=AUTH,
+        json={
+            "company_name": "ExampleCo",
+            "role": "Python Engineer",
+            "sponsorship": "No",
+            "date_posted": "2026-08-01",
+            "application_link": "https://example.com/jobs/1",
+        },
+    )
+    assert patched.status_code == 200, patched.text
+    saved = patched.json()
+    assert saved["company_name"] == "ExampleCo"
+    assert saved["role"] == "Python Engineer"
+    assert saved["sponsorship"] == "No"
+    assert saved["date_posted"] == "2026-08-01"
+    assert saved["application_link"] == "https://example.com/jobs/1"
 
 
 def test_profile_roundtrip(client):

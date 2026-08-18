@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     storage_backend: str = "local"
     local_storage_path: str = "./data/resumes"
     output_dir: str = "./data/output"
+    # Where a finalized resume is filed for real use: one folder per resume family.
+    resume_library_root: str = "~/Desktop/Rushi/job-automation"
     max_upload_size_mb: int = 10
     allowed_extensions: str = "pdf,doc,docx,tex"
 
@@ -39,6 +41,8 @@ class Settings(BaseSettings):
     # Per-provider credentials — only required when a spec actually selects that provider.
     google_ai_api_key: str = "placeholder-api-key-replace-with-real"
     openai_api_key: str = ""
+    nvidia_api_key: str = ""
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     ollama_base_url: str = "http://localhost:11434"
 
     # Kept for older env files; unused by the gateway (use llm_default instead).
@@ -53,6 +57,8 @@ class Settings(BaseSettings):
     tier2_confidence_factor: float = 0.85
 
     latex_compiler: str = "tectonic"
+    # auto/soffice use LibreOffice; word drives Word over AppleScript; off skips PDF.
+    docx_pdf_converter: str = "auto"
     scraper_provider: str = "noop"
 
     @property

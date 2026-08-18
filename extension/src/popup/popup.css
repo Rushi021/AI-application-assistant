@@ -76,11 +76,56 @@ button {
   padding-top: 8px;
   margin-top: 8px;
 }
+.section.locked > strong {
+  color: #666;
+}
+.badge {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: #eee;
+  color: #666;
+  font-size: 10px;
+}
+.line {
+  margin-top: 6px;
+}
+.line.locked {
+  color: #888;
+  font-size: 11px;
+  padding: 4px 6px;
+  border-left: 2px solid #ddd;
+  white-space: pre-wrap;
+}
+.line button {
+  margin-top: 4px;
+  width: auto;
+  padding: 3px 8px;
+  font-size: 11px;
+}
+.export {
+  margin-top: 8px;
+  padding: 8px;
+  background: #eef6ee;
+  color: #235;
+  font-size: 11px;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
 .preview {
   max-height: 140px;
   overflow: auto;
   font-size: 11px;
   white-space: pre-wrap;
+}
+#outcomePanel {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #ddd;
+}
+#outcomePanel p {
+  margin: 0 0 4px;
+  font-size: 12px;
 }
 .check {
   display: flex;
@@ -89,4 +134,55 @@ button {
 }
 .check input {
   width: auto;
+}
+.hint {
+  color: #666;
+  font-size: 11px;
+  margin: 4px 0 8px;
+}
+#store {
+  margin-top: 12px;
+  border-top: 1px solid #ddd;
+  padding-top: 8px;
+}
+#store summary {
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+}
+.family {
+  margin-bottom: 8px;
+}
+.family > strong {
+  font-size: 12px;
+}
+.slot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  padding: 4px 0;
+}
+.slot label {
+  margin: 0;
+  flex: 1;
+}
+.slot input[type="file"] {
+  font-size: 11px;
+  padding: 2px 0;
+}
+.slot button {
+  margin-top: 0;
+  width: auto;
+  padding: 4px 8px;
+  font-size: 11px;
+}
+.meta {
+  color: #666;
+  font-size: 11px;
+}
+.ghost {
+  background: transparent;
+  border: 1px solid #bbb;
 }

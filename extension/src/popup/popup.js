@@ -1,3 +1,10 @@
+const FAMILIES = [
+  { id: "ai_ml", label: "AI / ML" },
+  { id: "data_science", label: "Data science" },
+  { id: "data_analyst", label: "Data analyst" },
+  { id: "business_analyst", label: "Business analyst" },
+];
+
 const state = {
   step: 1,
   jobId: null,
@@ -5,6 +12,7 @@ const state = {
   tailorRunId: null,
   applicationId: null,
   scores: [],
+  resumes: [],
 };
 
 const stepTitles = {
@@ -12,7 +20,7 @@ const stepTitles = {
   2: "Step 2 of 5 — Score alignment",
   3: "Step 3 of 5 — Tailor?",
   4: "Step 4 of 5 — Edit sections",
-  5: "Step 5 of 5 — Apply + outcome",
+  5: "Step 5 of 5 — Apply + track",
 };
 
 function showError(err) {
@@ -38,40 +46,54 @@ document.getElementById("ingestBtn").addEventListener("click", async () => {
       method: "POST",
       body: {
         raw_text: raw,
-        company_name: document.getElementById("company").value || null,
-        role: document.getElementById("role").value || null,
-        sponsorship: document.getElementById("sponsorship").value || null,
-        date_posted: document.getElementById("datePosted").value || null,
-        application_link: document.getElementById("applyLink").value || null,
         source: "manual",
       },
     });
     state.jobId = job.id;
-    const ranked = await api("/matching/score", { method: "POST", body: { job_id: job.id } });
-    state.scores = ranked.scores;
-    state.resumeId = ranked.recommended_resume_id;
-    renderScores();
+    await loadResumes();
+    await rescore();
     goto(2);
   } catch (err) {
     showError(err);
   }
 });
 
+function pct(value) {
+  return `${Math.round((value || 0) * 100)}%`;
+}
+
+function resumeById(resumeId) {
+  return state.resumes.find((item) => item.id === resumeId) || null;
+}
+
+function resumeLabel(resume) {
+  const family = FAMILIES.find((item) => item.id === resume.family);
+  return `${family ? family.label : resume.family} · v${resume.version}`;
+}
+
 function renderScores() {
   const root = document.getElementById("scores");
   root.innerHTML = "";
   if (!state.scores.length) {
-    root.textContent = "No active base resumes. Upload .tex files in the backend first.";
+    root.textContent = "No base resumes yet. Upload one in the resume store below to get it scored.";
     return;
   }
   for (const score of state.scores) {
+    const resume = resumeById(score.resume_id);
     const card = document.createElement("div");
     card.className = "card" + (score.resume_id === state.resumeId ? " selected" : "");
-    card.innerHTML = `<strong>Resume ${score.resume_id}</strong>
-      ${score.recommended ? " · recommended" : ""}<br/>
-      total ${(score.total_score * 100).toFixed(0)}%
-      · must-have ${(score.must_have_coverage * 100).toFixed(0)}%
-      · nice-to-have ${(score.nice_to_have_coverage * 100).toFixed(0)}%`;
+    const title = document.createElement("strong");
+    title.textContent =
+      (resume ? resumeLabel(resume) : `Resume ${score.resume_id}`) +
+      (score.recommended ? " · recommended" : "");
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = resume ? resume.original_filename : "";
+    const numbers = document.createElement("div");
+    numbers.textContent = `total ${pct(score.total_score)} · must-have ${pct(
+      score.must_have_coverage
+    )} · nice-to-have ${pct(score.nice_to_have_coverage)}`;
+    card.append(title, meta, numbers);
     card.addEventListener("click", () => {
       state.resumeId = score.resume_id;
       renderScores();
@@ -79,6 +101,109 @@ function renderScores() {
     root.appendChild(card);
   }
 }
+
+async function loadResumes() {
+  state.resumes = await api("/resumes");
+  renderStore();
+}
+
+function renderStore() {
+  const root = document.getElementById("storeGrid");
+  root.innerHTML = "";
+  document.getElementById("store").open = !state.resumes.length;
+  for (const family of FAMILIES) {
+    const wrap = document.createElement("div");
+    wrap.className = "family";
+    const head = document.createElement("strong");
+    head.textContent = family.label;
+    wrap.appendChild(head);
+    for (const version of [1, 2]) {
+      const existing = state.resumes.find(
+        (item) => item.family === family.id && item.version === version
+      );
+      const slot = document.createElement("div");
+      slot.className = "slot";
+      if (existing) {
+        const name = document.createElement("span");
+        name.textContent = `v${version} · ${existing.original_filename}`;
+        const remove = document.createElement("button");
+        remove.className = "fail";
+        remove.textContent = "Delete";
+        remove.addEventListener("click", () => {
+          if (remove.dataset.armed) {
+            deleteResume(existing.id);
+            return;
+          }
+          remove.dataset.armed = "1";
+          remove.textContent = "Click again to delete";
+        });
+        slot.append(name, remove);
+      } else {
+        const picker = document.createElement("label");
+        picker.textContent = `v${version} — upload`;
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = ".tex,.pdf,.doc,.docx";
+        input.addEventListener("change", () => {
+          if (input.files[0]) uploadResume(input.files[0], family.id, version);
+        });
+        picker.appendChild(input);
+        slot.appendChild(picker);
+      }
+      wrap.appendChild(slot);
+    }
+    root.appendChild(wrap);
+  }
+}
+
+async function rescore() {
+  if (!state.jobId) return;
+  const ranked = await api("/matching/score", { method: "POST", body: { job_id: state.jobId } });
+  state.scores = ranked.scores;
+  const scored = state.scores.map((score) => score.resume_id);
+  if (!scored.includes(state.resumeId)) {
+    state.resumeId = scored.includes(ranked.recommended_resume_id)
+      ? ranked.recommended_resume_id
+      : null;
+  }
+  renderScores();
+}
+
+async function uploadResume(file, family, version) {
+  showError(null);
+  try {
+    const body = new FormData();
+    body.append("file", file);
+    body.append("family", family);
+    body.append("version", String(version));
+    await api("/resumes/upload", { method: "POST", body, isForm: true });
+    await loadResumes();
+    await rescore();
+  } catch (err) {
+    showError(err);
+  }
+}
+
+async function deleteResume(resumeId) {
+  showError(null);
+  try {
+    await api(`/resumes/${resumeId}`, { method: "DELETE" });
+    await loadResumes();
+    await rescore();
+  } catch (err) {
+    showError(err);
+  }
+}
+
+document.getElementById("refreshStoreBtn").addEventListener("click", async () => {
+  showError(null);
+  try {
+    await loadResumes();
+    await rescore();
+  } catch (err) {
+    showError(err);
+  }
+});
 
 document.getElementById("toTailor").addEventListener("click", () => {
   if (!state.resumeId) {
@@ -109,71 +234,127 @@ document.getElementById("runTailor").addEventListener("click", async () => {
   }
 });
 
+async function patchLine(section, bullet, text) {
+  await api(`/tailoring/runs/${state.tailorRunId}/sections/${section.id}`, {
+    method: "PATCH",
+    body: { bullets: [{ id: bullet.id, text }] },
+  });
+}
+
+async function rewrite(section, body) {
+  const updated = await api(
+    `/tailoring/runs/${state.tailorRunId}/sections/${section.id}/rewrite`,
+    { method: "POST", body }
+  );
+  renderSections(JSON.parse(updated.sections_json || "[]"));
+}
+
+function renderLine(section, bullet, index, wrap) {
+  const row = document.createElement("div");
+  row.className = bullet.editable === false ? "line locked" : "line";
+  if (bullet.editable === false) {
+    row.textContent = bullet.text;
+    row.title = `Locked: ${bullet.frozen_reason || "not editable"}`;
+    wrap.appendChild(row);
+    return;
+  }
+  const area = document.createElement("textarea");
+  area.rows = 2;
+  area.value = bullet.text || "";
+  area.addEventListener("blur", async () => {
+    if (area.value === bullet.text) return;
+    try {
+      await patchLine(section, bullet, area.value);
+      bullet.text = area.value;
+    } catch (err) {
+      showError(err);
+    }
+  });
+  row.appendChild(area);
+  const button = document.createElement("button");
+  button.textContent = "Rewrite line";
+  button.addEventListener("click", () => rewrite(section, { bullet_index: index, instructions: "" }).catch(showError));
+  row.appendChild(button);
+  wrap.appendChild(row);
+}
+
 function renderSections(sections) {
   const root = document.getElementById("sections");
   root.innerHTML = "";
   sections.forEach((section) => {
     const wrap = document.createElement("div");
-    wrap.className = "section";
-    wrap.innerHTML = `<strong>${section.name || "Section"}</strong>`;
-    const area = document.createElement("textarea");
-    area.rows = 4;
-    area.value = section.body_text || "";
-    area.addEventListener("blur", async () => {
-      try {
-        await api(`/tailoring/runs/${state.tailorRunId}/sections/${section.id}`, {
-          method: "PATCH",
-          body: { body_text: area.value },
-        });
-      } catch (err) {
-        showError(err);
+    wrap.className = section.editable === false ? "section locked" : "section";
+    const heading = document.createElement("strong");
+    heading.textContent = section.name || "Section";
+    wrap.appendChild(heading);
+    if (section.editable === false) {
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = section.frozen_reason || "locked";
+      wrap.appendChild(badge);
+    }
+
+    const bullets = section.bullets || [];
+    if (bullets.length) {
+      if (section.editable !== false) {
+        const all = document.createElement("button");
+        all.textContent = "Rewrite every line with LLM";
+        all.addEventListener("click", () => rewrite(section, { instructions: "" }).catch(showError));
+        wrap.appendChild(all);
       }
-    });
-    wrap.appendChild(area);
-    const rewrite = document.createElement("button");
-    rewrite.textContent = "Rewrite section with LLM";
-    rewrite.addEventListener("click", async () => {
-      try {
-        const updated = await api(
-          `/tailoring/runs/${state.tailorRunId}/sections/${section.id}/rewrite`,
-          { method: "POST", body: { instructions: "" } }
-        );
-        renderSections(JSON.parse(updated.sections_json || "[]"));
-      } catch (err) {
-        showError(err);
-      }
-    });
-    wrap.appendChild(rewrite);
-    (section.bullets || []).forEach((bullet, index) => {
-      const row = document.createElement("div");
-      row.textContent = bullet.text;
-      const bbtn = document.createElement("button");
-      bbtn.textContent = "Rewrite bullet";
-      bbtn.addEventListener("click", async () => {
+      bullets.forEach((bullet, index) => renderLine(section, bullet, index, wrap));
+    } else if (section.editable !== false) {
+      const area = document.createElement("textarea");
+      area.rows = 3;
+      area.value = section.body_text || "";
+      area.addEventListener("blur", async () => {
         try {
-          const updated = await api(
-            `/tailoring/runs/${state.tailorRunId}/sections/${section.id}/rewrite`,
-            { method: "POST", body: { bullet_index: index, instructions: "" } }
-          );
-          renderSections(JSON.parse(updated.sections_json || "[]"));
+          await api(`/tailoring/runs/${state.tailorRunId}/sections/${section.id}`, {
+            method: "PATCH",
+            body: { body_text: area.value },
+          });
         } catch (err) {
           showError(err);
         }
       });
-      wrap.appendChild(row);
-      wrap.appendChild(bbtn);
-    });
+      wrap.appendChild(area);
+    }
     root.appendChild(wrap);
   });
+}
+
+function showFinal(run) {
+  const notes = [];
+  if (run.compiler_warning) notes.push(run.compiler_warning);
+  if (run.final_docx_key) notes.push(`Wrote ${run.final_docx_key}`);
+  if (run.final_pdf_key) notes.push(`Wrote ${run.final_pdf_key}`);
+  document.getElementById("finalPreview").textContent =
+    notes.join("\n") + (run.final_latex ? `\n\n${run.final_latex}` : "");
 }
 
 document.getElementById("finalizeBtn").addEventListener("click", async () => {
   showError(null);
   try {
-    const run = await api(`/tailoring/runs/${state.tailorRunId}/finalize`, { method: "POST" });
-    document.getElementById("finalPreview").textContent =
-      (run.compiler_warning ? run.compiler_warning + "\n\n" : "") + (run.final_latex || "");
+    showFinal(await api(`/tailoring/runs/${state.tailorRunId}/finalize`, { method: "POST" }));
     goto(5);
+  } catch (err) {
+    showError(err);
+  }
+});
+
+document.getElementById("autoApplyBtn").addEventListener("click", async () => {
+  showError(null);
+  const link = document.getElementById("applyLink");
+  if (!link.value) link.value = await currentTabUrl();
+  try {
+    // The company names the file and lands on the tracker row, so persist it first.
+    await saveJobDetails();
+    const run = await api(`/tailoring/runs/${state.tailorRunId}/auto-apply`, { method: "POST" });
+    const panel = document.getElementById("exportPanel");
+    const saved = [run.exported_docx_path, run.exported_pdf_path, run.exported_tex_path].filter(Boolean);
+    panel.textContent = [`Saved to ${run.export_dir}`, ...saved, "Logged on the tracker."].join("\n");
+    panel.hidden = false;
+    showFinal(run);
   } catch (err) {
     showError(err);
   }
@@ -193,19 +374,51 @@ document.getElementById("autofillBtn").addEventListener("click", async () => {
   }
 });
 
-document.getElementById("applyBtn").addEventListener("click", async () => {
+function jobDetailsPayload() {
+  return {
+    company_name: document.getElementById("company").value.trim() || null,
+    role: document.getElementById("role").value.trim() || null,
+    sponsorship: document.getElementById("sponsorship").value.trim() || null,
+    date_posted: document.getElementById("datePosted").value.trim() || null,
+    application_link: document.getElementById("applyLink").value.trim() || null,
+  };
+}
+
+async function currentTabUrl() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    return tab?.url && tab.url.startsWith("http") ? tab.url : "";
+  } catch (_err) {
+    return "";
+  }
+}
+
+async function saveJobDetails() {
+  if (!state.jobId) return;
+  await api(`/jobs/${state.jobId}`, { method: "PATCH", body: jobDetailsPayload() });
+}
+
+async function createTrackedApplication(status) {
+  await saveJobDetails();
+  if (state.applicationId) return;
+  const created = await api("/applications", {
+    method: "POST",
+    body: {
+      job_id: state.jobId,
+      resume_id: state.resumeId,
+      tailor_run_id: state.tailorRunId,
+      status,
+    },
+  });
+  state.applicationId = created.id;
+}
+
+document.getElementById("trackBtn").addEventListener("click", async () => {
   showError(null);
   try {
-    const created = await api("/applications", {
-      method: "POST",
-      body: {
-        job_id: state.jobId,
-        resume_id: state.resumeId,
-        tailor_run_id: state.tailorRunId,
-        status: "applied",
-      },
-    });
-    state.applicationId = created.id;
+    await createTrackedApplication("applied");
+    document.getElementById("trackBtn").disabled = true;
+    document.getElementById("outcomePanel").hidden = false;
   } catch (err) {
     showError(err);
   }
@@ -214,22 +427,12 @@ document.getElementById("applyBtn").addEventListener("click", async () => {
 async function recordOutcome(succeeded) {
   showError(null);
   try {
-    if (!state.applicationId) {
-      const created = await api("/applications", {
-        method: "POST",
-        body: {
-          job_id: state.jobId,
-          resume_id: state.resumeId,
-          tailor_run_id: state.tailorRunId,
-          status: succeeded ? "applied" : "failed",
-        },
-      });
-      state.applicationId = created.id;
-    }
+    await createTrackedApplication(succeeded ? "applied" : "failed");
     await api(`/applications/${state.applicationId}/outcome`, {
       method: "POST",
       body: { succeeded },
     });
+    document.getElementById("outcomePanel").hidden = false;
   } catch (err) {
     showError(err);
   }

@@ -195,6 +195,11 @@ class ApplicationRepo(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def find_for_job_resume(self, user_id: int, job_id: int, resume_id: int) -> Optional[Application]:
+        """One application per job + resume, so a retry updates instead of duplicating."""
+        raise NotImplementedError
+
+    @abstractmethod
     def list_by_user(self, user_id: int) -> Iterable[Application]:
         raise NotImplementedError
 

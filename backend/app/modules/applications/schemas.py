@@ -34,6 +34,11 @@ class ApplicationRead(BaseModel):
     applied_at: Optional[datetime] = None
     status_updated_at: Optional[datetime] = None
     created_at: datetime
+    company_name: Optional[str] = None
+    role: Optional[str] = None
+    resume_family: Optional[str] = None
+    resume_tailored: Optional[bool] = None
+    document_path: Optional[str] = None
 
     class Config:
         from_attributes = True

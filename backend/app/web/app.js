@@ -65,9 +65,13 @@ async function login() {
   state.token = data.access_token;
 }
 
-function route() {
+function currentRoute() {
   const hash = (location.hash || "#/personal").replace("#/", "");
-  const name = ["personal", "jobs", "resumes", "tracker"].includes(hash) ? hash : "personal";
+  return ["personal", "jobs", "resumes", "tracker"].includes(hash) ? hash : "personal";
+}
+
+function route() {
+  const name = currentRoute();
   document.querySelectorAll(".page").forEach((page) => {
     page.hidden = page.id !== `page-${name}`;
   });
@@ -309,6 +313,7 @@ function renderJobs() {
       <div class="row-actions">
         ${job.application_link ? `<a href="${job.application_link}" target="_blank" rel="noreferrer">Open posting</a>` : ""}
         <button type="button" data-score="${job.id}">Score against selected resume</button>
+        <button type="button" data-tailor="${job.id}">Tailor and file in library</button>
         <button type="button" data-track="${job.id}">Add to tracker</button>
       </div>
       <pre class="hint" data-evidence="${job.id}"></pre>
@@ -318,9 +323,40 @@ function renderJobs() {
   root.querySelectorAll("[data-score]").forEach((btn) => {
     btn.addEventListener("click", () => scoreJob(Number(btn.dataset.score)));
   });
+  root.querySelectorAll("[data-tailor]").forEach((btn) => {
+    btn.addEventListener("click", () => tailorAndFile(Number(btn.dataset.tailor)));
+  });
   root.querySelectorAll("[data-track]").forEach((btn) => {
     btn.addEventListener("click", () => trackJob(Number(btn.dataset.track)));
   });
+}
+
+async function tailorAndFile(jobId) {
+  const resumeId = Number($("job-resume").value);
+  if (!resumeId) {
+    banner("Select a resume first. The store is on the Resume store tab.", true);
+    return;
+  }
+  const el = document.querySelector(`[data-evidence="${jobId}"]`);
+  try {
+    if (el) el.textContent = "Tailoring…";
+    const run = await api("/tailoring/runs", {
+      method: "POST",
+      body: { job_id: jobId, resume_id: resumeId, do_tailor: true },
+    });
+    const filed = await api(`/tailoring/runs/${run.id}/auto-apply`, { method: "POST" });
+    const saved = [filed.exported_docx_path, filed.exported_pdf_path, filed.exported_tex_path].filter(Boolean);
+    if (el) {
+      el.textContent = [`Saved to ${filed.export_dir}`, ...saved, filed.compiler_warning || ""]
+        .filter(Boolean)
+        .join("\n");
+    }
+    banner("Tailored resume filed in its family folder and logged on the tracker.");
+    await refresh();
+  } catch (err) {
+    if (el) el.textContent = "";
+    banner(err.message, true);
+  }
 }
 
 async function scoreJob(jobId) {
@@ -549,19 +585,34 @@ async function uploadResume(file, family, version) {
 function renderTracker() {
   const root = $("tracker-table");
   if (!state.applications.length) {
-    root.innerHTML = `<p class="empty">No applications logged yet. From Job search, choose a resume and click Add to tracker.</p>`;
+    root.innerHTML = `<p class="empty">No applications logged yet. From Job search, choose a resume and click Tailor and file in library, or Add to tracker.</p>`;
     return;
   }
   const rows = state.applications
     .map((app) => {
       const job = jobById(app.job_id);
       const resume = resumeById(app.resume_id);
+      // Prefer what was saved on the row; fall back to a join for older entries.
+      const company = app.company_name || job?.company_name || "—";
+      const role = app.role || job?.role || "";
+      const familyId = app.resume_family || resume?.family;
+      const family = FAMILIES.find((item) => item.id === familyId);
+      const tailored = app.resume_tailored === null || app.resume_tailored === undefined
+        ? "—"
+        : app.resume_tailored
+        ? "Yes"
+        : "No";
       const when = app.applied_at || app.status_updated_at || app.created_at;
+      const file = app.document_path ? app.document_path.split("/").pop() : "";
       return `<tr>
-        <td>${job ? `${job.company_name || "—"}<div class="meta">${job.role || ""}</div>` : app.job_id}</td>
-        <td>${resume ? resumeLabel(resume) : app.resume_id}</td>
+        <td>${company}<div class="meta">${role}</div></td>
+        <td>${family ? family.label : familyId || app.resume_id}<div class="meta">${
+          resume ? `v${resume.version}` : ""
+        }</div></td>
+        <td>${tailored}</td>
         <td>${app.status}${app.outcome ? ` · ${app.outcome}` : ""}</td>
-        <td class="meta">${when ? new Date(when).toLocaleString() : "—"}</td>
+        <td class="meta">${when ? new Date(when).toLocaleDateString() : "—"}</td>
+        <td class="meta" title="${app.document_path || ""}">${file || "—"}</td>
         <td class="row-actions">
           <button type="button" class="ok" data-ok="${app.id}">Succeeded</button>
           <button type="button" class="bad" data-fail="${app.id}">Failed</button>
@@ -570,7 +621,10 @@ function renderTracker() {
     })
     .join("");
   root.innerHTML = `<table>
-    <thead><tr><th>Job</th><th>Resume you used</th><th>Status</th><th>Date</th><th></th></tr></thead>
+    <thead><tr>
+      <th>Company / role</th><th>Resume type</th><th>Tailored</th>
+      <th>Status</th><th>Date applied</th><th>Document</th><th></th>
+    </tr></thead>
     <tbody>${rows}</tbody>
   </table>`;
   root.querySelectorAll("[data-ok]").forEach((btn) => {
@@ -592,6 +646,21 @@ async function setOutcome(applicationId, succeeded) {
 }
 
 window.addEventListener("hashchange", route);
+
+document.addEventListener("visibilitychange", async () => {
+  if (document.hidden || !state.token) return;
+  const name = currentRoute();
+  // Personal information can hold unsaved edits, so never re-render it underneath the user.
+  if (name === "personal") return;
+  try {
+    await refresh();
+  } catch (_err) {
+    return;
+  }
+  if (name === "jobs") renderJobs();
+  if (name === "resumes") renderResumes();
+  if (name === "tracker") renderTracker();
+});
 
 (async function start() {
   try {

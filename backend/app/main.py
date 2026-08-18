@@ -22,13 +22,13 @@ from app.modules.tailoring.router import router as tailoring_router
 # Register model adapters (decorator side effects) and ORM tables.
 import app.modules.ai.providers  # noqa: F401
 from app.modules.ai import usage as _usage_models  # noqa: F401
-from app.modules.applications import models as _application_models  # noqa: F401
+from app.modules.applications.models import APPLICATION_SQLITE_COLUMNS
 from app.modules.jobs import models as _job_models  # noqa: F401
 from app.modules.matching import models as _matching_models  # noqa: F401
 from app.modules.profile.models import PROFILE_SQLITE_COLUMNS
 from app.modules.resumes import models as _resume_models  # noqa: F401
 from app.modules.scraping import models as _scraping_models  # noqa: F401
-from app.modules.tailoring import models as _tailoring_models  # noqa: F401
+from app.modules.tailoring.models import TAILOR_RUN_SQLITE_COLUMNS
 from app.modules.users import models as _user_models  # noqa: F401
 
 WEB_DIR = Path(__file__).resolve().parent / "web"
@@ -39,14 +39,23 @@ def _patch_sqlite_columns() -> None:
     url = str(db_session.engine.url)
     if not url.startswith("sqlite"):
         return
+    additions = {
+        "profiles": PROFILE_SQLITE_COLUMNS,
+        "tailor_runs": TAILOR_RUN_SQLITE_COLUMNS,
+        "applications": APPLICATION_SQLITE_COLUMNS,
+    }
     with db_session.engine.begin() as conn:
-        existing = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='profiles'"))
-        if existing.fetchone() is None:
-            return
-        cols = {row[1] for row in conn.execute(text("PRAGMA table_info(profiles)"))}
-        for name, sql_type in PROFILE_SQLITE_COLUMNS.items():
-            if name not in cols:
-                conn.execute(text(f"ALTER TABLE profiles ADD COLUMN {name} {sql_type}"))
+        for table, columns in additions.items():
+            exists = conn.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table"),
+                {"table": table},
+            )
+            if exists.fetchone() is None:
+                continue
+            present = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
+            for name, sql_type in columns.items():
+                if name not in present:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))
 
 
 def create_app() -> FastAPI:
