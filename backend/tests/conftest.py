@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 
+os.environ["AGENT_WORKER_ENABLED"] = "false"
+os.environ["SCRAPER_PROVIDER"] = "noop"
 os.environ["LLM_DEFAULT"] = "fake:fake"
 os.environ["LLM_JD_EXTRACTION"] = "fake:fake"
 os.environ["LLM_RESUME_TAILOR"] = "fake:fake"

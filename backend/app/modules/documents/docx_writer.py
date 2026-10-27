@@ -136,5 +136,6 @@ def write_docx(
         result.applied += 1
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    document.save(out_path)
+    from app.modules.documents.cover import save_package
+    save_package(original_bytes, document, out_path)
     return result

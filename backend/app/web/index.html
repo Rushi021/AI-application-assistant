@@ -21,6 +21,7 @@
       </header>
 
       <nav class="tabs" aria-label="Packet sections">
+        <a href="#/agent" data-route="agent">Agent queue</a>
         <a href="#/personal" data-route="personal">Personal information</a>
         <a href="#/jobs" data-route="jobs">Job search</a>
         <a href="#/resumes" data-route="resumes">Resume store</a>
@@ -29,6 +30,31 @@
 
       <main class="folder">
         <p id="banner" class="banner" hidden></p>
+
+        <section id="page-agent" class="page" hidden>
+          <header class="page-head"><h2>Your application queue</h2>
+          <p>Discovery and document preparation run while the backend is on. Review each packet, then approve it for the extension to fill and submit. Unresolved forms pause for your attention.</p></header>
+          <p id="agent-status" role="status"></p>
+          <details><summary>Search and preparation settings</summary>
+          <form id="agent-plan" class="panel grid-form">
+            <label class="check"><input name="enabled" type="checkbox"> Prepare jobs in the background</label>
+            <label>Base resume <select id="agent-resume" name="resume_id" required></select></label>
+            <label>Roles (comma separated)<input name="roles" value="Software Engineer" required></label>
+            <label>Locations (comma separated; Anywhere disables location filtering)<input name="locations" value="Remote" required></label>
+            <label>Minimum match score (%)<input name="minimum_score" type="number" min="0" max="100" value="65" required></label>
+            <label>Scan interval (minutes)<input name="interval_minutes" type="number" min="5" value="60" required></label>
+            <label>Packets per scan<input name="max_prepare" type="number" min="1" max="50" value="10" required></label>
+            <label class="span-2">Sources (one per line: greenhouse:board, lever:board, ashby:board, workday:tenant.wdN.boardName, remotive, google_jobs)
+              <textarea name="sources" rows="5" required>remotive</textarea>
+            </label>
+            <p class="hint span-2">ATS sources need the employer's board slug. Google Jobs needs SERPAPI_API_KEY on the server and can include popular portals. Coverage is limited to your configured sources. Remotive results link to its job pages; follow the employer link for submission.</p>
+            <label class="span-2">Tailoring instructions<textarea name="instructions" rows="3"></textarea></label>
+            <button type="submit">Save agent settings</button>
+          </form></details>
+          <div class="row-actions"><button id="agent-scan">Discover and prepare now</button><button id="agent-refresh">Refresh queue</button></div>
+          <p class="hint">Approved jobs are picked up by the installed extension, one at a time. Keep Chrome and the backend running. Open the extension to run the next approved packet immediately.</p>
+          <div id="agent-queue" class="card-list"></div>
+        </section>
 
         <section id="page-personal" class="page" hidden>
           <header class="page-head">
@@ -210,7 +236,7 @@
         <section id="page-jobs" class="page" hidden>
           <header class="page-head">
             <h2>Job search</h2>
-            <p>Scraped listings will land here. Until a scraper is plugged in, paste a description. Choose the resume yourself before scoring or tracking.</p>
+            <p>Search public feeds or paste a description. Use Agent queue for scheduled discovery, document review, and approved applications.</p>
           </header>
 
           <div class="split">
@@ -279,5 +305,6 @@
       </main>
     </div>
     <script src="/web/app.js"></script>
+    <script src="/web/agent.js"></script>
   </body>
 </html>

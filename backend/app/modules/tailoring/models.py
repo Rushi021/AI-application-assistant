@@ -26,6 +26,9 @@ class TailorRun(Base):
     final_tex_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     final_docx_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     final_pdf_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    cover_pdf_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    cover_document_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
+    cover_template_key: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     compiler_warning: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Where the auto-apply step filed the documents in the local library.
@@ -40,6 +43,9 @@ class TailorRun(Base):
 
 # Columns added after the first create_all on an existing local SQLite file.
 TAILOR_RUN_SQLITE_COLUMNS: dict[str, str] = {
+    "cover_pdf_key": "VARCHAR(500)",
+    "cover_document_key": "VARCHAR(500)",
+    "cover_template_key": "VARCHAR(500)",
     "final_tex_key": "VARCHAR(500)",
     "final_docx_key": "VARCHAR(500)",
     "export_dir": "VARCHAR(500)",

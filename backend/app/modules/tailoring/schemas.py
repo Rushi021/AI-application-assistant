@@ -37,6 +37,9 @@ class TailorRunRead(BaseModel):
     final_tex_key: Optional[str] = None
     final_docx_key: Optional[str] = None
     final_pdf_key: Optional[str] = None
+    cover_pdf_key: Optional[str] = None
+    cover_document_key: Optional[str] = None
+    cover_template_key: Optional[str] = None
     compiler_warning: Optional[str] = None
     export_dir: Optional[str] = None
     exported_docx_path: Optional[str] = None
