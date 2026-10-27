@@ -208,12 +208,13 @@ Cheap JSON extraction and high-quality tailoring want different models. Each tas
 | `requirement_embedding` | `EMBEDDING_REQUIREMENT` | `EMBEDDING_DEFAULT` |
 | `resume_embedding` | `EMBEDDING_RESUME` | `EMBEDDING_DEFAULT` |
 
-Example: point extraction at a local model while tailoring stays on Gemini Pro:
+Example: point extraction at a local model while tailoring uses the ChatGPT plan:
 
 ```
 LLM_DEFAULT=gemini:gemini-1.5-flash
 LLM_JD_EXTRACTION=ollama:llama3.1
-LLM_RESUME_TAILOR=gemini:gemini-1.5-pro
+LLM_RESUME_TAILOR=chatgpt:gpt-6.1-sol
+LLM_COVER_LETTER=chatgpt:gpt-6.1-sol
 EMBEDDING_DEFAULT=gemini:text-embedding-004
 ```
 
@@ -234,13 +235,21 @@ Defined in [`backend/app/modules/ai/ports.py`](backend/app/modules/ai/ports.py):
 - [`structured.py`](backend/app/modules/ai/structured.py) uses native JSON mode when advertised, otherwise fence-strips and does one self-repair retry against the Pydantic schema
 - [`middleware.py`](backend/app/modules/ai/middleware.py) wraps every adapter with retry + usage logging (`model_calls` table)
 
-SDK imports are lazy inside each adapter. Missing optional extras (`openai`, `sentence-transformers`) fail only when that provider is actually selected.
+SDK imports are lazy inside each adapter. OpenAI is installed for default tailoring;
+missing optional extras (`sentence-transformers`) fail only when selected.
+`openai` and `chatgpt` use streamed Responses requests with `store=false` and require
+`response.completed` before accepting output. `openai` uses API-key billing;
+`chatgpt` uses the separately authorized ChatGPT plan, with no billing fallback.
+`python3 -m app.modules.ai.chatgpt_auth login` connects the local single-user backend
+using loopback OAuth, PKCE, state/nonce and signed ID-token validation. Credentials
+are atomically stored with owner-only permissions under `CHATGPT_AUTH_FILE`;
+thread and process locks serialize rotating-token refresh during parallel calls.
 
 ### Built-in adapters
 
 | Kind | Names | Notes |
 |------|-------|-------|
-| LLM | `gemini`, `openai`, `ollama`, `fake` | Gemini is the default. Ollama uses stdlib urllib. Fake is deterministic for tests. |
+| LLM | `gemini`, `openai`, `chatgpt`, `ollama`, `fake` | ChatGPT plan is the default for tailoring and cover letters; other LLM tasks default to Gemini. Fake is deterministic for tests. |
 | Embedding | `gemini`, `openai`, `sentence_transformers` (alias `sbert`), `fake` | Gemini `text-embedding-004` is the default. Fake is bag-of-words hashing. |
 
 ### Add a new model provider (playbook)
@@ -443,7 +452,7 @@ These are wired end-to-end so only the adapter/body needs filling in later:
 | PDF compile | Writes `.tex`; PDF if `tectonic`/`pdflatex` exists | Install a compiler; `LATEX_COMPILER` |
 | DOCX → PDF | Writes `.docx`; PDF needs LibreOffice | `brew install --cask libreoffice`, or `DOCX_PDF_CONVERTER=word` |
 | PDF/DOC upload | Stored, not parsed (`.docx` and `.tex` are) | Add a parser producing `ParsedResume` |
-| OpenAI / SBERT / Ollama | Adapters registered, optional deps | Set the spec + credentials / extra package |
+| OpenAI / ChatGPT / SBERT / Ollama | Adapters registered | Set the spec + API credentials or ChatGPT login / optional SBERT package |
 | Alembic versions | `env.py` imports models, no revision files | `alembic revision --autogenerate` when leaving `create_all` |
 | Auth | Test username/password/token | Replace `core/security.py` |
 
@@ -501,7 +510,9 @@ cd backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # set GOOGLE_AI_API_KEY for real Gemini calls
+cp .env.example .env   # set GOOGLE_AI_API_KEY for extraction and embeddings
+python3 -m app.modules.ai.chatgpt_auth login
+python3 -m app.modules.ai.chatgpt_auth models
 uvicorn app.main:app --reload
 ```
 
@@ -518,5 +529,6 @@ To run the API fully offline, set:
 ```
 LLM_DEFAULT=fake:fake
 LLM_RESUME_TAILOR=fake:fake
+LLM_COVER_LETTER=fake:fake
 EMBEDDING_DEFAULT=fake:fake
 ```

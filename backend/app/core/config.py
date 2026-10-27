@@ -31,9 +31,9 @@ class Settings(BaseSettings):
     # Per-task model routing: `provider:model`. Empty override uses the default.
     llm_default: str = "gemini:gemini-1.5-flash"
     llm_jd_extraction: str = ""
-    llm_resume_tailor: str = "gemini:gemini-1.5-pro"
+    llm_resume_tailor: str = "chatgpt:gpt-6.1-sol"
     llm_bullet_rewrite: str = ""
-    llm_cover_letter: str = ""
+    llm_cover_letter: str = "chatgpt:gpt-6.1-sol"
     embedding_default: str = "gemini:text-embedding-004"
     embedding_requirement: str = ""
     embedding_resume: str = ""
@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     # Per-provider credentials — only required when a spec actually selects that provider.
     google_ai_api_key: str = "placeholder-api-key-replace-with-real"
     openai_api_key: str = ""
+    # Local, single-user ChatGPT OAuth credentials; separate from API-key billing.
+    chatgpt_auth_file: str = "./data/chatgpt-auth.json"
     nvidia_api_key: str = ""
     nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
     ollama_base_url: str = "http://localhost:11434"
