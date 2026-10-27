@@ -10,9 +10,15 @@
       <h1>Apply assistant</h1>
       <p class="step-label" id="stepLabel">Step 1 of 5 — Paste JD</p>
     </header>
+    <section class="agent-overview">
+      <p id="agentSummary">Loading prepared packets…</p>
+      <button id="openAgent">Review application queue</button>
+      <button id="runApproved">Run next approved application</button>
+    </section>
     <div id="error" class="error" hidden></div>
 
     <section id="step-1" class="step">
+      <button id="captureJob" class="ghost">Capture this job page</button>
       <label for="jd">Job description</label>
       <textarea id="jd" rows="14" placeholder="Paste the job description here. This is the first step."></textarea>
       <button id="ingestBtn">Score against my resumes</button>
@@ -61,6 +67,7 @@
       <label>Application link <input id="applyLink" /></label>
       <button id="autoApplyBtn">Save to resume library</button>
       <div id="exportPanel" class="export" hidden></div>
+      <button id="queueRun">Review this packet for autonomous application</button>
       <button id="autofillBtn">Autofill this page</button>
       <button id="trackBtn">Mark applied</button>
       <div id="outcomePanel" hidden>

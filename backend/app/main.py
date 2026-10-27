@@ -1,3 +1,6 @@
+from contextlib import asynccontextmanager
+import threading
+
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -13,6 +16,8 @@ from app.modules.ai.router import router as models_router
 from app.modules.applications.router import router as applications_router
 from app.modules.auth.router import router as auth_router
 from app.modules.jobs.router import router as jobs_router
+from app.modules.agent.router import router as agent_router
+from app.core.config import get_settings
 from app.modules.matching.router import router as matching_router
 from app.modules.profile.router import router as profile_router
 from app.modules.resumes.router import router as resumes_router
@@ -40,6 +45,7 @@ def _patch_sqlite_columns() -> None:
     if not url.startswith("sqlite"):
         return
     additions = {
+        "agent_plans": {"run_once": "BOOLEAN NOT NULL DEFAULT 0"},
         "profiles": PROFILE_SQLITE_COLUMNS,
         "tailor_runs": TAILOR_RUN_SQLITE_COLUMNS,
         "applications": APPLICATION_SQLITE_COLUMNS,
@@ -47,23 +53,47 @@ def _patch_sqlite_columns() -> None:
     with db_session.engine.begin() as conn:
         for table, columns in additions.items():
             exists = conn.execute(
-                text("SELECT name FROM sqlite_master WHERE type='table' AND name=:table"),
+                text(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name=:table"
+                ),
                 {"table": table},
             )
             if exists.fetchone() is None:
                 continue
-            present = {row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))}
+            present = {
+                row[1] for row in conn.execute(text(f"PRAGMA table_info({table})"))
+            }
             for name, sql_type in columns.items():
                 if name not in present:
-                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}"))
+                    conn.execute(
+                        text(f"ALTER TABLE {table} ADD COLUMN {name} {sql_type}")
+                    )
+
+
+@asynccontextmanager
+async def lifespan(app):
+    stop = threading.Event()
+    worker = None
+    if get_settings().agent_worker_enabled:
+        from app.modules.agent.worker import loop
+
+        worker = threading.Thread(
+            target=loop, args=(stop,), daemon=True, name="application-agent"
+        )
+        worker.start()
+    yield
+    stop.set()
+    if worker:
+        worker.join(timeout=2)
 
 
 def create_app() -> FastAPI:
     setup_logging()
-    app = FastAPI(title="AI Job Application Assistant")
+    app = FastAPI(title="AI Job Application Assistant", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=["http://localhost:8000", "http://127.0.0.1:8000"],
+        allow_origin_regex=r"chrome-extension://[a-p]{32}",
         allow_credentials=False,
         allow_methods=["*"],
         allow_headers=["*"],
@@ -76,6 +106,7 @@ def create_app() -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    app.include_router(agent_router)
     app.include_router(auth_router)
     app.include_router(models_router)
     app.include_router(resumes_router)

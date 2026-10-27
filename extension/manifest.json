@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "AI Job Application Assistant",
-  "version": "0.1.0",
-  "description": "Paste a job description, score base resumes, tailor, autofill, and log the outcome.",
+  "version": "0.2.0",
+  "description": "Prepare matched application packets, review documents, approve, and oversee ATS autofill.",
   "action": {
     "default_title": "Job Application Assistant",
     "default_popup": "src/popup/popup.html"
@@ -11,6 +11,16 @@
     "service_worker": "src/background.js"
   },
   "options_page": "src/options/options.html",
-  "permissions": ["storage", "activeTab", "scripting"],
-  "host_permissions": ["http://localhost:8000/*", "http://127.0.0.1:8000/*"]
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "alarms",
+    "tabs"
+  ],
+  "host_permissions": [
+    "http://localhost:8000/*",
+    "http://127.0.0.1:8000/*",
+    "https://*/*"
+  ]
 }

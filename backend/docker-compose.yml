@@ -1,9 +1,15 @@
-version: "3.9"
-
 services:
   api:
     build: .
+    restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     env_file:
       - .env
+    environment:
+      DATABASE_URL: sqlite:///./data/app.db
+      LOCAL_STORAGE_PATH: ./data/resumes
+      OUTPUT_DIR: ./data/output
+      RESUME_LIBRARY_ROOT: ./data/library
+    volumes:
+      - ./data:/app/data

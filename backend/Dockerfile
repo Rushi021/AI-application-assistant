@@ -1,5 +1,11 @@
 FROM python:3.11-slim
 
+# Document rendering dependencies. This image is larger so DOCX and LaTeX
+# packets can produce attachable PDFs without host desktop applications.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libreoffice-writer fonts-dejavu texlive-latex-base texlive-latex-extra \
+    texlive-fonts-recommended && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 COPY requirements.txt .

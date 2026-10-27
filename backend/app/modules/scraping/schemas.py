@@ -60,5 +60,5 @@ class ScrapeSearchResponse(BaseModel):
     provider: str
     results: list[ScrapedJobRead]
     note: str = (
-        "Placeholder scraper. Swap NoopJobBoardScraper for a real JobBoardScraper adapter."
+        "Public job feeds; configure an Agent plan for scheduled ATS discovery and preparation."
     )

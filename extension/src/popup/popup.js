@@ -361,17 +361,10 @@ document.getElementById("autoApplyBtn").addEventListener("click", async () => {
 });
 
 document.getElementById("autofillBtn").addEventListener("click", async () => {
-  showError(null);
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) throw new Error("No active tab");
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ["src/content/autofill.js"],
-    });
-  } catch (err) {
-    showError(err);
-  }
+    const result = await chrome.runtime.sendMessage({type:"FILL_CURRENT"});
+    if (result?.error) throw new Error(result.error);
+  } catch (err) { showError(err); }
 });
 
 function jobDetailsPayload() {
@@ -440,3 +433,35 @@ async function recordOutcome(succeeded) {
 
 document.getElementById("okBtn").addEventListener("click", () => recordOutcome(true));
 document.getElementById("failBtn").addEventListener("click", () => recordOutcome(false));
+
+async function refreshAgentQueue() {
+  try {
+    await api("/agent/wake", {method:"POST"});
+    const items = await api("/agent/queue");
+    document.getElementById("agentSummary").textContent = `${items.filter(i=>i.state==="ready").length} packets ready for review · ${items.filter(i=>i.state==="approved").length} approved`;
+  } catch (err) { document.getElementById("agentSummary").textContent = err.message; }
+}
+document.getElementById("openAgent").addEventListener("click", async () => {
+  const {apiBase} = await getSettings(); chrome.tabs.create({url:`${apiBase}/#/agent`});
+});
+document.getElementById("runApproved").addEventListener("click", async () => {
+  const result = await chrome.runtime.sendMessage({type:"DRAIN_APPROVED"});
+  if (result?.error) showError(new Error(result.error));
+  refreshAgentQueue();
+});
+document.getElementById("captureJob").addEventListener("click", async () => {
+  try {
+    const [tab] = await chrome.tabs.query({active:true,currentWindow:true});
+    const result = await chrome.scripting.executeScript({target:{tabId:tab.id},files:["src/content/capture.js"]});
+    document.getElementById("jd").value = result[0].result.raw_text;
+  } catch (err) { showError(err); }
+});
+refreshAgentQueue();
+
+document.getElementById("queueRun").addEventListener("click",async()=>{
+  try {
+    await saveJobDetails();
+    await api(`/agent/from-run/${state.tailorRunId}`,{method:"POST"});
+    const {apiBase}=await getSettings();chrome.tabs.create({url:`${apiBase}/#/agent`});
+  } catch(err){showError(err);}
+});

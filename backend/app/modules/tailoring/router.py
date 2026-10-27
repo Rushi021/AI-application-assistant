@@ -2,7 +2,9 @@ from datetime import datetime
 import json
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, UploadFile, File
+from pathlib import Path
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.common.adapters.sqlalchemy_repos import (
@@ -13,17 +15,33 @@ from app.common.adapters.sqlalchemy_repos import (
 )
 from app.common.errors import bad_request, not_found
 from app.common.ports import ResumeStorage
-from app.core.deps import get_current_user, get_db, get_model_gateway, get_resume_storage
+from app.core.deps import (
+    get_current_user,
+    get_db,
+    get_model_gateway,
+    get_resume_storage,
+)
 from app.modules.ai.gateway import ModelGateway
 from app.modules.ai.orchestrator import run_line_tailor_and_cover_letter
-from app.modules.ai.prompts.pipeline import build_bullet_rewrite_prompt, build_section_rewrite_prompt
+from app.modules.ai.prompts.pipeline import (
+    build_bullet_rewrite_prompt,
+    build_section_rewrite_prompt,
+)
 from app.modules.applications.service import upsert_application
 from app.modules.documents.library import export_stem, export_to_library
-from app.modules.documents.renderer import render_docx_from_sections, render_from_sections
+from app.modules.documents.renderer import (
+    render_docx_from_sections,
+    render_from_sections,
+)
 from app.modules.resumes.docx_parser import parse_docx
 from app.modules.resumes.latex_parser import escape_latex_text
 from app.modules.tailoring.models import TailorRun
-from app.modules.tailoring.schemas import RewriteRequest, SectionPatch, TailorCreate, TailorRunRead
+from app.modules.tailoring.schemas import (
+    RewriteRequest,
+    SectionPatch,
+    TailorCreate,
+    TailorRunRead,
+)
 
 router = APIRouter(prefix="/tailoring", tags=["tailoring"])
 
@@ -112,14 +130,20 @@ def _read_original(resume, storage: ResumeStorage) -> bytes:
         return handle.read()
 
 
-def _sections_snapshot(resume, db: Session, storage: ResumeStorage) -> list[dict[str, Any]]:
+def _sections_snapshot(
+    resume, db: Session, storage: ResumeStorage
+) -> list[dict[str, Any]]:
     """Reparse the upload for formats that write edits back into the original file."""
     if resume.source_format == "docx":
         return _snapshot_from_parse(parse_docx(_read_original(resume, storage)))
     from app.modules.resumes.latex_parser import parse_latex
 
     if resume.source_format == "tex":
-        return _snapshot_from_parse(parse_latex(_read_original(resume, storage).decode("utf-8", errors="replace")))
+        return _snapshot_from_parse(
+            parse_latex(
+                _read_original(resume, storage).decode("utf-8", errors="replace")
+            )
+        )
     return _snapshot_from_db(resume.id, db)
 
 
@@ -133,7 +157,13 @@ def _editable_items(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 continue
             text = (bullet.get("text") or "").strip()
             if text:
-                items.append({"id": bullet["id"], "section": section.get("name") or "Resume", "text": text})
+                items.append(
+                    {
+                        "id": bullet["id"],
+                        "section": section.get("name") or "Resume",
+                        "text": text,
+                    }
+                )
     return items
 
 
@@ -257,7 +287,9 @@ def patch_section(
     if target is None:
         raise not_found("Section not found")
     if not target.get("editable", True):
-        raise bad_request(f"Section '{target.get('name')}' is frozen ({target.get('frozen_reason')})")
+        raise bad_request(
+            f"Section '{target.get('name')}' is frozen ({target.get('frozen_reason')})"
+        )
     data = payload.model_dump(exclude_unset=True)
     # A section's name, header, and locators define where its text sits in the
     # source document; only the text itself may be edited.
@@ -267,6 +299,12 @@ def patch_section(
     if data.get("bullets") is not None:
         _patch_bullets(target, data["bullets"])
     run.sections_json = json.dumps(sections)
+    run.status = "ready"
+    run.final_docx_key = None
+    run.final_pdf_key = None
+    run.final_tex_key = None
+    run.cover_document_key = None
+    run.cover_pdf_key = None
     run.updated_at = datetime.utcnow()
     return TailorRunRead.model_validate(repo.update(run))
 
@@ -282,7 +320,9 @@ def _patch_bullets(section: dict[str, Any], incoming: list[dict[str, Any]]) -> N
             _set_bullet_text(existing, text)
 
 
-@router.post("/runs/{run_id}/sections/{section_id}/rewrite", response_model=TailorRunRead)
+@router.post(
+    "/runs/{run_id}/sections/{section_id}/rewrite", response_model=TailorRunRead
+)
 def rewrite_section(
     run_id: int,
     section_id: int,
@@ -300,7 +340,9 @@ def rewrite_section(
     if target is None:
         raise not_found("Section not found")
     if not target.get("editable", True):
-        raise bad_request(f"Section '{target.get('name')}' is frozen ({target.get('frozen_reason')})")
+        raise bad_request(
+            f"Section '{target.get('name')}' is frozen ({target.get('frozen_reason')})"
+        )
 
     bullets = target.get("bullets") or []
     if payload.bullet_index is not None:
@@ -312,7 +354,10 @@ def rewrite_section(
         rewritten = gateway.generate(
             "bullet_rewrite",
             build_bullet_rewrite_prompt(
-                job.raw_text, target.get("name") or "", bullet.get("text") or "", payload.instructions
+                job.raw_text,
+                target.get("name") or "",
+                bullet.get("text") or "",
+                payload.instructions,
             ),
         ).text.strip()
         if rewritten:
@@ -326,7 +371,10 @@ def rewrite_section(
             rewritten = gateway.generate(
                 "bullet_rewrite",
                 build_bullet_rewrite_prompt(
-                    job.raw_text, target.get("name") or "", bullet.get("text") or "", payload.instructions
+                    job.raw_text,
+                    target.get("name") or "",
+                    bullet.get("text") or "",
+                    payload.instructions,
                 ),
             ).text.strip()
             if rewritten:
@@ -335,15 +383,28 @@ def rewrite_section(
         rewritten = gateway.generate(
             "bullet_rewrite",
             build_section_rewrite_prompt(
-                job.raw_text, target.get("name") or "", target.get("body_text") or "", payload.instructions
+                job.raw_text,
+                target.get("name") or "",
+                target.get("body_text") or "",
+                payload.instructions,
             ),
         ).text.strip()
         if rewritten:
             target["body_text"] = rewritten
             target["latex_source"] = escape_latex_text(rewritten)
 
-    target["body_text"] = "\n".join(b.get("text") or "" for b in bullets) if bullets else target.get("body_text", "")
+    target["body_text"] = (
+        "\n".join(b.get("text") or "" for b in bullets)
+        if bullets
+        else target.get("body_text", "")
+    )
     run.sections_json = json.dumps(sections)
+    run.status = "ready"
+    run.final_docx_key = None
+    run.final_pdf_key = None
+    run.final_tex_key = None
+    run.cover_document_key = None
+    run.cover_pdf_key = None
     run.updated_at = datetime.utcnow()
     return TailorRunRead.model_validate(repo.update(run))
 
@@ -361,6 +422,10 @@ def finalize_run(
     if not resume:
         raise not_found("Resume not found")
 
+    if resume.source_format not in {"docx", "tex"}:
+        raise bad_request(
+            "Layout-preserving tailoring needs the original DOCX or LaTeX source"
+        )
     if resume.source_format == "docx":
         rendered = render_docx_from_sections(
             _read_original(resume, storage), sections, f"tailor_{run.id}"
@@ -370,12 +435,64 @@ def finalize_run(
         run.compiler_warning = rendered.warning
         run.final_latex = None
     else:
-        result = render_from_sections(resume.template_preamble or "", sections, f"tailor_{run.id}")
+        from app.modules.documents.renderer import LatexPdfRenderer
+
+        latex = _read_original(resume, storage).decode("utf-8")
+        for section in sections:
+            for bullet in section.get("bullets", []):
+                old, new = bullet.get("latex_original"), bullet.get("latex_source")
+                if bullet.get("editable", True) and old and new and old != new:
+                    if latex.count(old) != 1:
+                        raise bad_request(
+                            "Ambiguous LaTeX line locator; review the source before finalizing"
+                        )
+                    latex = latex.replace(old, new, 1)
+        result = LatexPdfRenderer().render(latex, f"tailor_{run.id}")
         with open(result.tex_path, encoding="utf-8") as handle:
             run.final_latex = handle.read()
         run.final_tex_key = result.tex_path
         run.final_pdf_key = result.pdf_path
         run.compiler_warning = result.warning
+    if run.cover_letter:
+        from app.modules.documents.cover import render_cover_docx, render_cover_tex
+
+        if resume.source_format == "docx":
+            template = (
+                Path(run.cover_template_key).read_bytes()
+                if run.cover_template_key
+                else None
+            )
+            run.cover_document_key = render_cover_docx(
+                _read_original(resume, storage),
+                run.cover_letter,
+                str(Path(run.final_docx_key).with_name(f"cover_{run.id}.docx")),
+                template=template,
+            )
+            from app.modules.documents.pdf import docx_to_pdf
+            from app.core.config import get_settings
+
+            run.cover_pdf_key, _ = docx_to_pdf(
+                run.cover_document_key,
+                str(Path(run.cover_document_key).with_suffix(".pdf")),
+                converter=get_settings().docx_pdf_converter,
+            )
+        else:
+            from app.modules.documents.renderer import LatexPdfRenderer
+
+            cover_tex = str(Path(run.final_tex_key).with_name(f"cover_{run.id}.tex"))
+            render_cover_tex(
+                _read_original(resume, storage).decode("utf-8"),
+                run.cover_letter,
+                cover_tex,
+            )
+            letter = LatexPdfRenderer().render(
+                Path(cover_tex).read_text(), f"cover_{run.id}"
+            )
+            run.cover_document_key = letter.pdf_path
+            if not letter.pdf_path:
+                run.compiler_warning = (
+                    run.compiler_warning or ""
+                ) + " | Cover letter PDF requires a LaTeX compiler."
     run.status = "finalized"
     run.updated_at = datetime.utcnow()
     return TailorRunRead.model_validate(repo.update(run))
@@ -433,3 +550,60 @@ def auto_apply_run(
         document_path=exported.docx_path or exported.tex_path,
     )
     return TailorRunRead.model_validate(saved)
+
+
+class CoverPatch(BaseModel):
+    text: str = Field(min_length=1, max_length=12000)
+
+
+@router.patch("/runs/{run_id}/cover-letter", response_model=TailorRunRead)
+def edit_cover(
+    run_id: int,
+    payload: CoverPatch,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    run, _ = _load(run_id, current_user, db)
+    run.cover_letter = payload.text
+    run.cover_document_key = run.cover_pdf_key = None
+    run.status = "ready"
+    run.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(run)
+    return TailorRunRead.model_validate(run)
+
+
+@router.post("/runs/{run_id}/cover-template", response_model=TailorRunRead)
+def cover_template(
+    run_id: int,
+    file: UploadFile = File(...),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    from app.core.config import get_settings
+    from app.modules.documents.cover import render_cover_docx
+
+    run, _ = _load(run_id, current_user, db)
+    data = file.file.read(get_settings().max_upload_size_mb * 1024 * 1024 + 1)
+    if len(data) > get_settings().max_upload_size_mb * 1024 * 1024 or not (
+        file.filename or ""
+    ).lower().endswith(".docx"):
+        raise bad_request("Upload a DOCX template within the configured size limit")
+    path = Path(get_settings().output_dir) / f"letter_template_{run.id}.docx"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        render_cover_docx(
+            data, "Cover preview", str(path.with_suffix(".preview.docx")), template=data
+        )
+    except Exception:
+        raise bad_request(
+            "Template must be a readable DOCX containing {{cover_letter}} in body text"
+        )
+    path.write_bytes(data)
+    run.cover_template_key = str(path)
+    run.cover_document_key = run.cover_pdf_key = None
+    run.status = "ready"
+    run.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(run)
+    return TailorRunRead.model_validate(run)
