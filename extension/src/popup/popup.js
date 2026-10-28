@@ -16,7 +16,7 @@ const state = {
 };
 
 const stepTitles = {
-  1: ["Start with the opportunity", "Paste a job description to find your strongest resume."],
+  1: ["Paste the job description", "Find your strongest resume for this role, then make it yours."],
   2: ["Choose your starting point", "Compare your matches and select the resume you want to use."],
   3: ["Make it yours", "Give your experience a little focus for this opportunity."],
   4: ["Give it a final look", "Your experience, tailored. You’re in control of every edit."],

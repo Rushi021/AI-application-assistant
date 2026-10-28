@@ -24,8 +24,10 @@ npm test
 
 Set `CHROME_EXECUTABLE` to an existing Chromium-family executable to avoid downloading a browser. Tests intercept all fixture ATS URLs and never contact employers.
 
-The popup uses a light, mint-accented interface with five progress steps and a
-persistent action bar. Resume match cards show overall alignment and requirement
+The popup uses a 760 × 600 light, mint-accented interface with five progress
+steps and a persistent action bar. Its explicit root size avoids Chrome shrinking
+the content during popup autosizing. The JD paste field appears before the optional
+application-queue controls and is fully visible without scrolling. Resume match cards show overall alignment and requirement
 coverage. In the review step, text fields expand to fit each line; protected
 sections are collapsed and labeled. Edits save on blur, and refinement/finalization
 wait for pending edits. Busy actions show progress and disable duplicate clicks.

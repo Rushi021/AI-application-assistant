@@ -212,14 +212,14 @@ Cheap JSON extraction and high-quality tailoring want different models. Each tas
 | `requirement_embedding` | `EMBEDDING_REQUIREMENT` | `EMBEDDING_DEFAULT` |
 | `resume_embedding` | `EMBEDDING_RESUME` | `EMBEDDING_DEFAULT` |
 
-Example: point extraction at a local model while tailoring uses the ChatGPT plan:
+Default routing: all LLM tasks use the ChatGPT plan; semantic matching runs locally:
 
 ```
-LLM_DEFAULT=gemini:gemini-1.5-flash
-LLM_JD_EXTRACTION=ollama:llama3.1
+LLM_DEFAULT=chatgpt:gpt-6.1-sol
+LLM_JD_EXTRACTION=
 LLM_RESUME_TAILOR=chatgpt:gpt-6.1-sol
 LLM_COVER_LETTER=chatgpt:gpt-6.1-sol
-EMBEDDING_DEFAULT=gemini:text-embedding-004
+EMBEDDING_DEFAULT=sentence_transformers:sentence-transformers/all-MiniLM-L6-v2
 ```
 
 `GET /models` reports registered providers and the resolved routing so you can confirm a swap.
@@ -239,8 +239,9 @@ Defined in [`backend/app/modules/ai/ports.py`](backend/app/modules/ai/ports.py):
 - [`structured.py`](backend/app/modules/ai/structured.py) uses native JSON mode when advertised, otherwise fence-strips and does one self-repair retry against the Pydantic schema
 - [`middleware.py`](backend/app/modules/ai/middleware.py) wraps every adapter with retry + usage logging (`model_calls` table)
 
-SDK imports are lazy inside each adapter. OpenAI is installed for default tailoring;
-missing optional extras (`sentence-transformers`) fail only when selected.
+SDK imports are lazy inside each adapter. OpenAI and sentence-transformers are
+installed for the default ChatGPT and local-embedding routes. Gemini routes in
+legacy configuration migrate to these defaults, including per-task overrides.
 `openai` and `chatgpt` use streamed Responses requests with `store=false` and require
 `response.completed` before accepting output. `openai` uses API-key billing;
 `chatgpt` uses the separately authorized ChatGPT plan, with no billing fallback.
@@ -253,8 +254,8 @@ thread and process locks serialize rotating-token refresh during parallel calls.
 
 | Kind | Names | Notes |
 |------|-------|-------|
-| LLM | `gemini`, `openai`, `chatgpt`, `ollama`, `fake` | ChatGPT plan is the default for tailoring and cover letters; other LLM tasks default to Gemini. Fake is deterministic for tests. |
-| Embedding | `gemini`, `openai`, `sentence_transformers` (alias `sbert`), `fake` | Gemini `text-embedding-004` is the default. Fake is bag-of-words hashing. |
+| LLM | `gemini`, `openai`, `chatgpt`, `ollama`, `fake` | All LLM tasks default to ChatGPT Responses. Fake is deterministic for tests. |
+| Embedding | `gemini`, `openai`, `sentence_transformers` (alias `sbert`), `fake` | Local `sentence-transformers/all-MiniLM-L6-v2` is the default. Fake is bag-of-words hashing. |
 
 ### Add a new model provider (playbook)
 
@@ -456,7 +457,7 @@ These are wired end-to-end so only the adapter/body needs filling in later:
 | PDF compile | Writes `.tex`; PDF if `tectonic`/`pdflatex` exists | Install a compiler; `LATEX_COMPILER` |
 | DOCX → PDF | Writes `.docx`; PDF needs LibreOffice | `brew install --cask libreoffice`, or `DOCX_PDF_CONVERTER=word` |
 | PDF/DOC upload | Stored, not parsed (`.docx` and `.tex` are) | Add a parser producing `ParsedResume` |
-| OpenAI / ChatGPT / SBERT / Ollama | Adapters registered | Set the spec + API credentials or ChatGPT login / optional SBERT package |
+| OpenAI / ChatGPT / SBERT / Ollama | Adapters registered | Set the spec + API credentials or ChatGPT login; local embeddings are installed |
 | Alembic versions | `env.py` imports models, no revision files | `alembic revision --autogenerate` when leaving `create_all` |
 | Auth | Test username/password/token | Replace `core/security.py` |
 
@@ -514,7 +515,7 @@ cd backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # set GOOGLE_AI_API_KEY for extraction and embeddings
+cp .env.example .env   # authorize ChatGPT; embeddings run locally
 python3 -m app.modules.ai.chatgpt_auth login
 python3 -m app.modules.ai.chatgpt_auth models
 uvicorn app.main:app --reload

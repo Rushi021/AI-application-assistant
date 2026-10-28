@@ -12,7 +12,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# Set GOOGLE_AI_API_KEY for extraction and embeddings.
+# Authorize your ChatGPT plan; semantic embeddings run locally.
 python3 -m app.modules.ai.chatgpt_auth login
 python3 -m app.modules.ai.chatgpt_auth models
 uvicorn app.main:app --host 127.0.0.1 --port 8000
@@ -37,14 +37,15 @@ These are examples of employer boards, not a complete internet index. Supply emp
 
 Add `google_jobs` and set `SERPAPI_API_KEY` on the backend for Google Jobs results, including available popular-portal listings. Availability and quota depend on that provider. The application prefers employer/ATS links when returned. No LinkedIn/Indeed password or session is collected. Remotive links go to its job pages, requiring employer-link navigation before applying.
 
-## ChatGPT Pro for tailoring and cover letters
+## ChatGPT Pro for all text generation
 
-The default `LLM_RESUME_TAILOR` and `LLM_COVER_LETTER` routes are
-`chatgpt:gpt-6.1-sol`. Both call OpenAI's Responses API using the ChatGPT plan
+The default `LLM_DEFAULT`, `LLM_RESUME_TAILOR`, and `LLM_COVER_LETTER` routes
+are `chatgpt:gpt-6.1-sol`. JD extraction, resume tailoring, individual line rewrites,
+and cover letters all call OpenAI's Responses API using the ChatGPT plan
 you authorize in the `login` command above. Select your Pro account and allow
 plan usage in the browser. The `models` command lists IDs available to that
-account; if necessary, set both routes to `chatgpt:<available-model-id>` in
-`backend/.env`. Existing `.env` routing overrides must be updated too.
+account; if necessary, set `LLM_DEFAULT` and any task overrides to
+`chatgpt:<available-model-id>` in `backend/.env`.
 
 This is the [official Sign in with ChatGPT plan-usage flow](https://developers.openai.com/siwc/token-sharing-open-source)
 for a locally hosted app. Account eligibility, app permissions, and usage limits
@@ -56,8 +57,12 @@ Run commands and the backend from `backend/`. OAuth credentials are saved with
 owner-only permissions in ignored `backend/data/chatgpt-auth.json` (override with
 `CHATGPT_AUTH_FILE`) and refreshed automatically. Keep this local backend private:
 it uses one connected ChatGPT account, not separate credentials per app user.
-Manage/revoke access in ChatGPT settings. Gemini still handles JD extraction and
-embeddings; the individual bullet rewrite task still follows `LLM_DEFAULT`.
+Manage/revoke access in ChatGPT settings. Semantic matching uses local
+`sentence-transformers/all-MiniLM-L6-v2` embeddings, not an external inference
+API. The model weights download on first use and are cached locally. Install
+`backend/requirements.txt` in the environment that runs your backend. Legacy
+`gemini:` routes in existing environment files migrate to ChatGPT for LLM tasks
+and local embeddings for matching; no workflow task calls Gemini.
 
 ## Documents and approval
 

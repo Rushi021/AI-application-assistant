@@ -12,7 +12,7 @@ import pytest
 
 from app.core.config import Settings
 from app.modules.ai import chatgpt_auth as auth
-from app.modules.ai.gateway import resolve_llm_spec
+from app.modules.ai.gateway import LLM_TASKS, ModelGateway, resolve_llm_spec
 from app.modules.ai.providers.llm.openai import ChatGPTLLMProvider, OpenAILLMProvider
 
 
@@ -155,11 +155,24 @@ def test_denied_plan_scope():
 
 
 def test_default_writing_routes(monkeypatch):
-    for name in ("LLM_RESUME_TAILOR", "LLM_COVER_LETTER"):
+    for name in ("LLM_DEFAULT", "LLM_JD_EXTRACTION", "LLM_RESUME_TAILOR", "LLM_BULLET_REWRITE", "LLM_COVER_LETTER", "EMBEDDING_DEFAULT", "EMBEDDING_REQUIREMENT", "EMBEDDING_RESUME"):
         monkeypatch.delenv(name, raising=False)
     settings = Settings(_env_file=None)
-    for task in ("resume_tailor", "cover_letter"):
+    for task in LLM_TASKS:
         assert resolve_llm_spec(task, settings).provider == "chatgpt"
+    assert all(route.startswith("sentence_transformers:") for route in ModelGateway(settings).routing()["embeddings"].values())
+
+
+def test_old_gemini_configuration_migrates_without_vendor_calls():
+    settings = Settings(
+        _env_file=None, llm_default="gemini:old", llm_jd_extraction="gemini:old",
+        llm_resume_tailor="gemini:old", llm_bullet_rewrite="gemini:old",
+        llm_cover_letter="gemini:old", embedding_default="gemini:old",
+        embedding_requirement="gemini:old", embedding_resume="gemini:old",
+    )
+    routing = ModelGateway(settings).routing()
+    assert all(route.startswith("chatgpt:") for route in routing["llm"].values())
+    assert all(route.startswith("sentence_transformers:") for route in routing["embeddings"].values())
 
 
 @pytest.mark.parametrize("invalid", [None, "nonce", "aud", "exp", "signature"])

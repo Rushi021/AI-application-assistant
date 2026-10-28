@@ -17,7 +17,7 @@ flowchart LR
     Confirm --> Tracker[Application tracker]
 ```
 
-`backend/app/modules/agent/` owns plans, discovery adapters, queue transitions, approvals, browser leases, document transfer, and the worker. Existing matching and tailoring modules remain authoritative; callers still use `ModelGateway` task routing. An LLM never computes the score. The default Gemini integration uses REST with a timeout and request-scoped credentials; the old globally configured SDK has been removed. Defaults were checked against [Google's model lifecycle](https://ai.google.dev/gemini-api/docs/deprecations) and [embedding documentation](https://ai.google.dev/gemini-api/docs/embeddings) on October 27, 2026. Task/provider settings remain configurable.
+`backend/app/modules/agent/` owns plans, discovery adapters, queue transitions, approvals, browser leases, document transfer, and the worker. Existing matching and tailoring modules remain authoritative; callers still use `ModelGateway` task routing. An LLM never computes the score. All LLM tasks default to the authenticated ChatGPT Responses API. Semantic matching uses local `sentence-transformers/all-MiniLM-L6-v2` embeddings. Legacy Gemini configuration migrates to these defaults; no workflow request is sent to Gemini. Task/provider settings remain configurable for offline tests and explicit alternatives.
 
 ## Discovery and persistence
 

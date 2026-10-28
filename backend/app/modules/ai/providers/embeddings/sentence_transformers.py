@@ -1,13 +1,23 @@
-"""Local sentence-transformers adapter. Optional extra (torch); imported lazily."""
+"""Local semantic embeddings. Models are shared across request/task adapters."""
 
 from __future__ import annotations
 
 from typing import Sequence
+from functools import lru_cache
+from threading import Lock
 
 from app.modules.ai.ports import EmbeddingProvider, EmbeddingResult, ModelCapabilities
 from app.modules.ai.registry import register_embedding
 
 _DEFAULT_DIM = 384
+_MODEL_LOCK = Lock()
+
+
+@lru_cache(maxsize=2)
+def _load_model(name: str):
+    from sentence_transformers import SentenceTransformer
+
+    return SentenceTransformer(name, device="cpu")
 
 
 @register_embedding("sentence_transformers")
@@ -24,18 +34,18 @@ class SentenceTransformersEmbeddingProvider(EmbeddingProvider):
         return self._model
 
     def capabilities(self) -> ModelCapabilities:
-        return ModelCapabilities(dimensions=_DEFAULT_DIM, max_input_tokens=512)
+        return ModelCapabilities(dimensions=_DEFAULT_DIM, max_input_tokens=256)
 
     def _load(self):
         if self._loaded is None:
-            try:
-                from sentence_transformers import SentenceTransformer
-            except ImportError as exc:
-                raise RuntimeError(
-                    "sentence-transformers extra is not installed. "
-                    "pip install sentence-transformers"
-                ) from exc
-            self._loaded = SentenceTransformer(self._model)
+            with _MODEL_LOCK:
+                try:
+                    self._loaded = _load_model(self._model)
+                except ImportError as exc:
+                    raise RuntimeError(
+                        "Local embeddings require sentence-transformers. "
+                        "Install backend/requirements.txt."
+                    ) from exc
         return self._loaded
 
     def embed(self, texts: Sequence[str]) -> EmbeddingResult:

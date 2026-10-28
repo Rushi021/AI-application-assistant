@@ -11,12 +11,14 @@
 }
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
-body { width: 440px; max-width: 100vw; height: 600px; max-height: 100vh; margin: 0; display: flex; flex-direction: column; }
+/* Definite root dimensions let Chrome size its popup before content layout. */
+html { width: 760px; height: 600px; overflow: hidden; }
+body { width: 100%; height: 100%; margin: 0; display: flex; flex-direction: column; }
 button, input, textarea { font: inherit; }
 button { cursor: pointer; border: 0; transition: background .15s, border-color .15s; }
 button:disabled { cursor: wait; opacity: .65; }
 button:focus-visible, summary:focus-visible, textarea:focus-visible, input:focus-visible { outline: 3px solid #289b69; outline-offset: 3px; }
-.app-header { background: #fff; padding: 20px 22px 0; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+.app-header { background: #fff; padding: 14px 24px 0; border-bottom: 1px solid var(--border); flex-shrink: 0; }
 .brand-row, .brand, .panel-heading, .section-heading { display: flex; align-items: center; }
 .brand-row, .panel-heading, .section-heading { justify-content: space-between; gap: 12px; }
 .brand { gap: 11px; }
@@ -26,14 +28,14 @@ h1 { font-size: 18px; letter-spacing: -.5px; margin: 0; font-weight: 750; }
 .brand p { margin: 4px 0 0; color: var(--muted); font-size: 11px; }
 .icon-button { width: 32px; height: 32px; border-radius: 50%; background: #f4f7f5; color: #53665b; font-size: 19px; }
 .icon-button:hover { background: #e7f1eb; }
-.progress-steps { display: flex; list-style: none; padding: 0; margin: 20px 0 15px; gap: 8px; }
+.progress-steps { display: flex; list-style: none; padding: 0; margin: 12px 0; gap: 8px; }
 .progress-steps li { display: flex; align-items: center; gap: 5px; color: #6c7b72; flex: 1; font-size: 11px; white-space: nowrap; }
 .progress-steps li span { display: grid; place-items: center; width: 21px; height: 21px; border-radius: 50%; background: #f0f4f1; color: #69776e; font-size: 10px; }
 .progress-steps li[aria-current] { color: #184f35; font-weight: 700; }
 .progress-steps li[aria-current] span { background: var(--green); color: #103b27; }
 .progress-steps li.complete span { background: #e4f7ec; color: #28744e; }
-main { padding: 22px; overflow-y: auto; min-height: 0; flex: 1; scrollbar-width: thin; scrollbar-color: #c5d9cc transparent; }
-.page-heading { margin-bottom: 19px; }
+main { padding: 16px 24px; overflow-y: auto; min-height: 0; flex: 1; scrollbar-width: thin; scrollbar-color: #c5d9cc transparent; }
+.page-heading { margin-bottom: 14px; }
 .eyebrow { color: #43765b; letter-spacing: 1.4px; font-size: 9px; font-weight: 750; margin: 0 0 8px; }
 h2 { font-size: 23px; line-height: 1.2; letter-spacing: -.7px; margin: 0 0 8px; font-weight: 750; outline: none; }
 .page-heading > p:last-child { color: var(--muted); line-height: 1.5; margin: 0; font-size: 12px; }
@@ -52,7 +54,7 @@ textarea:focus, input:focus { border-color: #61bb88; background: #fff; }
 .tip > span { font-size: 20px; color: #4a9067; }
 .tip p { margin: 0; line-height: 1.8; }
 .tip strong { color: #3f5e4b; font-weight: 600; }
-.action-bar { display: flex; align-items: center; gap: 12px; padding: 14px 22px; background: #fff; border-top: 1px solid var(--border); flex-shrink: 0; }
+.action-bar { display: flex; align-items: center; gap: 12px; padding: 12px 24px; background: #fff; border-top: 1px solid var(--border); flex-shrink: 0; }
 .primary { background: var(--green); color: #123d29; min-height: 44px; border-radius: 10px; padding: 12px 16px; font-size: 13px; font-weight: 750; flex: 1; display: flex; align-items: center; justify-content: center; gap: 14px; box-shadow: 0 3px 8px #4fce8c22; }
 .primary:hover { background: #50db90; }
 .back-button { background: transparent; color: #61736a; padding: 10px 0; font-size: 12px; }
@@ -121,4 +123,11 @@ textarea:focus, input:focus { border-color: #61bb88; background: #fff; }
 #outcomePanel { margin-top: 12px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 
-.capture-button { margin: 0 0 16px; }
+.jd-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.jd-heading label { margin: 0; font-size: 13px; }
+.jd-heading .field-note { float: none; margin-left: 8px; }
+.capture-button { width: auto; margin: 0; padding: 7px 11px; font-size: 11px; }
+.jd-panel { padding: 14px; }
+#jd { height: 214px; min-height: 160px; font-size: 14px; }
+#step-1 > .tip { display: none; }
+.agent-overview { box-shadow: none; padding: 12px 14px; }

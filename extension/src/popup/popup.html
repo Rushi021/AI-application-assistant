@@ -17,13 +17,13 @@
       </ol></nav>
     </header>
     <main id="mainContent">
-      <div class="page-heading"><p class="eyebrow" id="stepLabel">STEP 1 OF 5</p><h2 id="stepTitle" tabindex="-1">Start with the opportunity</h2><p id="stepDescription">Paste a job description to find your strongest resume.</p></div>
+      <div class="page-heading"><p class="eyebrow" id="stepLabel">STEP 1 OF 5</p><h2 id="stepTitle" tabindex="-1">Paste the job description</h2><p id="stepDescription">Find your strongest resume for this role, then make it yours.</p></div>
       <div id="error" class="error" role="alert" hidden></div>
       <p id="activity" class="activity" role="status" hidden></p>
 
       <section id="step-1" class="step" aria-label="Job description">
+        <div class="panel jd-panel"><div class="jd-heading"><label for="jd">Job description <span class="field-note">Required</span></label><button id="captureJob" class="secondary capture-button" data-loading="Reading job page…">Capture this job page</button></div><textarea id="jd" rows="7" placeholder="Paste the role, responsibilities, and requirements here…"></textarea><p class="hint">We’ll compare the requirements with the resumes in your library.</p></div>
         <details class="panel disclosure agent-overview"><summary>Application queue</summary><p id="agentSummary" class="hint" role="status">Loading prepared packets…</p><button id="openAgent" class="secondary">Review application queue</button><button id="runApproved" class="secondary" data-loading="Starting application…">Run next approved application</button></details>
-        <div class="panel"><button id="captureJob" class="secondary capture-button" data-loading="Reading job page…">Capture this job page</button><label for="jd">Job description <span class="field-note">Required</span></label><textarea id="jd" rows="7" placeholder="Paste the role, responsibilities, and requirements here…"></textarea><p class="hint">We’ll compare the requirements with the resumes in your library.</p></div>
         <div class="tip"><span aria-hidden="true">✦</span><p><strong>Your experience, thoughtfully tailored.</strong><br />Review every change before you apply.</p></div>
       </section>
 

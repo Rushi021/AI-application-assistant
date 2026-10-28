@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "AI Job Application Assistant",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Prepare matched application packets, review documents, approve, and oversee ATS autofill.",
   "action": {
     "default_title": "Job Application Assistant",

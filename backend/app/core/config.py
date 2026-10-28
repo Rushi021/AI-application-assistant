@@ -1,6 +1,7 @@
 from functools import lru_cache
 from typing import List
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,12 +30,12 @@ class Settings(BaseSettings):
     test_token: str = "test-token"
 
     # Per-task model routing: `provider:model`. Empty override uses the default.
-    llm_default: str = "gemini:gemini-3.8-flash"
+    llm_default: str = "chatgpt:gpt-6.1-sol"
     llm_jd_extraction: str = ""
     llm_resume_tailor: str = "chatgpt:gpt-6.1-sol"
     llm_bullet_rewrite: str = ""
     llm_cover_letter: str = "chatgpt:gpt-6.1-sol"
-    embedding_default: str = "gemini:gemini-embedding-001"
+    embedding_default: str = "sentence_transformers:sentence-transformers/all-MiniLM-L6-v2"
     embedding_requirement: str = ""
     embedding_resume: str = ""
 
@@ -66,6 +67,20 @@ class Settings(BaseSettings):
     serpapi_api_key: str = ""
     discovery_max_pages: int = 3
     discovery_max_results: int = 250
+
+    @model_validator(mode="after")
+    def migrate_gemini_routes(self):
+        """Old .env files must not keep sending workflow data to Gemini."""
+        for field in (
+            "llm_default", "llm_jd_extraction", "llm_resume_tailor",
+            "llm_bullet_rewrite", "llm_cover_letter",
+        ):
+            if getattr(self, field).strip().lower().startswith("gemini:"):
+                setattr(self, field, type(self).model_fields["llm_default"].default)
+        for field in ("embedding_default", "embedding_requirement", "embedding_resume"):
+            if getattr(self, field).strip().lower().startswith("gemini:"):
+                setattr(self, field, type(self).model_fields["embedding_default"].default)
+        return self
 
     @property
     def allowed_extensions_list(self) -> List[str]:
