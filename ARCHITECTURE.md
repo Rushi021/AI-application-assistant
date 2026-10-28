@@ -6,15 +6,19 @@ The product follows the FigJam board *Job application — Automation*: ingest a 
 
 ---
 
+## Autonomous pipeline update October 2026
+
+The discovery/approval/execution implementation is described in [docs/AUTONOMOUS_AGENT.md](docs/AUTONOMOUS_AGENT.md). It supersedes the placeholder descriptions below: public ATS/feed connectors, scheduled preparation, a durable approval queue, cover-letter exports, and observable browser execution are now implemented. The legacy auto-apply route still means library filing/tracker logging; actual submissions use the new revision-bound Agent queue. Formatting preservation means original styles/structure/whitespace outside edited text, not a guarantee of pixel-identical wrapping for changed text.
+
 ## Standing rules
 
 1. **Nothing outside `backend/app/modules/ai/` imports a provider class or hardcodes a model name.** Callers ask `ModelGateway` for a *task*. Config decides which `provider:model` serves it.
 2. **The LLM never scores.** Tier 0 extracts a structured requirement list. Tiers 1 and 2 compute the score.
 3. **Tier 2 embeddings run only on tier-1 misses.** Exact keyword match is the first pass and makes no API calls.
 4. **Embedding vectors are namespaced by `provider:model:dimensions`.** That namespace is part of the cache key and is stored on every `MatchScore`. Changing embedding models must recompute, never mix vector spaces.
-5. **Manual JD paste is the first working ingestion path.** Web scraping and page capture exist as wired placeholders.
+5. **Manual JD paste remains available.** Scheduled discovery uses configured public sources; page capture can populate the manual wizard. See the Agent document for source coverage.
 6. **A base resume is edited in its own format, never converted.** `.tex` is parsed into preamble + sections + bullets and reassembled. `.docx` is edited **in place**: the upload is the template, and tailored text is written into the runs that are already there.
-7. **The layout of the uploaded document is a contract.** The title block, section headers, Education, and any line that pushes text to the right margin are frozen. The model is only ever shown the lines it may change, and the writer refuses a frozen locator even if a caller asks. See [Format preservation](#format-preservation).
+7. **The formatting of the uploaded document is a contract.** The title block, section headers, Education, and any line that pushes text to the right margin are frozen. The model is only ever shown the lines it may change, and the writer refuses a frozen locator even if a caller asks. See [Format preservation](#format-preservation).
 8. **The user selects the resume.** Scoring may recommend a family; `preferred_resume_id` on the profile is the default the user marked. Applications always store the resume the user chose.
 9. **Finalize writes to `OUTPUT_DIR`; auto-apply files to the library and logs the tracker.** `RESUME_LIBRARY_ROOT` holds one folder per resume family, and that is where a finished resume lands.
 10. **One application per job + resume.** `POST /applications` and auto-apply both go through `applications/service.upsert_application`, so logging the same pair twice updates that row instead of adding a duplicate.

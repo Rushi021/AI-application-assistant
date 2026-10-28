@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     local_storage_path: str = "./data/resumes"
     output_dir: str = "./data/output"
     # Where a finalized resume is filed for real use: one folder per resume family.
-    resume_library_root: str = "~/Desktop/Rushi/job-automation"
+    resume_library_root: str = "./data/library"
     max_upload_size_mb: int = 10
     allowed_extensions: str = "pdf,doc,docx,tex"
 
@@ -29,12 +29,12 @@ class Settings(BaseSettings):
     test_token: str = "test-token"
 
     # Per-task model routing: `provider:model`. Empty override uses the default.
-    llm_default: str = "gemini:gemini-1.5-flash"
+    llm_default: str = "gemini:gemini-3.8-flash"
     llm_jd_extraction: str = ""
     llm_resume_tailor: str = "chatgpt:gpt-6.1-sol"
     llm_bullet_rewrite: str = ""
     llm_cover_letter: str = "chatgpt:gpt-6.1-sol"
-    embedding_default: str = "gemini:text-embedding-004"
+    embedding_default: str = "gemini:gemini-embedding-001"
     embedding_requirement: str = ""
     embedding_resume: str = ""
 
@@ -61,7 +61,11 @@ class Settings(BaseSettings):
     latex_compiler: str = "tectonic"
     # auto/soffice use LibreOffice; word drives Word over AppleScript; off skips PDF.
     docx_pdf_converter: str = "auto"
-    scraper_provider: str = "noop"
+    scraper_provider: str = "public"
+    agent_worker_enabled: bool = True
+    serpapi_api_key: str = ""
+    discovery_max_pages: int = 3
+    discovery_max_results: int = 250
 
     @property
     def allowed_extensions_list(self) -> List[str]:

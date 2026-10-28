@@ -29,7 +29,7 @@ def build_tailor_items_prompt(
 Rules:
 - Rewrite only the numbered lines below. Return an entry for each line you changed and omit the ones you leave alone.
 - Return the id exactly as given. Never merge, split, reorder, or delete a line.
-- Keep each rewritten line within about 10 percent of the original's character count. The document's layout depends on lines not changing length.
+- Keep each rewritten line at or below the original's character count. The document's layout depends on lines not changing length.
 - Stay truthful: never invent an employer, job title, date, degree, or a skill the candidate has not shown.
 - Plain text only. No markdown, no bullet glyphs, no leading dashes, no quotes around the line.
 - Reproduce any tab characters in the original line exactly, in the same order.

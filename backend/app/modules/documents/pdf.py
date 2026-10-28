@@ -14,6 +14,8 @@ import os
 import shutil
 import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 _SOFFICE_NAMES = ("soffice", "libreoffice")
 _WORD_APP = "/Applications/Microsoft Word.app"
@@ -41,20 +43,41 @@ def _find_soffice() -> str | None:
     return bundled if os.path.exists(bundled) else None
 
 
-def _via_soffice(binary: str, docx_path: str, out_dir: str) -> tuple[str | None, str | None]:
+def _via_soffice(
+    binary: str, docx_path: str, out_dir: str
+) -> tuple[str | None, str | None]:
+    # Isolated profiles avoid attaching to a desktop instance or another worker.
+    # An empty conversion directory prevents stale PDFs / overwrite prompts.
     try:
-        subprocess.run(
-            [binary, "--headless", "--convert-to", "pdf", "--outdir", out_dir, docx_path],
-            check=True,
-            capture_output=True,
-            timeout=180,
-        )
-    except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired) as exc:
-        return None, f"LibreOffice PDF conversion failed: {exc}"
-    produced = os.path.join(out_dir, os.path.splitext(os.path.basename(docx_path))[0] + ".pdf")
-    if not os.path.exists(produced):
-        return None, "LibreOffice finished but produced no PDF."
-    return produced, None
+        with tempfile.TemporaryDirectory(prefix="assistant-docx-") as temp:
+            profile = Path(temp, "profile").as_uri()
+            subprocess.run(
+                [
+                    binary,
+                    f"-env:UserInstallation={profile}",
+                    "--headless",
+                    "--convert-to",
+                    "pdf",
+                    "--outdir",
+                    temp,
+                    docx_path,
+                ],
+                check=True,
+                capture_output=True,
+                timeout=180,
+            )
+            produced = Path(temp, Path(docx_path).stem + ".pdf")
+            if not produced.is_file():
+                return None, "LibreOffice finished but produced no PDF."
+            destination = str(Path(out_dir, produced.name))
+            shutil.copyfile(produced, destination)
+            return destination, None
+    except (
+        subprocess.CalledProcessError,
+        FileNotFoundError,
+        subprocess.TimeoutExpired,
+    ) as exc:
+        return None, f"LibreOffice PDF conversion failed: {type(exc).__name__}"
 
 
 def _via_word(docx_path: str, pdf_path: str) -> tuple[str | None, str | None]:
@@ -62,18 +85,28 @@ def _via_word(docx_path: str, pdf_path: str) -> tuple[str | None, str | None]:
         return None, None
     script = _WORD_SCRIPT.format(src=docx_path, dst=pdf_path)
     try:
-        subprocess.run(["osascript", "-e", script], check=True, capture_output=True, timeout=90)
+        subprocess.run(
+            ["osascript", "-e", script], check=True, capture_output=True, timeout=90
+        )
     except subprocess.TimeoutExpired:
-        return None, "Word did not respond within 90s (a dialog may be waiting). Wrote .docx only."
+        return (
+            None,
+            "Word did not respond within 90s (a dialog may be waiting). Wrote .docx only.",
+        )
     except (subprocess.CalledProcessError, FileNotFoundError) as exc:
         detail = getattr(exc, "stderr", b"") or b""
-        return None, f"Word PDF conversion failed: {detail.decode(errors='replace').strip() or exc}"
+        return (
+            None,
+            f"Word PDF conversion failed: {detail.decode(errors='replace').strip() or exc}",
+        )
     if not os.path.exists(pdf_path):
         return None, "Word finished but produced no PDF."
     return pdf_path, None
 
 
-def docx_to_pdf(docx_path: str, pdf_path: str, *, converter: str = "auto") -> tuple[str | None, str | None]:
+def docx_to_pdf(
+    docx_path: str, pdf_path: str, *, converter: str = "auto"
+) -> tuple[str | None, str | None]:
     """Return `(pdf_path, warning)`. Exactly one of the two is set."""
     if converter == "off":
         return None, None

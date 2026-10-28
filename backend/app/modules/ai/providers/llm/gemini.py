@@ -1,9 +1,11 @@
-"""Gemini LLM adapter. SDK is imported lazily so startup never requires a key."""
+"""Gemini REST adapter: per-request credentials, bounded network timeouts.
 
-from __future__ import annotations
+Avoids the retired globally configured SDK, including cross-thread configure races
+when resume tailoring and cover-letter generation run concurrently.
+"""
 
 from typing import Optional
-
+import httpx
 from app.core.config import get_settings
 from app.modules.ai.ports import LLMProvider, LLMResponse, ModelCapabilities
 from app.modules.ai.registry import register_llm
@@ -13,52 +15,56 @@ from app.modules.ai.registry import register_llm
 class GeminiLLMProvider(LLMProvider):
     provider_name = "gemini"
 
-    def __init__(self, model: str) -> None:
-        self._model = model
+    def __init__(self, model: str):
+        self._model = model.removeprefix("models/")
         self._api_key = get_settings().google_ai_api_key
 
     @property
-    def model_name(self) -> str:
+    def model_name(self):
         return self._model
 
-    def capabilities(self) -> ModelCapabilities:
+    def capabilities(self):
         return ModelCapabilities(
             supports_json_mode=True,
             supports_system_prompt=True,
-            max_input_tokens=1_000_000 if "pro" in self._model or "1.5" in self._model else 32_000,
+            max_input_tokens=32_000,
         )
 
     def generate(
-        self,
-        prompt: str,
-        *,
-        system: Optional[str] = None,
-        json_mode: bool = False,
-        **kwargs: object,
-    ) -> LLMResponse:
-        import google.generativeai as genai
-
-        genai.configure(api_key=self._api_key)
-        generation_config: dict = {}
+        self, prompt: str, *, system: Optional[str] = None, json_mode=False, **kwargs
+    ):
+        if not self._api_key or self._api_key.startswith(("placeholder", "your-")):
+            raise ValueError("Configure GOOGLE_AI_API_KEY for Gemini")
+        body = {"contents": [{"role": "user", "parts": [{"text": prompt}]}]}
+        if system:
+            body["systemInstruction"] = {"parts": [{"text": system}]}
         if json_mode:
-            generation_config["response_mime_type"] = "application/json"
-        system_instruction = system if system else None
-        model = genai.GenerativeModel(
-            self._model,
-            system_instruction=system_instruction,
-            generation_config=generation_config or None,
+            body["generationConfig"] = {"responseMimeType": "application/json"}
+        response = httpx.post(
+            f"https://generativelanguage.googleapis.com/v1beta/models/{self._model}:generateContent",
+            headers={"x-goog-api-key": self._api_key},
+            json=body,
+            timeout=get_settings().model_timeout_seconds,
         )
-        response = model.generate_content(prompt)
-        text = (getattr(response, "text", None) or "").strip()
-        input_tokens = output_tokens = None
-        usage = getattr(response, "usage_metadata", None)
-        if usage is not None:
-            input_tokens = getattr(usage, "prompt_token_count", None)
-            output_tokens = getattr(usage, "candidates_token_count", None)
+        response.raise_for_status()
+        data = response.json()
+        candidates = data.get("candidates", [])
+        text = (
+            "".join(
+                p.get("text", "")
+                for p in candidates[0].get("content", {}).get("parts", [])
+                if not p.get("thought")
+            )
+            if candidates
+            else ""
+        )
+        if not text.strip():
+            raise ValueError("Gemini returned no usable content")
+        usage = data.get("usageMetadata", {})
         return LLMResponse(
-            text=text,
+            text=text.strip(),
             provider=self.provider_name,
             model=self._model,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
+            input_tokens=usage.get("promptTokenCount"),
+            output_tokens=usage.get("candidatesTokenCount"),
         )

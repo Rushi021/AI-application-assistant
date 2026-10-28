@@ -496,15 +496,9 @@ onAction("autoApplyBtn", async () => {
 onAction("autofillBtn", async () => {
   showError(null);
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (!tab?.id) throw new Error("No active tab");
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ["src/content/autofill.js"],
-    });
-  } catch (err) {
-    showError(err);
-  }
+    const result = await chrome.runtime.sendMessage({type:"FILL_CURRENT"});
+    if (result?.error) throw new Error(result.error);
+  } catch (err) { showError(err); }
 });
 
 function jobDetailsPayload() {
@@ -589,4 +583,36 @@ document.getElementById("doTailor").addEventListener("change", (event) => {
   const button = document.getElementById("runTailor");
   button.textContent = event.target.checked ? "✦ Create tailored draft" : "Review original resume →";
   button.dataset.loading = event.target.checked ? "Creating your draft…" : "Preparing your resume…";
+});
+
+async function refreshAgentQueue() {
+  try {
+    await api("/agent/wake", {method:"POST"});
+    const items = await api("/agent/queue");
+    document.getElementById("agentSummary").textContent = `${items.filter(i=>i.state==="ready").length} packets ready for review · ${items.filter(i=>i.state==="approved").length} approved`;
+  } catch (err) { document.getElementById("agentSummary").textContent = err.message; }
+}
+onAction("openAgent", async () => {
+  const {apiBase} = await getSettings(); chrome.tabs.create({url:`${apiBase}/#/agent`});
+});
+onAction("runApproved", async () => {
+  const result = await chrome.runtime.sendMessage({type:"DRAIN_APPROVED"});
+  if (result?.error) showError(new Error(result.error));
+  refreshAgentQueue();
+});
+onAction("captureJob", async () => {
+  try {
+    const [tab] = await chrome.tabs.query({active:true,currentWindow:true});
+    const result = await chrome.scripting.executeScript({target:{tabId:tab.id},files:["src/content/capture.js"]});
+    document.getElementById("jd").value = result[0].result.raw_text;
+  } catch (err) { showError(err); }
+});
+refreshAgentQueue();
+
+onAction("queueRun",async()=>{
+  try {
+    await saveJobDetails();
+    await api(`/agent/from-run/${state.tailorRunId}`,{method:"POST"});
+    const {apiBase}=await getSettings();chrome.tabs.create({url:`${apiBase}/#/agent`});
+  } catch(err){showError(err);}
 });

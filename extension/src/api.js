@@ -22,18 +22,11 @@ async function api(path, { method = "GET", body, isForm = false } = {}) {
     opts.body = JSON.stringify(body);
   }
   const res = await fetch(`${apiBase}${path}`, opts);
-  if (!res.ok) {
-    let detail = res.statusText;
-    try {
-      const payload = await res.json();
-      detail = payload.detail || JSON.stringify(payload);
-    } catch (_err) {
-      detail = await res.text();
-    }
-    throw new Error(`${res.status} ${detail}`);
-  }
-  if (res.status === 204) return null;
-  return res.json();
+  const raw = await res.text();
+  let payload;
+  try { payload = raw ? JSON.parse(raw) : null; } catch { payload = {detail:raw}; }
+  if (!res.ok) throw new Error(`${res.status} ${typeof payload?.detail === "string" ? payload.detail : JSON.stringify(payload?.detail || res.statusText)}`);
+  return payload;
 }
 
 async function login(username, password) {

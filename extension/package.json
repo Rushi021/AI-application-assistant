@@ -1,0 +1,6 @@
+{
+  "name": "application-assistant-extension",
+  "private": true,
+  "scripts": {"test": "node --test tests/*.test.cjs"},
+  "devDependencies": {"playwright": "1.62.1"}
+}

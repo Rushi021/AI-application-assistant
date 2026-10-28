@@ -22,7 +22,8 @@
       <p id="activity" class="activity" role="status" hidden></p>
 
       <section id="step-1" class="step" aria-label="Job description">
-        <div class="panel"><label for="jd">Job description <span class="field-note">Required</span></label><textarea id="jd" rows="7" placeholder="Paste the role, responsibilities, and requirements here…"></textarea><p class="hint">We’ll compare the requirements with the resumes in your library.</p></div>
+        <details class="panel disclosure agent-overview"><summary>Application queue</summary><p id="agentSummary" class="hint" role="status">Loading prepared packets…</p><button id="openAgent" class="secondary">Review application queue</button><button id="runApproved" class="secondary" data-loading="Starting application…">Run next approved application</button></details>
+        <div class="panel"><button id="captureJob" class="secondary capture-button" data-loading="Reading job page…">Capture this job page</button><label for="jd">Job description <span class="field-note">Required</span></label><textarea id="jd" rows="7" placeholder="Paste the role, responsibilities, and requirements here…"></textarea><p class="hint">We’ll compare the requirements with the resumes in your library.</p></div>
         <div class="tip"><span aria-hidden="true">✦</span><p><strong>Your experience, thoughtfully tailored.</strong><br />Review every change before you apply.</p></div>
       </section>
 
@@ -45,6 +46,7 @@
       <section id="step-5" class="step" aria-label="Apply and track" hidden>
         <div class="panel"><div class="panel-heading"><h3>Application details</h3><span class="badge">Almost there</span></div><p class="hint">These details label your saved files and application tracker.</p><div class="grid"><label for="company">Company<input id="company" placeholder="e.g. Glean" /></label><label for="role">Role<input id="role" placeholder="e.g. AI Engineer" /></label><label for="sponsorship">Sponsorship<input id="sponsorship" placeholder="e.g. Available" /></label><label for="datePosted">Date posted<input id="datePosted" placeholder="e.g. Oct 27, 2026" /></label></div><label for="applyLink">Application link<input id="applyLink" type="url" placeholder="https://…" /></label></div>
         <div class="panel"><div class="panel-heading"><h3>Your application documents</h3><span class="badge mint">Ready</span></div><p class="hint">Save your finalized resume to your library and log this application.</p><button id="autoApplyBtn" class="secondary">Save to resume library</button><div id="exportPanel" class="export" role="status" hidden></div><details class="document-details"><summary>Document details</summary><pre id="finalPreview" class="preview"></pre></details></div>
+        <button id="queueRun" class="secondary" data-loading="Adding to review queue…">Review this packet for autonomous application</button>
         <button id="trackBtn" class="secondary">Mark as applied</button><div id="outcomePanel" class="panel" hidden><h3>How did it go?</h3><p class="hint">Record the result in your tracker.</p><div class="row"><button id="okBtn" class="secondary ok">Succeeded</button><button id="failBtn" class="secondary fail">Failed</button></div><p id="outcomeStatus" class="hint" role="status"></p></div>
       </section>
     </main>

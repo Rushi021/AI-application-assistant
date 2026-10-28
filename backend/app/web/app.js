@@ -1,3 +1,5 @@
+function escapeHTML(value) { return String(value ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])); }
+function safeJobURL(value) { try { const u=new URL(value);return ["http:","https:"].includes(u.protocol)?escapeHTML(u.href):"#"; } catch {return "#";} }
 const FAMILIES = [
   { id: "ai_ml", label: "AI / ML" },
   { id: "data_science", label: "Data science" },
@@ -66,8 +68,8 @@ async function login() {
 }
 
 function currentRoute() {
-  const hash = (location.hash || "#/personal").replace("#/", "");
-  return ["personal", "jobs", "resumes", "tracker"].includes(hash) ? hash : "personal";
+  const hash = (location.hash || "#/agent").replace("#/", "");
+  return ["agent", "personal", "jobs", "resumes", "tracker"].includes(hash) ? hash : "personal";
 }
 
 function route() {
@@ -79,6 +81,7 @@ function route() {
     tab.classList.toggle("active", tab.dataset.route === name);
   });
   banner("");
+  if (name === "agent" && window.loadAgent) window.loadAgent();
   if (name === "personal") renderProfile();
   if (name === "jobs") renderJobs();
   if (name === "resumes") renderResumes();
@@ -298,7 +301,7 @@ function renderJobs() {
   const root = $("job-list");
   root.innerHTML = "";
   if (!state.jobs.length) {
-    root.innerHTML = `<p class="empty">No jobs yet. Paste a description or run a search (scraper is a placeholder until a provider is wired).</p>`;
+    root.innerHTML = `<p class="empty">No jobs yet. Paste a description or configure discovery in Agent queue.</p>`;
     return;
   }
   for (const job of state.jobs) {
@@ -306,12 +309,12 @@ function renderJobs() {
     card.className = "card";
     const rec = resumeById(job.recommended_resume_id);
     card.innerHTML = `
-      <h3>${job.company_name || "Company not set"} — ${job.role || "Role not set"}</h3>
-      <p class="meta">${job.source} · posted ${job.date_posted || "—"} · sponsorship ${job.sponsorship || "—"}</p>
-      <p>${(job.raw_text || "").slice(0, 280)}${job.raw_text && job.raw_text.length > 280 ? "…" : ""}</p>
+      <h3>${escapeHTML(job.company_name || "Company not set")} — ${escapeHTML(job.role || "Role not set")}</h3>
+      <p class="meta">${escapeHTML(job.source)} · posted ${escapeHTML(job.date_posted || "—")} · sponsorship ${escapeHTML(job.sponsorship || "—")}</p>
+      <p>${escapeHTML((job.raw_text || "").slice(0, 280))}${job.raw_text && job.raw_text.length > 280 ? "…" : ""}</p>
       ${rec ? `<p class="hint">Score suggested ${resumeLabel(rec)}. You still choose the resume above.</p>` : ""}
       <div class="row-actions">
-        ${job.application_link ? `<a href="${job.application_link}" target="_blank" rel="noreferrer">Open posting</a>` : ""}
+        ${job.application_link ? `<a href="${safeJobURL(job.application_link)}" target="_blank" rel="noreferrer">Open posting</a>` : ""}
         <button type="button" data-score="${job.id}">Score against selected resume</button>
         <button type="button" data-tailor="${job.id}">Tailor and file in library</button>
         <button type="button" data-track="${job.id}">Add to tracker</button>
@@ -460,7 +463,7 @@ $("scrape-form").addEventListener("submit", async (event) => {
     });
     $("scrape-note").textContent = result.note || `Provider: ${result.provider}`;
     if (!result.results.length) {
-      banner("Search ran, but the scraper is still a placeholder — no listings yet. Paste a job on the right.");
+      banner("No matching listings returned. Check the source, location and role filters, or paste a job.");
     } else {
       banner(`Saved ${result.results.length} listings.`);
     }
@@ -605,14 +608,14 @@ function renderTracker() {
       const when = app.applied_at || app.status_updated_at || app.created_at;
       const file = app.document_path ? app.document_path.split("/").pop() : "";
       return `<tr>
-        <td>${company}<div class="meta">${role}</div></td>
+        <td>${escapeHTML(company)}<div class="meta">${escapeHTML(role)}</div></td>
         <td>${family ? family.label : familyId || app.resume_id}<div class="meta">${
           resume ? `v${resume.version}` : ""
         }</div></td>
         <td>${tailored}</td>
         <td>${app.status}${app.outcome ? ` · ${app.outcome}` : ""}</td>
         <td class="meta">${when ? new Date(when).toLocaleDateString() : "—"}</td>
-        <td class="meta" title="${app.document_path || ""}">${file || "—"}</td>
+        <td class="meta" title="${escapeHTML(app.document_path || "")}">${escapeHTML(file || "—")}</td>
         <td class="row-actions">
           <button type="button" class="ok" data-ok="${app.id}">Succeeded</button>
           <button type="button" class="bad" data-fail="${app.id}">Failed</button>

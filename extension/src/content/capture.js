@@ -1,9 +1,5 @@
-/**
- * Placeholder for the board's "Automated" JD branch.
- * Manual paste in the popup remains the only working ingestion path.
- * A future implementation would read the active ATS/job-board DOM and
- * POST /jobs/ingest with source="captured".
- */
 (() => {
-  console.info("capture.js placeholder: automated JD capture is not implemented yet.");
+  const selectors = ['[itemprop="description"]', '[data-testid="job-description"]', '.job-description', '#job_description', '.posting-page', 'main'];
+  const element = selectors.map(s=>document.querySelector(s)).find(e=>e?.innerText?.trim().length>100);
+  return {raw_text:(element?.innerText || document.body.innerText).slice(0,80000), role:document.querySelector('h1')?.innerText || document.title, application_link:location.href, source:"captured"};
 })();

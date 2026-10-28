@@ -1,15 +1,28 @@
 # Chrome extension
 
-Vanilla Manifest V3. No build step.
+Manifest V3, vanilla JavaScript, no runtime build step.
 
-1. Start the backend (`uvicorn app.main:app --reload` from `backend/`).
-2. Chrome → `chrome://extensions` → Developer mode → Load unpacked → select this `extension/` folder.
-3. Open Options to confirm API base (`http://localhost:8000`) and token (`test-token`).
-4. Upload at least one `.tex` base resume via `POST /resumes/upload`, then use the popup.
+1. Start the backend and open `http://localhost:8000/#/agent`.
+2. Load this directory unpacked at `chrome://extensions`.
+3. In Options, set API base/token to match the backend. The development defaults are `http://localhost:8000` and `test-token`.
+4. Configure sources, profile and a source resume in the web app. Review packets before approving.
+5. The extension checks approved jobs about once per minute. Use **Run next approved application** to start immediately. It opens an observable employer tab and processes one approved item per tick.
 
-The popup is a 5-step wizard. **Step 1 is always manual JD paste, and nothing else** — company, role, sponsorship, date posted, and apply link are asked for at the top of step 5. Fill them before saving to the resume library: the company name goes into the saved filename and onto the tracker row.
+The popup retains the manual five-step JD/resume/edit/finalize wizard. Capture this job page can prefill its JD text. Finalized manual packets can be sent to the review queue; manual Autofill fills saved profile fields without submitting.
 
-Step 2 scores the JD against your base resumes and holds the resume store, so you can upload and delete resumes without leaving the popup. This is the same store as the website: uploads and deletes on either side show up on the other. Automated page capture (`src/content/capture.js`) is a placeholder.
+The background worker owns API access. The engine maps field evidence to saved profile values, uses native setter/events, attaches the packet's documents, and reports unresolved required fields. It does not guess unknown answers. Greenhouse, Lever, and Ashby final submission is attempted only with an approved packet and exactly one recognized final submit control. Other forms pause for manual review. CAPTCHA/login/custom multi-step forms and cross-origin embedded forms can require intervention.
+
+HTTPS host permission is needed to open and inject into an approved employer page while the popup is closed. There are no always-on content scripts over all browsing pages. Backend credentials are not injected into visited page JavaScript.
+
+For tests:
+
+```sh
+npm install
+npx playwright install chromium
+npm test
+```
+
+Set `CHROME_EXECUTABLE` to an existing Chromium-family executable to avoid downloading a browser. Tests intercept all fixture ATS URLs and never contact employers.
 
 The popup uses a light, mint-accented interface with five progress steps and a
 persistent action bar. Resume match cards show overall alignment and requirement

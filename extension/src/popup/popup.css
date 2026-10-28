@@ -120,3 +120,5 @@ textarea:focus, input:focus { border-color: #61bb88; background: #fff; }
 .preview { max-height: 150px; overflow: auto; font-size: 10px; white-space: pre-wrap; overflow-wrap: anywhere; color: #6f7e74; }
 #outcomePanel { margin-top: 12px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+
+.capture-button { margin: 0 0 16px; }
