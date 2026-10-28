@@ -16,28 +16,103 @@ const state = {
 };
 
 const stepTitles = {
-  1: "Step 1 of 5 — Paste JD",
-  2: "Step 2 of 5 — Score alignment",
-  3: "Step 3 of 5 — Tailor?",
-  4: "Step 4 of 5 — Edit sections",
-  5: "Step 5 of 5 — Apply + track",
+  1: ["Start with the opportunity", "Paste a job description to find your strongest resume."],
+  2: ["Choose your starting point", "Compare your matches and select the resume you want to use."],
+  3: ["Make it yours", "Give your experience a little focus for this opportunity."],
+  4: ["Give it a final look", "Your experience, tailored. You’re in control of every edit."],
+  5: ["Ready for your next move", "Save your documents, fill the application, and track your progress."],
 };
+
+const pendingEdits = new Set();
+let saveError = null;
+
+function resizeText(area) {
+  area.style.height = "auto";
+  area.style.height = `${Math.max(80, area.scrollHeight + 2)}px`;
+}
+
+async function saveEdit(task) {
+  const status = document.getElementById("saveStatus");
+  status.textContent = "Saving changes…";
+  const promise = task();
+  pendingEdits.add(promise);
+  try {
+    await promise;
+    saveError = null;
+    status.textContent = "All changes saved";
+  } catch (err) {
+    saveError = err;
+    status.textContent = "Couldn’t save. Edit the field to try again.";
+    showError(err);
+  } finally {
+    pendingEdits.delete(promise);
+  }
+}
+
+async function flushEdits() {
+  await Promise.allSettled([...pendingEdits]);
+  if (saveError) throw new Error("Some edits haven’t saved. Update the field and try again.");
+}
+
+function onAction(id, task) {
+  const button = document.getElementById(id);
+  button.addEventListener("click", async () => {
+    const original = [...button.childNodes];
+    const controls = [...document.querySelectorAll("button")].filter((item) => !item.disabled);
+    controls.forEach((item) => { item.disabled = true; });
+    const message = button.dataset.loading || "Working…";
+    button.textContent = message;
+    button.setAttribute("aria-busy", "true");
+    const activity = document.getElementById("activity");
+    activity.textContent = message;
+    activity.hidden = false;
+    try {
+      await task();
+    } catch (err) {
+      showError(err);
+    } finally {
+      controls.forEach((item) => { item.disabled = false; });
+      button.replaceChildren(...original);
+      button.removeAttribute("aria-busy");
+      activity.hidden = true;
+      if (id === "trackBtn" && state.applicationId) button.disabled = true;
+    }
+  });
+}
 
 function showError(err) {
   const el = document.getElementById("error");
   el.hidden = !err;
   el.textContent = err ? String(err.message || err) : "";
+  if (err) el.scrollIntoView({ block: "nearest" });
 }
 
 function goto(step) {
   state.step = step;
-  document.getElementById("stepLabel").textContent = stepTitles[step];
+  document.getElementById("stepLabel").textContent = `STEP ${step} OF 5`;
+  document.getElementById("stepTitle").textContent = stepTitles[step][0];
+  document.getElementById("stepDescription").textContent = stepTitles[step][1];
+  document.getElementById("backBtn").hidden = step === 1;
+  document.querySelectorAll("[data-step-action]").forEach((button) => {
+    button.hidden = Number(button.dataset.stepAction) !== step;
+  });
+  document.querySelectorAll("#progressSteps li").forEach((item, index) => {
+    item.classList.toggle("complete", index + 1 < step);
+    if (index + 1 === step) item.setAttribute("aria-current", "step");
+    else item.removeAttribute("aria-current");
+    item.querySelector("span").textContent = index + 1 < step ? "✓" : index + 1;
+  });
   for (let i = 1; i <= 5; i += 1) {
     document.getElementById(`step-${i}`).hidden = i !== step;
   }
+  document.getElementById("mainContent").scrollTop = 0;
+  document.getElementById("stepTitle").focus({ preventScroll: true });
+  if (step === 4) requestAnimationFrame(() => {
+    document.querySelectorAll("#sections details[open] textarea").forEach(resizeText);
+  });
 }
 
-document.getElementById("ingestBtn").addEventListener("click", async () => {
+onAction("ingestBtn", async () => {
   showError(null);
   try {
     const raw = document.getElementById("jd").value.trim();
@@ -80,20 +155,36 @@ function renderScores() {
   }
   for (const score of state.scores) {
     const resume = resumeById(score.resume_id);
-    const card = document.createElement("div");
+    const card = document.createElement("button");
+    card.type = "button";
+    card.setAttribute("aria-pressed", String(score.resume_id === state.resumeId));
     card.className = "card" + (score.resume_id === state.resumeId ? " selected" : "");
     const title = document.createElement("strong");
-    title.textContent =
-      (resume ? resumeLabel(resume) : `Resume ${score.resume_id}`) +
-      (score.recommended ? " · recommended" : "");
+    title.textContent = resume ? resumeLabel(resume) : `Resume ${score.resume_id}`;
     const meta = document.createElement("div");
     meta.className = "meta";
     meta.textContent = resume ? resume.original_filename : "";
     const numbers = document.createElement("div");
-    numbers.textContent = `total ${pct(score.total_score)} · must-have ${pct(
+    numbers.className = "coverage";
+    numbers.textContent = `Must-have ${pct(
       score.must_have_coverage
     )} · nice-to-have ${pct(score.nice_to_have_coverage)}`;
-    card.append(title, meta, numbers);
+    const content = document.createElement("div");
+    content.className = "score-content";
+    if (score.recommended) {
+      const badge = document.createElement("span");
+      badge.className = "badge mint";
+      badge.textContent = "Best match";
+      content.appendChild(badge);
+    }
+    content.append(title, meta, numbers);
+    const ring = document.createElement("div");
+    ring.className = "score-ring";
+    ring.style.setProperty("--score", `${Math.min(100, Math.max(0, (score.total_score || 0) * 100))}%`);
+    const value = document.createElement("span");
+    value.textContent = pct(score.total_score);
+    ring.appendChild(value);
+    card.append(content, ring);
     card.addEventListener("click", () => {
       state.resumeId = score.resume_id;
       renderScores();
@@ -127,7 +218,7 @@ function renderStore() {
         const name = document.createElement("span");
         name.textContent = `v${version} · ${existing.original_filename}`;
         const remove = document.createElement("button");
-        remove.className = "fail";
+        remove.className = "secondary fail";
         remove.textContent = "Delete";
         remove.addEventListener("click", () => {
           if (remove.dataset.armed) {
@@ -195,7 +286,7 @@ async function deleteResume(resumeId) {
   }
 }
 
-document.getElementById("refreshStoreBtn").addEventListener("click", async () => {
+onAction("refreshStoreBtn", async () => {
   showError(null);
   try {
     await loadResumes();
@@ -214,7 +305,7 @@ document.getElementById("toTailor").addEventListener("click", () => {
   goto(3);
 });
 
-document.getElementById("runTailor").addEventListener("click", async () => {
+onAction("runTailor", async () => {
   showError(null);
   try {
     const run = await api("/tailoring/runs", {
@@ -227,6 +318,11 @@ document.getElementById("runTailor").addEventListener("click", async () => {
       },
     });
     state.tailorRunId = run.id;
+    state.applicationId = null;
+    saveError = null;
+    document.getElementById("trackBtn").disabled = false;
+    document.getElementById("outcomePanel").hidden = true;
+    document.getElementById("exportPanel").hidden = true;
     renderSections(JSON.parse(run.sections_json || "[]"));
     goto(4);
   } catch (err) {
@@ -242,6 +338,8 @@ async function patchLine(section, bullet, text) {
 }
 
 async function rewrite(section, body) {
+  showError(null);
+  await flushEdits();
   const updated = await api(
     `/tailoring/runs/${state.tailorRunId}/sections/${section.id}/rewrite`,
     { method: "POST", body }
@@ -250,76 +348,109 @@ async function rewrite(section, body) {
 }
 
 function renderLine(section, bullet, index, wrap) {
+  const locked = section.editable === false || bullet.editable === false;
   const row = document.createElement("div");
-  row.className = bullet.editable === false ? "line locked" : "line";
-  if (bullet.editable === false) {
+  row.className = locked ? "line locked" : "line";
+  if (locked) {
     row.textContent = bullet.text;
-    row.title = `Locked: ${bullet.frozen_reason || "not editable"}`;
+    row.title = `Protected: ${bullet.frozen_reason || "original details"}`;
     wrap.appendChild(row);
     return;
   }
   const area = document.createElement("textarea");
-  area.rows = 2;
+  area.rows = 3;
   area.value = bullet.text || "";
-  area.addEventListener("blur", async () => {
+  area.setAttribute("aria-label", `${section.name || "Section"}, line ${index + 1}`);
+  area.addEventListener("input", () => resizeText(area));
+  area.addEventListener("blur", () => {
     if (area.value === bullet.text) return;
-    try {
-      await patchLine(section, bullet, area.value);
-      bullet.text = area.value;
-    } catch (err) {
-      showError(err);
-    }
+    const text = area.value;
+    saveEdit(async () => {
+      await patchLine(section, bullet, text);
+      bullet.text = text;
+    });
   });
-  row.appendChild(area);
+  const tools = document.createElement("div");
+  tools.className = "line-tools";
+  const label = document.createElement("span");
+  label.className = "line-label";
+  label.textContent = `LINE ${index + 1}`;
   const button = document.createElement("button");
-  button.textContent = "Rewrite line";
-  button.addEventListener("click", () => rewrite(section, { bullet_index: index, instructions: "" }).catch(showError));
-  row.appendChild(button);
+  button.className = "rewrite-line";
+  button.textContent = "✦ Refine with AI";
+  button.id = `rewrite-${section.id}-${bullet.id}`;
+  button.dataset.loading = "Refining…";
+  tools.append(label, button);
+  row.append(area, tools);
   wrap.appendChild(row);
+  onAction(button.id, () => rewrite(section, { bullet_index: index, instructions: "" }));
 }
 
 function renderSections(sections) {
   const root = document.getElementById("sections");
   root.innerHTML = "";
   sections.forEach((section) => {
-    const wrap = document.createElement("div");
-    wrap.className = section.editable === false ? "section locked" : "section";
-    const heading = document.createElement("strong");
-    heading.textContent = section.name || "Section";
-    wrap.appendChild(heading);
-    if (section.editable === false) {
+    const locked = section.editable === false;
+    const wrap = document.createElement("details");
+    wrap.className = locked ? "section locked" : "section";
+    wrap.open = !locked;
+    const heading = document.createElement("summary");
+    heading.className = "section-heading";
+    const title = document.createElement("strong");
+    title.textContent = section.name || "Section";
+    heading.appendChild(title);
+    if (locked) {
       const badge = document.createElement("span");
       badge.className = "badge";
-      badge.textContent = section.frozen_reason || "locked";
-      wrap.appendChild(badge);
+      badge.textContent = "Protected";
+      badge.title = section.frozen_reason || "Original details are preserved";
+      heading.appendChild(badge);
     }
-
+    const content = document.createElement("div");
+    content.className = "section-content";
+    wrap.append(heading, content);
+    root.appendChild(wrap);
     const bullets = section.bullets || [];
     if (bullets.length) {
-      if (section.editable !== false) {
+      if (!locked && bullets.some((bullet) => bullet.editable !== false)) {
         const all = document.createElement("button");
-        all.textContent = "Rewrite every line with LLM";
-        all.addEventListener("click", () => rewrite(section, { instructions: "" }).catch(showError));
-        wrap.appendChild(all);
+        all.className = "section-rewrite";
+        all.textContent = "✦ Refine section";
+        all.id = `rewrite-section-${section.id}`;
+        all.dataset.loading = "Refining section…";
+        content.appendChild(all);
+        onAction(all.id, () => rewrite(section, { instructions: "" }));
       }
-      bullets.forEach((bullet, index) => renderLine(section, bullet, index, wrap));
-    } else if (section.editable !== false) {
+      bullets.forEach((bullet, index) => renderLine(section, bullet, index, content));
+    } else if (!locked) {
       const area = document.createElement("textarea");
       area.rows = 3;
       area.value = section.body_text || "";
-      area.addEventListener("blur", async () => {
-        try {
+      area.setAttribute("aria-label", section.name || "Section text");
+      area.addEventListener("input", () => resizeText(area));
+      area.addEventListener("blur", () => {
+        if (area.value === section.body_text) return;
+        const text = area.value;
+        saveEdit(async () => {
           await api(`/tailoring/runs/${state.tailorRunId}/sections/${section.id}`, {
-            method: "PATCH",
-            body: { body_text: area.value },
+            method: "PATCH", body: { body_text: text },
           });
-        } catch (err) {
-          showError(err);
-        }
+          section.body_text = text;
+        });
       });
-      wrap.appendChild(area);
+      content.appendChild(area);
+    } else if (section.body_text) {
+      const text = document.createElement("p");
+      text.className = "line locked";
+      text.textContent = section.body_text;
+      content.appendChild(text);
     }
-    root.appendChild(wrap);
+    wrap.addEventListener("toggle", () => {
+      if (wrap.open) wrap.querySelectorAll("textarea").forEach(resizeText);
+    });
+  });
+  requestAnimationFrame(() => {
+    root.querySelectorAll("details[open] textarea").forEach(resizeText);
   });
 }
 
@@ -332,17 +463,19 @@ function showFinal(run) {
     notes.join("\n") + (run.final_latex ? `\n\n${run.final_latex}` : "");
 }
 
-document.getElementById("finalizeBtn").addEventListener("click", async () => {
+onAction("finalizeBtn", async () => {
   showError(null);
   try {
+    await flushEdits();
     showFinal(await api(`/tailoring/runs/${state.tailorRunId}/finalize`, { method: "POST" }));
+    document.getElementById("exportPanel").hidden = true;
     goto(5);
   } catch (err) {
     showError(err);
   }
 });
 
-document.getElementById("autoApplyBtn").addEventListener("click", async () => {
+onAction("autoApplyBtn", async () => {
   showError(null);
   const link = document.getElementById("applyLink");
   if (!link.value) link.value = await currentTabUrl();
@@ -360,7 +493,7 @@ document.getElementById("autoApplyBtn").addEventListener("click", async () => {
   }
 });
 
-document.getElementById("autofillBtn").addEventListener("click", async () => {
+onAction("autofillBtn", async () => {
   showError(null);
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -413,7 +546,7 @@ async function createTrackedApplication(status) {
   state.applicationId = created.id;
 }
 
-document.getElementById("trackBtn").addEventListener("click", async () => {
+onAction("trackBtn", async () => {
   showError(null);
   try {
     await createTrackedApplication("applied");
@@ -433,6 +566,7 @@ async function recordOutcome(succeeded) {
       body: { succeeded },
     });
     document.getElementById("outcomePanel").hidden = false;
+    document.getElementById("outcomeStatus").textContent = succeeded ? "Recorded as succeeded." : "Recorded as failed.";
   } catch (err) {
     showError(err);
   }
@@ -440,3 +574,19 @@ async function recordOutcome(succeeded) {
 
 document.getElementById("okBtn").addEventListener("click", () => recordOutcome(true));
 document.getElementById("failBtn").addEventListener("click", () => recordOutcome(false));
+
+
+document.getElementById("backBtn").addEventListener("click", async () => {
+  try {
+    await flushEdits();
+    showError(null);
+    goto(Math.max(1, state.step - 1));
+  } catch (err) { showError(err); }
+});
+
+document.getElementById("settingsBtn").addEventListener("click", () => chrome.runtime.openOptionsPage());
+document.getElementById("doTailor").addEventListener("change", (event) => {
+  const button = document.getElementById("runTailor");
+  button.textContent = event.target.checked ? "✦ Create tailored draft" : "Review original resume →";
+  button.dataset.loading = event.target.checked ? "Creating your draft…" : "Preparing your resume…";
+});

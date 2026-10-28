@@ -2,78 +2,53 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Job Application Assistant</title>
     <link rel="stylesheet" href="popup.css" />
   </head>
   <body>
-    <header>
-      <h1>Apply assistant</h1>
-      <p class="step-label" id="stepLabel">Step 1 of 5 — Paste JD</p>
+    <header class="app-header">
+      <div class="brand-row">
+        <div class="brand"><span class="brand-icon" aria-hidden="true">a<span>✦</span></span><div><h1>Apply assistant</h1><p>A little closer to your next role.</p></div></div>
+        <button id="settingsBtn" class="icon-button" aria-label="Open settings" title="Settings">⚙</button>
+      </div>
+      <nav aria-label="Application progress"><ol id="progressSteps" class="progress-steps">
+        <li aria-current="step"><span>1</span>Job</li><li><span>2</span>Resume</li><li><span>3</span>Tailor</li><li><span>4</span>Review</li><li><span>5</span>Apply</li>
+      </ol></nav>
     </header>
-    <div id="error" class="error" hidden></div>
+    <main id="mainContent">
+      <div class="page-heading"><p class="eyebrow" id="stepLabel">STEP 1 OF 5</p><h2 id="stepTitle" tabindex="-1">Start with the opportunity</h2><p id="stepDescription">Paste a job description to find your strongest resume.</p></div>
+      <div id="error" class="error" role="alert" hidden></div>
+      <p id="activity" class="activity" role="status" hidden></p>
 
-    <section id="step-1" class="step">
-      <label for="jd">Job description</label>
-      <textarea id="jd" rows="14" placeholder="Paste the job description here. This is the first step."></textarea>
-      <button id="ingestBtn">Score against my resumes</button>
-    </section>
+      <section id="step-1" class="step" aria-label="Job description">
+        <div class="panel"><label for="jd">Job description <span class="field-note">Required</span></label><textarea id="jd" rows="7" placeholder="Paste the role, responsibilities, and requirements here…"></textarea><p class="hint">We’ll compare the requirements with the resumes in your library.</p></div>
+        <div class="tip"><span aria-hidden="true">✦</span><p><strong>Your experience, thoughtfully tailored.</strong><br />Review every change before you apply.</p></div>
+      </section>
 
-    <section id="step-2" class="step" hidden>
-      <p>Pick a base resume. Highest score is recommended.</p>
-      <div id="scores"></div>
-      <details id="store">
-        <summary>Resume store</summary>
-        <p class="hint">
-          Same store as the website. What you upload or delete here shows up there, and the other way around.
-        </p>
-        <div id="storeGrid"></div>
-        <button id="refreshStoreBtn" class="ghost">Refresh from server</button>
-      </details>
-      <button id="toTailor">Continue with selected resume</button>
-    </section>
+      <section id="step-2" class="step" aria-label="Choose a resume" hidden>
+        <div id="scores" class="score-list" role="group" aria-label="Resume matches"></div>
+        <details id="store" class="panel disclosure"><summary>Manage resume library <span class="summary-hint">Upload & organize</span></summary><p class="hint">Synced with your resume library on the website.</p><div id="storeGrid"></div><button id="refreshStoreBtn" class="secondary">Refresh library</button></details>
+      </section>
 
-    <section id="step-3" class="step" hidden>
-      <label class="check"><input type="checkbox" id="doTailor" checked /> Tailor with LLM</label>
-      <label>Personalized instructions
-        <textarea id="instructions" rows="4" placeholder="e.g. keep the metrics, emphasize RAG work"></textarea>
-      </label>
-      <button id="runTailor">Create tailor draft</button>
-    </section>
+      <section id="step-3" class="step" aria-label="Tailoring preferences" hidden>
+        <div class="panel"><label class="check" for="doTailor"><span><strong>Tailor to this role</strong><small>Adapt your resume and draft a cover letter.</small></span><input type="checkbox" id="doTailor" checked /></label><div class="divider"></div><label for="instructions">Anything to emphasize? <span class="field-note">Optional</span></label><textarea id="instructions" rows="4" placeholder="For example: emphasize RAG projects and keep the original metrics."></textarea><p class="hint">Your original resume stays in your library.</p></div>
+        <div class="tip"><span aria-hidden="true">◇</span><p><strong>Your formatting is protected.</strong><br />Contact details, education, and dates stay in place.</p></div>
+      </section>
 
-    <section id="step-4" class="step" hidden>
-      <p class="hint">
-        Greyed lines are locked: the title, section headers, Education, and any line whose
-        tab alignment holds a date in place. Everything else keeps its original formatting
-        when the document is written.
-      </p>
-      <div id="sections"></div>
-      <button id="finalizeBtn">Finalize document</button>
-    </section>
+      <section id="step-4" class="step" aria-label="Review resume" hidden>
+        <div class="editor-note"><span class="lock-icon" aria-hidden="true">◇</span><p>Edit the text below or use AI to refine it. <strong>Protected details keep their original formatting.</strong></p></div>
+        <div id="sections"></div>
+        <p id="saveStatus" class="save-status" role="status">Changes save when you leave a text field.</p>
+      </section>
 
-    <section id="step-5" class="step" hidden>
-      <p>Company and role name the saved file and fill the tracker row, so set them first.</p>
-      <div class="grid">
-        <label>Company <input id="company" /></label>
-        <label>Role <input id="role" /></label>
-        <label>Sponsorship <input id="sponsorship" /></label>
-        <label>Date posted <input id="datePosted" /></label>
-      </div>
-      <label>Application link <input id="applyLink" /></label>
-      <button id="autoApplyBtn">Save to resume library</button>
-      <div id="exportPanel" class="export" hidden></div>
-      <button id="autofillBtn">Autofill this page</button>
-      <button id="trackBtn">Mark applied</button>
-      <div id="outcomePanel" hidden>
-        <p>Logged. Record whether the application succeeded.</p>
-        <div class="row">
-          <button id="okBtn" class="ok">Succeeded</button>
-          <button id="failBtn" class="fail">Failed</button>
-        </div>
-      </div>
-      <pre id="finalPreview" class="preview"></pre>
-    </section>
-
-    <script src="../api.js"></script>
-    <script src="popup.js"></script>
+      <section id="step-5" class="step" aria-label="Apply and track" hidden>
+        <div class="panel"><div class="panel-heading"><h3>Application details</h3><span class="badge">Almost there</span></div><p class="hint">These details label your saved files and application tracker.</p><div class="grid"><label for="company">Company<input id="company" placeholder="e.g. Glean" /></label><label for="role">Role<input id="role" placeholder="e.g. AI Engineer" /></label><label for="sponsorship">Sponsorship<input id="sponsorship" placeholder="e.g. Available" /></label><label for="datePosted">Date posted<input id="datePosted" placeholder="e.g. Oct 27, 2026" /></label></div><label for="applyLink">Application link<input id="applyLink" type="url" placeholder="https://…" /></label></div>
+        <div class="panel"><div class="panel-heading"><h3>Your application documents</h3><span class="badge mint">Ready</span></div><p class="hint">Save your finalized resume to your library and log this application.</p><button id="autoApplyBtn" class="secondary">Save to resume library</button><div id="exportPanel" class="export" role="status" hidden></div><details class="document-details"><summary>Document details</summary><pre id="finalPreview" class="preview"></pre></details></div>
+        <button id="trackBtn" class="secondary">Mark as applied</button><div id="outcomePanel" class="panel" hidden><h3>How did it go?</h3><p class="hint">Record the result in your tracker.</p><div class="row"><button id="okBtn" class="secondary ok">Succeeded</button><button id="failBtn" class="secondary fail">Failed</button></div><p id="outcomeStatus" class="hint" role="status"></p></div>
+      </section>
+    </main>
+    <footer class="action-bar"><button id="backBtn" class="back-button" hidden>← Back</button><button id="ingestBtn" class="primary" data-step-action="1" data-loading="Comparing resumes…">Find my best resume <span aria-hidden="true">→</span></button><button id="toTailor" class="primary" data-step-action="2" hidden>Use selected resume <span aria-hidden="true">→</span></button><button id="runTailor" class="primary" data-step-action="3" data-loading="Creating your draft…" hidden>✦ Create tailored draft</button><button id="finalizeBtn" class="primary" data-step-action="4" data-loading="Preparing documents…" hidden>Finish review <span aria-hidden="true">→</span></button><button id="autofillBtn" class="primary" data-step-action="5" data-loading="Filling this page…" hidden>Autofill this page <span aria-hidden="true">↗</span></button></footer>
+    <script src="../api.js"></script><script src="popup.js"></script>
   </body>
 </html>
